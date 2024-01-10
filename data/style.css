@@ -1,0 +1,61 @@
+html {
+  font-family: Arial, Helvetica, sans-serif; 
+  display: inline-block; 
+  text-align: center;
+}
+
+h1 {
+  font-size: 1rem; 
+  color: white;
+}
+
+p { 
+  font-size: 0.8rem;
+}
+
+.topnav { 
+  overflow: hidden; 
+  background-color: #0A1128;
+}
+
+body {  
+  margin: 0;
+}
+
+.content { 
+  padding: 2%;
+}
+
+.card-grid { 
+  max-width: 600px; 
+  margin: 0 auto; 
+  display: grid; 
+  grid-gap: 0.8rem; 
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+}
+
+.card { 
+  background-color: white; 
+  box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5);
+}
+
+.card-title { 
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: #034078
+}
+
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Radial Gauges Specific Style */
+.radial-gauge-container {
+  width: 100px; /* Adjust as needed for a more square container */
+}
+
+.radial-gauge {
+  max-width: 100%;
+  height: auto;
+}

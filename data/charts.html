@@ -1,0 +1,108 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="highcharts.js"></script>
+  <style>
+    body {
+      min-width: 310px;
+      max-width: 800px;
+      height: 1200px;
+      margin: 0 auto;
+    }
+    h2 {
+      font-family: Arial;
+      font-size: 2.5rem;
+      text-align: center;
+    }
+    .container {
+      width: 80%;
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body>
+  <h2>Vehicle Metrics</h2>
+  
+  <div class="container" id="chart-cabin-temp"></div>
+  <div class="container" id="chart-coolant-temp"></div>
+  <div class="container" id="chart-intake-temp"></div>
+  <div class="container" id="chart-egt"></div>
+  <div class="container" id="chart-gearbox-temp"></div>
+  <div class="container" id="chart-transfer-case-temp"></div>
+  <div class="container" id="chart-boost"></div>
+  <div class="container" id="chart-oil-pressure"></div>
+  <div class="container" id="chart-battery-voltage"></div>
+
+</body>
+<script>
+function updateChart(chart, data, metricName) {
+  var x = (new Date()).getTime();
+  var y = parseFloat(data[metricName]);
+
+  if (chart.series[0].data.length > 40) {
+    chart.series[0].addPoint([x, y], true, true, true);
+  } else {
+    chart.series[0].addPoint([x, y], true, false, true);
+  }
+}
+
+function createChart(containerId, title, yAxisTitle, lineColor) {
+  return new Highcharts.Chart({
+    chart: { renderTo: containerId },
+    title: { text: title },
+    series: [{
+      showInLegend: false,
+      data: []
+    }],
+    plotOptions: {
+      line: {
+        animation: false,
+        dataLabels: { enabled: true }
+      },
+      series: { color: lineColor }
+    },
+    xAxis: {
+      type: 'datetime',
+      dateTimeLabelFormats: { second: '%H:%M:%S' }
+    },
+    yAxis: {
+      title: { text: yAxisTitle }
+    },
+    credits: { enabled: false }
+  });
+}
+
+var chartCabinTemp = createChart('chart-cabin-temp', 'Cabin Temperature', 'Temperature (Celsius)', '#059e8a');
+var chartCoolantTemp = createChart('chart-coolant-temp', 'Coolant Temperature', 'Temperature (Celsius)', '#059e8a');
+var chartIntakeTemp = createChart('chart-intake-temp', 'Intake Temperature', 'Temperature (Celsius)', '#059e8a');
+var chartEGT = createChart('chart-egt', 'Exhaust Gas Temperature', 'Temperature (Celsius)', '#059e8a');
+var chartGearboxTemp = createChart('chart-gearbox-temp', 'Gearbox Temperature', 'Temperature (Celsius)', '#059e8a');
+var chartTransferCaseTemp = createChart('chart-transfer-case-temp', 'Transfer Case Temperature', 'Temperature (Celsius)', '#059e8a');
+var chartBoost = createChart('chart-boost', 'Boost', 'Pressure (psi)', '#18009c');
+var chartOilPressure = createChart('chart-oil-pressure', 'Oil Pressure', 'Pressure (psi)', '#18009c');
+var chartBatteryVoltage = createChart('chart-battery-voltage', 'Battery Voltage', 'Voltage (V)', '#18009c');
+
+setInterval(function () {
+  var xhr = new XMLHttpRequest();
+  xhr.onreadystatechange = function () {
+    if (this.readyState == 4 && this.status == 200) {
+      var data = JSON.parse(this.responseText);
+
+      updateChart(chartCabinTemp, data, 'cabinTemperature');
+      updateChart(chartCoolantTemp, data, 'coolantTemperature');
+      updateChart(chartIntakeTemp, data, 'intakeTemperature');
+      updateChart(chartEGT, data, 'egt');
+      updateChart(chartGearboxTemp, data, 'gearBoxTemperature');
+      updateChart(chartTransferCaseTemp, data, 'transferCaseTemperature');
+      updateChart(chartBoost, data, 'boost');
+      updateChart(chartOilPressure, data, 'oilPressure');
+      updateChart(chartBatteryVoltage, data, 'batteryVoltage');
+    }
+  };
+  xhr.open("GET", "/readings", true);
+  xhr.send();
+}, 5000);
+
+</script>
+</html>
