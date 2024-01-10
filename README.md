@@ -26,6 +26,7 @@ ESP32 listents to serial 2 data coming from Serial2.print on Arduino and reads t
 ESP32 converts that data to JSOn and exposes it on a /readings enpoint
 This is then visualized on the root path / as gauges using Javascript, CSS and HTML
 A second /charts page shows the trends of various metrics over time as long as the browser remains open (not stored anywhere in ESP32)
+ESP32 Exposes a wifi network that allows you to connect and access the page at http://192.168.4.1/. It can also connect to your exixting wifi network
 
 
 -----------------------------------------------------------------------------------------------------
