@@ -7,8 +7,8 @@
 
 const char* apSSID = "CAN";
 const char* apPassword = "cani1234";
-const char* ssid = "HouseLANnister";
-const char* password = "Ella42019";
+const char* ssid = "ssid";
+const char* password = "password";
 
 AsyncWebServer server(80);
 AsyncEventSource events("/events");
