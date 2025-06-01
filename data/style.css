@@ -59,3 +59,15 @@ canvas {
   max-width: 100%;
   height: auto;
 }
+
+/* Styling for the card being dragged */
+.card.dragging { /* Make selector more specific */
+  opacity: 0.5;
+  border: 2px dashed #000; /* Example border */
+}
+
+/* Optional: Style for when dragging over the container */
+.card-grid.drag-over {
+  /* Example: light grey background - often handled by JS adding a class dynamically */
+  /* background-color: #e0e0e0; */
+}
