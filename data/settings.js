@@ -220,3 +220,103 @@ document.getElementById('btn-load-defaults-esp32').addEventListener('click', fun
     xhr.open("POST", "/api/loaddefaults", true); // This endpoint on ESP32 loads defaults and saves to SPIFFS
     xhr.send();
 });
+
+// --- OneWire Scan Functionality ---
+document.getElementById('btn-scan-onewire').addEventListener('click', function() {
+    const resultsDiv = document.getElementById('onewire-scan-results');
+    resultsDiv.innerHTML = '<p>Scanning for OneWire devices...</p>';
+
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+        if (this.readyState == 4) {
+            if (this.status == 200) {
+                try {
+                    const addresses = JSON.parse(this.responseText);
+                    if (addresses && addresses.length > 0) {
+                        let html = '<h4>Unconfigured DS18B20 Sensors Found:</h4><ul>';
+                        addresses.forEach(addr => {
+                            html += `<li>${addr} <button class="btn-use-address" data-address="${addr}">Use this address</button></li>`;
+                        });
+                        html += '</ul>';
+                        resultsDiv.innerHTML = html;
+
+                        // Add event listeners to new buttons
+                        document.querySelectorAll('.btn-use-address').forEach(button => {
+                            button.addEventListener('click', function() {
+                                handleUseThisAddressClick(this.dataset.address);
+                            });
+                        });
+                    } else {
+                        resultsDiv.innerHTML = '<p>No unconfigured DS18B20 sensors found.</p>';
+                    }
+                } catch (e) {
+                    resultsDiv.innerHTML = '<p style="color: red;">Error parsing scan results.</p>';
+                    console.error("Parse error for OneWire scan:", e);
+                    displayStatusMessage("Error parsing OneWire scan results.", false);
+                }
+            } else {
+                resultsDiv.innerHTML = '<p style="color: red;">Failed to scan for OneWire devices. Status: ' + this.status + '</p>';
+                displayStatusMessage("Failed to scan OneWire devices. Status: " + this.status, false);
+            }
+        }
+    };
+    xhr.open("GET", "/api/onewire/unconfigured", true);
+    xhr.send();
+});
+
+function handleUseThisAddressClick(address) {
+    // Show the form if it's hidden
+    document.getElementById('sensor-edit-form-container').classList.remove('hidden');
+    // If the form is in "add" mode, or if user wants to overwrite existing oneWire for a new sensor.
+    if (document.getElementById('form-mode').value === 'add') {
+         document.getElementById('sensor-id').value = 'ds18b20_' + address.substring(address.length - 4).toLowerCase(); // Suggest an ID
+         document.getElementById('sensor-name').value = 'DS18B20 Temp';
+    }
+    document.getElementById('sensor-type').value = 'DS18B20'; // Set type to DS18B20
+    document.getElementById('sensor-onewire').value = address;
+
+    // Trigger change event for sensor type to show pin info if any
+    document.getElementById('sensor-type').dispatchEvent(new Event('change'));
+
+    document.getElementById('sensor-id').focus(); // Focus on ID or name for user to complete
+    displayStatusMessage(`OneWire address ${address} populated into form. Please complete other details.`, true);
+}
+
+// Add event listener to sensor type dropdown to show pin information
+const sensorTypeDropdown = document.getElementById('sensor-type');
+const pinInfoSpan = document.createElement('span'); // Create a span for messages
+pinInfoSpan.id = 'ds18b20-pin-info';
+pinInfoSpan.style.fontSize = '0.8em';
+pinInfoSpan.style.marginLeft = '10px';
+// Insert it after pin3 or an appropriate place
+const pin3Label = document.querySelector('label[for="sensor-pin3"]');
+if(pin3Label && pin3Label.parentNode) {
+    pin3Label.parentNode.insertBefore(pinInfoSpan, pin3Label.nextSibling.nextSibling); // after input
+}
+
+
+sensorTypeDropdown.addEventListener('change', function() {
+    const selectedType = this.value;
+    const pin1Input = document.getElementById('sensor-pin1');
+    const pin2Input = document.getElementById('sensor-pin2');
+    const pin3Input = document.getElementById('sensor-pin3');
+    const oneWireInput = document.getElementById('sensor-onewire');
+
+    pinInfoSpan.textContent = ''; // Clear previous message
+    oneWireInput.readOnly = true; // Default to readonly
+
+    if (selectedType === 'DS18B20') {
+        pinInfoSpan.textContent = 'Pins for DS18B20 are typically set by a global OneWire bus pin on ESP32. Pin1 may be used to denote bus if multiple exist (not current fw). P2/P3 unused.';
+        oneWireInput.readOnly = false;
+    } else if (selectedType === 'MAX6675') {
+        pinInfoSpan.textContent = 'P1:SCLK, P2:CS, P3:SO/DO';
+    } else if (selectedType === 'PRES_A' || selectedType === 'VOLT_A') {
+         pinInfoSpan.textContent = 'P1: Analog Input Pin. P2/P3 unused.';
+    } else if (selectedType === 'BMP085' || selectedType === 'BMP280') {
+         pinInfoSpan.textContent = 'Uses I2C pins (global). P1/P2/P3 unused in this form.';
+    } else {
+        // Clear info or set default
+    }
+});
+// Initial check in case form is pre-filled on load (e.g. by browser)
+sensorTypeDropdown.dispatchEvent(new Event('change'));
