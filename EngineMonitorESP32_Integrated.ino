@@ -5,7 +5,7 @@
 #include "SPIFFS.h"
 #include <Arduino_JSON.h>
 #include <U8g2lib.h> // For OLED
-#include <OneWire.h>
+#include <OneWire.h> 
 #include <DallasTemperature.h>
 #include "max6675.h"      // For MAX6675 EGT sensor
 #include <Wire.h>         // For I2C communication (BMP280, OLED)
@@ -18,7 +18,7 @@
 const char* CONFIG_FILE = "/sensor_config.json";
 
 // DS18B20 Setup
-const int ONEWIRE_PIN = 4;
+const int ONEWIRE_PIN = 4; 
 OneWire oneWire(ONEWIRE_PIN);
 DallasTemperature sensors(&oneWire);
 
@@ -30,14 +30,14 @@ const uint8_t MAX_CONSECUTIVE_FAILURES = 5;
 
 
 // Analog Pressure Sensor Constants
-const float PRESSURE_ZERO_ADC = 410.0;
+const float PRESSURE_ZERO_ADC = 410.0; 
 const float PRESSURE_MAX_ADC = 3686.0;
 const float PRESSURE_TRANSDUCER_MAX_PSI = 100.0;
 
 // Analog Voltage Sensor Constants
-const float VOLTAGE_DIVIDER_R1 = 30000.0;
-const float VOLTAGE_DIVIDER_R2 = 7500.0;
-const float REFERENCE_VOLTAGE_ESP32 = 3.3;
+const float VOLTAGE_DIVIDER_R1 = 30000.0; 
+const float VOLTAGE_DIVIDER_R2 = 7500.0;  
+const float REFERENCE_VOLTAGE_ESP32 = 3.3; 
 
 // BMP280
 Adafruit_BMP280 bmp; // I2C
@@ -48,13 +48,13 @@ bool bmpAvailable = false;
 #define MAX_SENSORS 15
 
 enum SensorType {
-  UNDEFINED, PRESSURE_ANALOG, TEMP_DS18B20, TEMP_MAX6675,
-  TEMP_BMP085, VOLTAGE_ANALOG, TEMP_BMP280
+  UNDEFINED, PRESSURE_ANALOG, TEMP_DS18B20, TEMP_MAX6675, 
+  TEMP_BMP085, VOLTAGE_ANALOG, TEMP_BMP280 
 };
 
 struct SensorConfig {
   String id; String name; SensorType sensorType; int pin1; int pin2; int pin3;
-  uint8_t oneWireAddress[8]; bool enabled; float value;
+  uint8_t oneWireAddress[8]; bool enabled; float value; 
   uint8_t consecutiveFailures; // Runtime state, not saved in JSON explicitly by saveConfiguration
   float warningThreshold; float criticalThreshold;
   float lowerWarningThreshold; float lowerCriticalThreshold; bool displayOnOLED;
@@ -77,14 +77,14 @@ const char* apSSID = "EngineMonitorAP";
 const char* apPassword = "password123";
 
 // Alert Pins
-const int BUZZER_PIN = 18;
-const int FLASHER_LED_PIN = 19;
+const int BUZZER_PIN = 18;      
+const int FLASHER_LED_PIN = 19; 
 
 // --- OLED Pixel Calculation Variables ---
-int numberOfPixels = 75;
+int numberOfPixels = 75; 
 float maxOP = 75.0; float minOP = 0.0;
-float maxCT = 127.5; float minCT = 15.0;
-float maxEGT = 800.0; float minEGT = 30.0;
+float maxCT = 127.5; float minCT = 15.0;  
+float maxEGT = 800.0; float minEGT = 30.0; 
 float maxBST = 20.0; float minBST = 0.0;
 // Multipliers and baselines (can be calculated if needed, or kept simplified)
 float multiplierOP = (maxOP - minOP) != 0 ? pow((maxOP - minOP), -1) * numberOfPixels : 0;
@@ -101,7 +101,7 @@ byte hexToByte(char hex) {
   if (hex >= '0' && hex <= '9') return hex - '0';
   if (hex >= 'a' && hex <= 'f') return hex - 'a' + 10;
   if (hex >= 'A' && hex <= 'F') return hex - 'A' + 10;
-  return 0;
+  return 0; 
 }
 
 void parseHexStringToByteArray(const String& hexStr, uint8_t* byteArray, int arraySize) {
@@ -109,7 +109,7 @@ void parseHexStringToByteArray(const String& hexStr, uint8_t* byteArray, int arr
     if (2 * i + 1 < hexStr.length()) {
       byteArray[i] = (hexToByte(hexStr.charAt(2 * i)) << 4) + hexToByte(hexStr.charAt(2 * i + 1));
     } else {
-      byteArray[i] = 0;
+      byteArray[i] = 0; 
     }
   }
 }
@@ -120,7 +120,7 @@ String sensorTypeToString(SensorType type) {
     case PRESSURE_ANALOG: return "PRES_A";
     case TEMP_DS18B20: return "DS18B20";
     case TEMP_MAX6675: return "MAX6675";
-    case TEMP_BMP085: return "BMP085";
+    case TEMP_BMP085: return "BMP085"; 
     case VOLTAGE_ANALOG: return "VOLT_A";
     case TEMP_BMP280: return "BMP280";
     default: return "UNK";
@@ -151,7 +151,7 @@ String oneWireAddressToString(const uint8_t* address) {
 // --- OLED Display Helper Functions ---
 void printShortDateTimeOLED(U8G2 &u8g2_display) { u8g2_display.print("Time N/A"); }
 void displayTemperatureOLED(U8G2 &u8g2_display, float tempC, bool error = false) {
-  if (error || tempC <= -998.0) { u8g2_display.print("N/A"); }
+  if (error || tempC <= -998.0) { u8g2_display.print("N/A"); } 
   else { u8g2_display.print(tempC, 0); }
 }
 SensorConfig* findSensorById(const String& id) {
@@ -162,15 +162,15 @@ SensorConfig* findSensorById(const String& id) {
 }
 
 // --- Alert Functions ---
-void flash() { /* ... same as before ... */
+void flash() { /* ... same as before ... */ 
   digitalWrite(FLASHER_LED_PIN, HIGH); delay(20);
   digitalWrite(FLASHER_LED_PIN, LOW); delay(30);
 }
-void buzz() { /* ... same as before ... */
+void buzz() { /* ... same as before ... */ 
   digitalWrite(BUZZER_PIN, HIGH); delay(50);
   digitalWrite(BUZZER_PIN, LOW);
 }
-void checkAllSensorAlerts() { /* ... same as before ... */
+void checkAllSensorAlerts() { /* ... same as before ... */ 
   static unsigned long lastAlertCheckTime = 0;
   if (millis() - lastAlertCheckTime < 500) return;
   lastAlertCheckTime = millis();
@@ -193,7 +193,7 @@ void readDS18B20Sensor(SensorConfig &sensor) {
   if (sensor.enabled && sensor.sensorType == TEMP_DS18B20) {
     float tempC = sensors.getTempC(sensor.oneWireAddress);
     if (tempC == DEVICE_DISCONNECTED_C || tempC == 85.0 || tempC == -127.0) {
-      sensor.value = -999.0;
+      sensor.value = -999.0; 
       if(sensor.consecutiveFailures < 255) sensor.consecutiveFailures++;
       if(sensor.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && sensor.consecutiveFailures % MAX_CONSECUTIVE_FAILURES == 0) { // Log only once per MAX_FAILURES interval after first trigger
          Serial.printf("Sensor %s (DS18B20) has failed %d consecutive times.\n", sensor.name.c_str(), sensor.consecutiveFailures);
@@ -207,30 +207,30 @@ void readDS18B20Sensor(SensorConfig &sensor) {
     }
   }
 }
-void readAnalogPressureSensor(SensorConfig &sensor) { /* ... same as before ... */
+void readAnalogPressureSensor(SensorConfig &sensor) { /* ... same as before ... */ 
   if (sensor.enabled && sensor.sensorType == PRESSURE_ANALOG) {
     int rawValue = analogRead(sensor.pin1);
     sensor.value = ((float)rawValue - PRESSURE_ZERO_ADC) * PRESSURE_TRANSDUCER_MAX_PSI / (PRESSURE_MAX_ADC - PRESSURE_ZERO_ADC);
   }
 }
-void readMAX6675Sensor(SensorConfig &sensor) { /* ... same as before ... */
+void readMAX6675Sensor(SensorConfig &sensor) { /* ... same as before ... */ 
   if (sensor.enabled && sensor.sensorType == TEMP_MAX6675) {
-    MAX6675 thermocouple(sensor.pin1, sensor.pin2, sensor.pin3);
+    MAX6675 thermocouple(sensor.pin1, sensor.pin2, sensor.pin3); 
     float temp = thermocouple.readCelsius();
-    if (isnan(temp)) { sensor.value = -999.0; }
+    if (isnan(temp)) { sensor.value = -999.0; } 
     else { sensor.value = temp - 8.0; }
   }
 }
-void readBMP280Sensor(SensorConfig &sensor) { /* ... same as before ... */
+void readBMP280Sensor(SensorConfig &sensor) { /* ... same as before ... */ 
   if (sensor.enabled && (sensor.sensorType == TEMP_BMP280 || sensor.sensorType == TEMP_BMP085)) {
     if (bmpAvailable) {
       float temp = bmp.readTemperature();
-      if (isnan(temp)) { sensor.value = -999.0; }
+      if (isnan(temp)) { sensor.value = -999.0; } 
       else { sensor.value = temp; }
     } else { sensor.value = -998.0; }
   }
 }
-void readAnalogVoltageSensor(SensorConfig &sensor) { /* ... same as before ... */
+void readAnalogVoltageSensor(SensorConfig &sensor) { /* ... same as before ... */ 
   if (sensor.enabled && sensor.sensorType == VOLTAGE_ANALOG) {
     int rawValue = analogRead(sensor.pin1);
     float adc_voltage = (rawValue * REFERENCE_VOLTAGE_ESP32) / 4095.0;
@@ -239,7 +239,7 @@ void readAnalogVoltageSensor(SensorConfig &sensor) { /* ... same as before ... *
 }
 
 // --- SPIFFS & Configuration Functions ---
-void initSPIFFS() { /* ... same as before ... */
+void initSPIFFS() { /* ... same as before ... */ 
   if (!SPIFFS.begin(true)) {
     Serial.println("An error has occurred while mounting SPIFFS");
     return;
@@ -247,9 +247,9 @@ void initSPIFFS() { /* ... same as before ... */
   Serial.println("SPIFFS mounted successfully");
 }
 
-void loadDefaultConfiguration() { /* ... same as before ... */
+void loadDefaultConfiguration() { /* ... same as before ... */ 
   Serial.println("Loading default sensor configurations...");
-  numConfiguredSensors = 0;
+  numConfiguredSensors = 0; 
   if (numConfiguredSensors < MAX_SENSORS) {
     configuredSensors[numConfiguredSensors] = { "coolant_temp", "Coolant", TEMP_DS18B20, ONEWIRE_PIN, -1, -1, {0x28, 0xFF, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01}, true, 0.0, 0, 95.0, 105.0, 60.0, 50.0, true }; numConfiguredSensors++;
   }
@@ -268,7 +268,7 @@ void loadDefaultConfiguration() { /* ... same as before ... */
   Serial.println(String(numConfiguredSensors) + " default sensors loaded.");
 }
 
-void saveConfiguration() {
+void saveConfiguration() { 
   Serial.println("Saving configuration to SPIFFS...");
   JSONVar sensorsArray;
   for (int i = 0; i < numConfiguredSensors; i++) {
@@ -306,7 +306,7 @@ void saveConfiguration() {
   configFile.close();
 }
 
-void loadConfiguration() {
+void loadConfiguration() { 
   Serial.println("Loading configuration from SPIFFS...");
   if (SPIFFS.exists(CONFIG_FILE)) {
     File configFile = SPIFFS.open(CONFIG_FILE, "r");
@@ -316,14 +316,14 @@ void loadConfiguration() {
       JSONVar parsedConfig = JSON.parse(configData);
 
       if (JSON.typeof(parsedConfig) == "array") {
-        numConfiguredSensors = 0;
+        numConfiguredSensors = 0; 
         for (int i = 0; i < parsedConfig.length(); i++) {
           if (numConfiguredSensors >= MAX_SENSORS) {
             Serial.println("Max sensors reached while loading config.");
             break;
           }
           JSONVar sensorJson = parsedConfig[i];
-
+          
           configuredSensors[numConfiguredSensors].id = String((const char*) sensorJson["id"]);
           configuredSensors[numConfiguredSensors].name = String((const char*) sensorJson["name"]);
           configuredSensors[numConfiguredSensors].sensorType = stringToSensorType(String((const char*)sensorJson["sensorType"]));
@@ -337,8 +337,8 @@ void loadConfiguration() {
           configuredSensors[numConfiguredSensors].criticalThreshold = (double) sensorJson["criticalThreshold"];
           configuredSensors[numConfiguredSensors].lowerWarningThreshold = (double) sensorJson["lowerWarningThreshold"];
           configuredSensors[numConfiguredSensors].lowerCriticalThreshold = (double) sensorJson["lowerCriticalThreshold"];
-          configuredSensors[numConfiguredSensors].value = 0.0;
-          configuredSensors[numConfiguredSensors].consecutiveFailures = 0;
+          configuredSensors[numConfiguredSensors].value = 0.0; 
+          configuredSensors[numConfiguredSensors].consecutiveFailures = 0; 
           numConfiguredSensors++;
         }
         Serial.println("Configuration loaded successfully from SPIFFS.");
@@ -353,17 +353,17 @@ void loadConfiguration() {
     Serial.println("Config file not found. Loading and saving defaults.");
   }
   loadDefaultConfiguration();
-  saveConfiguration();
+  saveConfiguration(); 
 }
 
 // --- OneWire Discovery ---
 void discoverOneWireDevices(bool forceScan = false, bool printToSerial = false) {
   if (!forceScan && millis() - lastOneWireDiscoveryTime < ONE_WIRE_DISCOVERY_INTERVAL) {
-    return;
+    return; 
   }
   lastOneWireDiscoveryTime = millis();
   if(printToSerial) Serial.println("Scanning for OneWire devices...");
-
+  
   discoveredOneWireAddressesHex.clear();
   uint8_t newAddr[8];
   oneWire.reset_search();
@@ -409,14 +409,14 @@ std::vector<String> getUnconfiguredOneWireDevices() {
 }
 
 
-void initWifi() { /* ... same as before ... */
+void initWifi() { /* ... same as before ... */ 
   Serial.println("Setting up WiFi Access Point...");
   WiFi.softAP(apSSID, apPassword);
   IPAddress AP_IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(AP_IP);
 }
-String getSensorReadingsJSON() { /* ... same as before ... */
+String getSensorReadingsJSON() { /* ... same as before ... */ 
   JSONVar currentReadings;
   for(int i=0; i < numConfiguredSensors; i++){
     if(configuredSensors[i].enabled){
@@ -426,19 +426,19 @@ String getSensorReadingsJSON() { /* ... same as before ... */
         else if(configuredSensors[i].id == "bat_voltage") key = "BAT1";
         else if(configuredSensors[i].id == "egt") key = "EGT";
         else if(configuredSensors[i].id == "cabin_temp") key = "CTMP";
-        currentReadings[key] = configuredSensors[i].value;
+        currentReadings[key] = configuredSensors[i].value; 
     }
   }
   return JSON.stringify(currentReadings);
 }
-void sendSensorEvents() { /* ... same as before ... */
+void sendSensorEvents() { /* ... same as before ... */ 
   static unsigned long lastEventTime = 0;
-  if (millis() - lastEventTime > 3000) {
+  if (millis() - lastEventTime > 3000) { 
     events.send(getSensorReadingsJSON().c_str(), "new_readings", millis());
     lastEventTime = millis();
   }
 }
-void initWebServer() {
+void initWebServer() { 
   Serial.println("Initializing Web Server...");
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request){ request->send(SPIFFS, "/style.css", "text/css"); });
@@ -449,7 +449,7 @@ void initWebServer() {
   server.on("/gauge.js", HTTP_GET, [](AsyncWebServerRequest *request){ request->send(SPIFFS, "/gauge.js", "application/javascript"); });
   server.on("/readings", HTTP_GET, [](AsyncWebServerRequest *request){ request->send(200, "application/json", getSensorReadingsJSON()); });
   server.addHandler(&events);
-
+  
   server.on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest *request){
     // This reflects the in-memory config, which is loaded from SPIFFS at boot
     // or reflects changes made via /api/setconfig (which also saves to SPIFFS)
@@ -458,7 +458,7 @@ void initWebServer() {
         JSONVar sensorConf;
         sensorConf["id"] = configuredSensors[i].id;
         sensorConf["name"] = configuredSensors[i].name;
-        sensorConf["sensorType"] = sensorTypeToString(configuredSensors[i].sensorType);
+        sensorConf["sensorType"] = sensorTypeToString(configuredSensors[i].sensorType); 
         sensorConf["pin1"] = configuredSensors[i].pin1;
         sensorConf["pin2"] = configuredSensors[i].pin2;
         sensorConf["pin3"] = configuredSensors[i].pin3;
@@ -477,17 +477,17 @@ void initWebServer() {
 
   server.onRequestBody([](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
     if (request->url().equals("/api/setconfig")) {
-        static String bodyContent;
+        static String bodyContent; 
         if (index == 0) {
-            bodyContent = "";
+            bodyContent = ""; 
             Serial.println("/api/setconfig POST received");
         }
         bodyContent.concat((char*)data, len);
-
-        if (index + len == total) {
+        
+        if (index + len == total) { 
             Serial.println("Full body: " + bodyContent);
             JSONVar jsonData = JSON.parse(bodyContent);
-            bodyContent = "";
+            bodyContent = ""; 
 
             if (JSON.typeof(jsonData) == "undefined") {
                 request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Invalid JSON\"}");
@@ -518,7 +518,7 @@ void initWebServer() {
                     break;
                 }
             }
-            if (!found && numConfiguredSensors < MAX_SENSORS) {
+            if (!found && numConfiguredSensors < MAX_SENSORS) { 
                 configuredSensors[numConfiguredSensors].id = idToUpdate;
                 configuredSensors[numConfiguredSensors].name = jsonData.hasOwnProperty("name") ? String((const char*)jsonData["name"]) : "New Sensor";
                 configuredSensors[numConfiguredSensors].sensorType = jsonData.hasOwnProperty("sensorType") ? stringToSensorType(String((const char*)jsonData["sensorType"])) : UNDEFINED;
@@ -536,11 +536,11 @@ void initWebServer() {
                 configuredSensors[numConfiguredSensors].value = 0.0;
                 configuredSensors[numConfiguredSensors].consecutiveFailures = 0;
                 numConfiguredSensors++;
-                found = true;
+                found = true; 
             }
 
             if (found) {
-                saveConfiguration();
+                saveConfiguration(); 
                 request->send(200, "application/json", "{\"status\":\"success\", \"message\":\"Configuration updated and saved\"}");
             } else if (numConfiguredSensors >= MAX_SENSORS) {
                  request->send(500, "application/json", "{\"status\":\"error\", \"message\":\"Max sensors reached, cannot add new one.\"}");
@@ -553,18 +553,18 @@ void initWebServer() {
   });
 
   server.on("/api/saveconfig", HTTP_POST, [](AsyncWebServerRequest *request){
-    saveConfiguration();
+    saveConfiguration(); 
     JSONVar response; response["status"] = "success"; response["message"] = "Configuration saved to ESP32 Flash.";
     request->send(200, "application/json", JSON.stringify(response));
   });
 
   server.on("/api/loaddefaults", HTTP_POST, [](AsyncWebServerRequest *request){
-    loadDefaultConfiguration();
+    loadDefaultConfiguration(); 
     saveConfiguration(); // Persist defaults immediately
     JSONVar response; response["status"] = "success"; response["message"] = "Defaults loaded and saved to ESP32 Flash.";
     request->send(200, "application/json", JSON.stringify(response));
   });
-
+  
   server.on("/api/onewire/unconfigured", HTTP_GET, [](AsyncWebServerRequest *request){
     discoverOneWireDevices(true, false); // Force scan, don't print to serial here
     std::vector<String> unconfiguredList = getUnconfiguredOneWireDevices();
@@ -578,7 +578,7 @@ void initWebServer() {
   server.begin();
   Serial.println("Web Server started.");
 }
-void initOLED() { /* ... same as before ... */
+void initOLED() { /* ... same as before ... */ 
   Serial.println("Initializing OLED...");
   if (u8g2.begin()) {
     oledAvailable = true;
@@ -592,8 +592,8 @@ void initOLED() { /* ... same as before ... */
   }
 }
 
-void readAllSensors() { /* ... same as before, with all real read functions called ... */
-  if (numConfiguredSensors > 0) {
+void readAllSensors() { /* ... same as before, with all real read functions called ... */ 
+  if (numConfiguredSensors > 0) { 
     bool ds18b20Present = false;
     for(int i=0; i < numConfiguredSensors; i++){
       if(configuredSensors[i].enabled && configuredSensors[i].sensorType == TEMP_DS18B20){
@@ -603,7 +603,7 @@ void readAllSensors() { /* ... same as before, with all real read functions call
     if (ds18b20Present) { sensors.requestTemperatures(); }
   }
   static unsigned long lastReadTime = 0;
-  if (millis() - lastReadTime > 250) {
+  if (millis() - lastReadTime > 250) { 
     for(int i=0; i < numConfiguredSensors; i++){
       if(configuredSensors[i].enabled){
         switch(configuredSensors[i].sensorType){
@@ -620,46 +620,46 @@ void readAllSensors() { /* ... same as before, with all real read functions call
   }
 }
 
-void updateOLED() { /* ... same as before ... */
+void updateOLED() { /* ... same as before ... */ 
   if (!oledAvailable) return;
   static unsigned long lastOLEDRefresh = 0;
   if (millis() - lastOLEDRefresh < 500 && lastOLEDRefresh != 0) { return; }
   lastOLEDRefresh = millis();
-  u8g2.setFont(u8g2_font_ncenB08_tr);
+  u8g2.setFont(u8g2_font_ncenB08_tr); 
   u8g2.firstPage();
   do {
     SensorConfig* cabinTempSensor = findSensorById("cabin_temp");
-    SensorConfig* bat1Sensor = findSensorById("bat_voltage");
-    u8g2.setCursor(0, 8);
+    SensorConfig* bat1Sensor = findSensorById("bat_voltage"); 
+    u8g2.setCursor(0, 8); 
     if (cabinTempSensor && cabinTempSensor->enabled && cabinTempSensor->displayOnOLED) { displayTemperatureOLED(u8g2, cabinTempSensor->value, cabinTempSensor->value <= -998.0); } else { u8g2.print("N/A"); }
-    u8g2.print("c");
-    u8g2.setCursor(30, 8);
-    if (bmpAvailable) { float altitude = bmp.readAltitude(1013.25); u8g2.print(altitude, 0); u8g2.print("m"); }
+    u8g2.print("c"); 
+    u8g2.setCursor(30, 8); 
+    if (bmpAvailable) { float altitude = bmp.readAltitude(1013.25); u8g2.print(altitude, 0); u8g2.print("m"); } 
     else { u8g2.print("Alt:N/A"); }
-    u8g2.setCursor(75, 8);
+    u8g2.setCursor(75, 8); 
     if (bat1Sensor && bat1Sensor->enabled && bat1Sensor->displayOnOLED) { u8g2.print(bat1Sensor->value, 1); } else { u8g2.print("N/A"); }
     u8g2.print("v");
     SensorConfig* imtSensor = findSensorById("intake_temp");
-    SensorConfig* ctSensorRow2 = findSensorById("coolant_temp");
-    SensorConfig* oilSensorRow2 = findSensorById("oil_pressure");
+    SensorConfig* ctSensorRow2 = findSensorById("coolant_temp"); 
+    SensorConfig* oilSensorRow2 = findSensorById("oil_pressure"); 
     u8g2.setCursor(0, 18); u8g2.print("I:");
     if (imtSensor && imtSensor->enabled && imtSensor->displayOnOLED) displayTemperatureOLED(u8g2, imtSensor->value, imtSensor->value <= -998.0); else u8g2.print("NA");
     u8g2.setCursor(33, 18); u8g2.print("C:");
     if (ctSensorRow2 && ctSensorRow2->enabled && ctSensorRow2->displayOnOLED) displayTemperatureOLED(u8g2, ctSensorRow2->value, ctSensorRow2->value <= -998.0); else u8g2.print("NA");
-    u8g2.setCursor(66, 18); u8g2.print("Oil:");
-    if (oilSensorRow2 && oilSensorRow2->enabled && oilSensorRow2->displayOnOLED && oilSensorRow2->value > -998.0) { u8g2.print(oilSensorRow2->value, 0); }
+    u8g2.setCursor(66, 18); u8g2.print("Oil:"); 
+    if (oilSensorRow2 && oilSensorRow2->enabled && oilSensorRow2->displayOnOLED && oilSensorRow2->value > -998.0) { u8g2.print(oilSensorRow2->value, 0); } 
     else { u8g2.print("NA"); }
     int gaugeBarX = 25; int gaugeBarWidth = 75; int valuePrintX = 102; int labelX = 0; float indicatorXPos;
     SensorConfig* egtSensor = findSensorById("egt");
     SensorConfig* boostSensor = findSensorById("boost_pressure");
-    SensorConfig* ctGaugeSensor = findSensorById("coolant_temp");
-    int egt_y_label = 30; int egt_y_bar = egt_y_label - 8;
+    SensorConfig* ctGaugeSensor = findSensorById("coolant_temp"); 
+    int egt_y_label = 30; int egt_y_bar = egt_y_label - 8; 
     u8g2.setCursor(labelX, egt_y_label); u8g2.print(F("EGT"));
-    u8g2.drawFrame(gaugeBarX, egt_y_bar, gaugeBarWidth, 8);
+    u8g2.drawFrame(gaugeBarX, egt_y_bar, gaugeBarWidth, 8); 
     if (egtSensor && egtSensor->enabled && egtSensor->displayOnOLED && egtSensor->value > -998.0) {
       indicatorXPos = ((egtSensor->value - minEGT) / (maxEGT - minEGT)) * gaugeBarWidth;
-      if (indicatorXPos < 0) indicatorXPos = 0; if (indicatorXPos > gaugeBarWidth -2) indicatorXPos = gaugeBarWidth - 2;
-      u8g2.drawBox(gaugeBarX + (int)indicatorXPos, egt_y_bar + 1, 2, 6);
+      if (indicatorXPos < 0) indicatorXPos = 0; if (indicatorXPos > gaugeBarWidth -2) indicatorXPos = gaugeBarWidth - 2; 
+      u8g2.drawBox(gaugeBarX + (int)indicatorXPos, egt_y_bar + 1, 2, 6); 
       u8g2.setCursor(valuePrintX, egt_y_label); u8g2.print((int)egtSensor->value);
     } else { u8g2.setCursor(valuePrintX, egt_y_label); u8g2.print("N/A");}
     int bst_y_label = 41; int bst_y_bar = bst_y_label - 8;
@@ -672,8 +672,8 @@ void updateOLED() { /* ... same as before ... */
       u8g2.setCursor(valuePrintX, bst_y_label); u8g2.print(boostSensor->value,0);
     } else { u8g2.setCursor(valuePrintX, bst_y_label); u8g2.print("N/A");}
     int ct_y_label = 52; int ct_y_bar = ct_y_label - 8;
-    u8g2.setCursor(labelX, ct_y_label); u8g2.print(F("CT "));
-    u8g2.drawFrame(gaugeBarX, ct_y_bar, gaugeBarWidth, 8);
+    u8g2.setCursor(labelX, ct_y_label); u8g2.print(F("CT ")); 
+    u8g2.drawFrame(gaugeBarX, ct_y_bar, gaugeBarWidth, 8); 
     if (ctGaugeSensor && ctGaugeSensor->enabled && ctGaugeSensor->displayOnOLED && ctGaugeSensor->value > -998.0) {
       indicatorXPos = ((ctGaugeSensor->value - minCT) / (maxCT - minCT)) * gaugeBarWidth;
       if (indicatorXPos < 0) indicatorXPos = 0; if (indicatorXPos > gaugeBarWidth-2) indicatorXPos = gaugeBarWidth-2;
@@ -693,19 +693,19 @@ void updateOLED() { /* ... same as before ... */
 void setup() {
   Serial.begin(115200);
   Serial.println("Booting Engine Monitor ESP32 (Integrated)...");
-
+  
   initSPIFFS(); // Initialize SPIFFS first
   loadConfiguration(); // Load configuration from SPIFFS or set defaults
-
-  sensors.begin();
+  
+  sensors.begin(); 
   Serial.println("DS18B20 sensors driver initialized.");
-
+  
   Serial.println("Initializing BMP280 sensor...");
-  if (bmp.begin(BMP280_ADDRESS_ALT)) {
+  if (bmp.begin(BMP280_ADDRESS_ALT)) { 
     bmpAvailable = true;
     Serial.println("BMP280 sensor found at 0x76.");
     bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, Adafruit_BMP280::SAMPLING_X2, Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16, Adafruit_BMP280::STANDBY_MS_500);
-  } else if (bmp.begin()) {
+  } else if (bmp.begin()) { 
     bmpAvailable = true;
     Serial.println("BMP280 sensor found at 0x77.");
     bmp.setSampling(Adafruit_BMP280::MODE_NORMAL, Adafruit_BMP280::SAMPLING_X2, Adafruit_BMP280::SAMPLING_X16, Adafruit_BMP280::FILTER_X16, Adafruit_BMP280::STANDBY_MS_500);
@@ -716,22 +716,22 @@ void setup() {
 
   initWifi();
   initWebServer();
-  initOLED();
+  initOLED(); 
 
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(FLASHER_LED_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(FLASHER_LED_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW); 
+  digitalWrite(FLASHER_LED_PIN, LOW); 
 
   discoverOneWireDevices(true, true); // Initial scan and print
 
   Serial.println("Setup Complete. Entering loop.");
 }
 
-void loop() {
+void loop() { 
   readAllSensors();
-  checkAllSensorAlerts();
+  checkAllSensorAlerts(); 
   if (oledAvailable) { updateOLED(); }
-  sendSensorEvents();
+  sendSensorEvents(); 
   discoverOneWireDevices(); // Periodically scan
 }

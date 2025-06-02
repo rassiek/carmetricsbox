@@ -82,7 +82,7 @@ function initGauges() {
       var sensorConfigs = JSON.parse(this.responseText);
       var cardGrid = document.getElementById('card-grid');
       cardGrid.innerHTML = ''; // Clear any existing static content
-
+      
       // Add D&D listeners to the grid
       cardGrid.addEventListener('dragover', onDragOver);
       cardGrid.addEventListener('drop', onDrop);
@@ -97,20 +97,20 @@ function initGauges() {
           cardDiv.draggable = true;
           cardDiv.addEventListener('dragstart', onDragStart);
           cardDiv.addEventListener('dragend', onDragEnd);
-
+          
           var titleP = document.createElement('p');
           titleP.className = 'card-title';
           titleP.textContent = sensor.name;
-
+          
           var canvas = document.createElement('canvas');
           var canvasId = 'gauge-canvas-' + sensor.id;
           canvas.id = canvasId;
-
+          
           cardDiv.appendChild(titleP);
           cardDiv.appendChild(canvas);
           // DON'T append to cardGrid yet, store it
           createdCards[sensor.id] = cardDiv;
-
+          
           // Determine gauge type and options (simplified)
           var gaugeOptions = {
             renderTo: canvasId,
@@ -156,7 +156,7 @@ function initGauges() {
           var newGauge;
           if (sensor.id.includes("pressure") || sensor.id.includes("boost") || sensor.id.includes("voltage")) {
             gaugeOptions.width = 120; gaugeOptions.height = 120;
-            gaugeOptions.needleType = "line";
+            gaugeOptions.needleType = "line"; 
             gaugeOptions.colorNeedle = "#007F80";
             gaugeOptions.colorNeedleEnd = "#007F80";
             gaugeOptions.needleWidth = 4;
@@ -189,7 +189,7 @@ function initGauges() {
       }
 
       // After initializing gauges, call getReadings for the first time
-      getReadings();
+      getReadings(); 
     } else if (this.readyState == 4) {
       console.error("Failed to load sensor configuration. Status: " + this.status);
       var cardGrid = document.getElementById('card-grid');
@@ -227,7 +227,7 @@ function getReadings() {
       // Silently ignore failed reading updates for now, or add minimal logging
       // console.error("Failed to get readings. Status: " + this.status);
     }
-  };
+  }; 
   xhr.open("GET", "/readings", true);
   xhr.send();
 }

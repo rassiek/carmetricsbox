@@ -68,7 +68,7 @@ function displaySensors(sensors) {
         row.insertCell().textContent = `P1:${sensor.pin1}, P2:${sensor.pin2}, P3:${sensor.pin3}`;
         row.insertCell().textContent = sensor.oneWireAddress === "0000000000000000" ? "N/A" : sensor.oneWireAddress;
         row.insertCell().textContent = `${sensor.warningThreshold}/${sensor.criticalThreshold}, ${sensor.lowerWarningThreshold}/${sensor.lowerCriticalThreshold}`;
-
+        
         const actionsCell = row.insertCell();
         const editButton = document.createElement('button');
         editButton.textContent = "Edit";
@@ -83,7 +83,7 @@ function populateEditForm(sensorId) {
     const form = document.getElementById('sensor-form');
     const formContainer = document.getElementById('sensor-edit-form-container');
     const formTitle = document.getElementById('form-title');
-
+    
     if (sensorId) { // Editing existing sensor
         const sensor = allSensorData.find(s => s.id === sensorId);
         if (!sensor) {
@@ -132,7 +132,7 @@ document.getElementById('sensor-form').addEventListener('submit', function(event
     const form = event.target;
     const originalId = form.elements['original-sensor-id'].value;
     const mode = form.elements['form-mode'].value;
-
+    
     // The ID sent to SET_SENSOR_CONF should be the one the Arduino knows if editing,
     // or the new one if adding. If ID can be changed, this needs more complex handling.
     // For now, if ID is editable in "add" mode, use that. If "edit" mode, use original ID.
@@ -178,7 +178,7 @@ document.getElementById('sensor-form').addEventListener('submit', function(event
 
 document.getElementById('btn-save-all-to-esp32-flash').addEventListener('click', function() {
     if (!confirm("Are you sure you want to save all current configurations to the ESP32's flash memory? This will overwrite current settings in flash.")) return;
-
+    
     var xhr = new XMLHttpRequest();
     xhr.onreadystatechange = function() {
         if (this.readyState == 4) {
@@ -274,10 +274,10 @@ function handleUseThisAddressClick(address) {
     }
     document.getElementById('sensor-type').value = 'DS18B20'; // Set type to DS18B20
     document.getElementById('sensor-onewire').value = address;
-
+    
     // Trigger change event for sensor type to show pin info if any
     document.getElementById('sensor-type').dispatchEvent(new Event('change'));
-
+    
     document.getElementById('sensor-id').focus(); // Focus on ID or name for user to complete
     displayStatusMessage(`OneWire address ${address} populated into form. Please complete other details.`, true);
 }
@@ -301,7 +301,7 @@ sensorTypeDropdown.addEventListener('change', function() {
     const pin2Input = document.getElementById('sensor-pin2');
     const pin3Input = document.getElementById('sensor-pin3');
     const oneWireInput = document.getElementById('sensor-onewire');
-
+    
     pinInfoSpan.textContent = ''; // Clear previous message
     oneWireInput.readOnly = true; // Default to readonly
 
