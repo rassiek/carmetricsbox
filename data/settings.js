@@ -176,47 +176,47 @@ document.getElementById('sensor-form').addEventListener('submit', function(event
     xhr.send(JSON.stringify(sensorData));
 });
 
-document.getElementById('btn-save-all-to-eeprom').addEventListener('click', function() {
-    if (!confirm("Are you sure you want to save all current configurations to Arduino's EEPROM? This will overwrite previous EEPROM settings.")) return;
+document.getElementById('btn-save-all-to-esp32-flash').addEventListener('click', function() {
+    if (!confirm("Are you sure you want to save all current configurations to the ESP32's flash memory? This will overwrite current settings in flash.")) return;
 
     var xhr = new XMLHttpRequest();
     xhr.onreadystatechange = function() {
         if (this.readyState == 4) {
             if (this.status == 200) {
-                displayStatusMessage("Successfully commanded Arduino to save configurations to EEPROM.", true);
+                displayStatusMessage("Successfully commanded ESP32 to save configurations to flash.", true);
             } else {
                  try {
                     const errResp = JSON.parse(this.responseText);
-                    displayStatusMessage("Error saving to EEPROM: " + (errResp.message || this.statusText), false);
+                    displayStatusMessage("Error saving to ESP32 flash: " + (errResp.message || this.statusText), false);
                 } catch(e) {
-                    displayStatusMessage("Error saving to EEPROM. Status: " + this.status + " " + this.statusText, false);
+                    displayStatusMessage("Error saving to ESP32 flash. Status: " + this.status + " " + this.statusText, false);
                 }
             }
         }
     };
-    xhr.open("POST", "/api/saveconfig", true);
+    xhr.open("POST", "/api/saveconfig", true); // This endpoint on ESP32 now saves to SPIFFS
     xhr.send();
 });
 
-document.getElementById('btn-load-defaults').addEventListener('click', function() {
-    if (!confirm("Are you sure you want to load default configurations on the Arduino? Current unsaved changes on Arduino will be overwritten. You may need to 'Save All' afterwards to persist them to EEPROM.")) return;
+document.getElementById('btn-load-defaults-esp32').addEventListener('click', function() {
+    if (!confirm("Are you sure you want to load default configurations on the ESP32? This will overwrite current settings in RAM and save these defaults to its flash memory.")) return;
 
     var xhr = new XMLHttpRequest();
     xhr.onreadystatechange = function() {
         if (this.readyState == 4) {
             if (this.status == 200) {
-                displayStatusMessage("Arduino commanded to load default configurations. Refreshing list...", true);
-                loadSensorConfigurations(); // Refresh list to show defaults loaded in Arduino RAM
+                displayStatusMessage("ESP32 commanded to load and save default configurations. Refreshing list...", true);
+                loadSensorConfigurations(); // Refresh list to show defaults
             } else {
                  try {
                     const errResp = JSON.parse(this.responseText);
-                    displayStatusMessage("Error loading defaults: " + (errResp.message || this.statusText), false);
+                    displayStatusMessage("Error loading defaults on ESP32: " + (errResp.message || this.statusText), false);
                 } catch(e) {
-                    displayStatusMessage("Error loading defaults. Status: " + this.status + " " + this.statusText, false);
+                    displayStatusMessage("Error loading defaults on ESP32. Status: " + this.status + " " + this.statusText, false);
                 }
             }
         }
     };
-    xhr.open("POST", "/api/loaddefaults", true);
+    xhr.open("POST", "/api/loaddefaults", true); // This endpoint on ESP32 loads defaults and saves to SPIFFS
     xhr.send();
 });
