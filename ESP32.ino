@@ -52,10 +52,10 @@ String getValue(const String lines[], const String& key) {
 String getSensorReadings() {
   JSONVar newReadings; // Use a local JSONVar to build the new set of readings
   String lines[32];    // Increased size to handle more potential sensor lines
-  
+
   if (lastBlock.length() == 0) {
     // Return empty JSON object string if lastBlock is empty
-    return JSON.stringify(newReadings); 
+    return JSON.stringify(newReadings);
   }
 
   int numLines = splitMessage(lastBlock, lines);
@@ -69,18 +69,18 @@ String getSensorReadings() {
       key.trim();
       String value = currentLine.substring(separatorIndex + 1);
       value.trim();
-      
+
       if (key.length() > 0 && value.length() > 0) {
         newReadings[key] = value;
       }
     }
   }
-  
+
   // The global 'readings' variable is updated here for any other potential uses,
   // though it's better practice to pass data explicitly.
   // For the purpose of events.send, this ensures the global 'readings' is up-to-date if it's used elsewhere.
   // However, the function directly returns the stringified newReadings, which is what /readings endpoint uses.
-  readings = newReadings; 
+  readings = newReadings;
 
   String jsonString = JSON.stringify(newReadings);
   return jsonString;
@@ -101,7 +101,7 @@ String sendArduinoCommand(const String& command, unsigned long timeout = 2000) {
         response += line + "\n"; // Append each line
         if (line.equals("END_CONF_LIST")) {
           foundEndMarker = true;
-          break; 
+          break;
         }
       }
     }
@@ -117,7 +117,7 @@ String sendArduinoCommand(const String& command, unsigned long timeout = 2000) {
       }
     }
   }
-  Serial.print("Arduino command '"); Serial.print(command.substring(0, command.length()-1)); 
+  Serial.print("Arduino command '"); Serial.print(command.substring(0, command.length()-1));
   Serial.print("' response: '"); Serial.print(response); Serial.println("'");
   return response;
 }
@@ -157,11 +157,11 @@ void setup() {
   Serial.println("Access Point IP address: " + apIP.toString());
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
-  
+
 /*
- 
+
   //Set ESP32 as Wifi Client
- 
+
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(2000);
@@ -170,11 +170,11 @@ void setup() {
   Serial.println("Connected to WiFi");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
- 
-  
+
+
   */
-  
-  
+
+
   initSPIFFS();
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -201,7 +201,7 @@ void setup() {
   server.on("/highcharts.js", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/highcharts.js", "application/javascript");
   });
-    
+
 
   server.serveStatic("/", SPIFFS, "/");
 
@@ -215,7 +215,7 @@ void setup() {
   server.on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest *request){
     String rawConf = sendArduinoCommand("GET_ALL_CONF\n");
     JSONVar sensorsArray;
-    
+
     String lines[64]; // Max 64 sensors for config display for now
     int numLines = splitMessage(rawConf, lines);
     bool listStarted = false;
@@ -284,7 +284,7 @@ void setup() {
       request->send(500, "application/json", "{\"status\": \"error\", \"message\": \"Failed to load defaults on Arduino\", \"arduino_response\": \"" + response + "\"}");
     }
   });
-  
+
   // Handler for POST /api/setconfig
   server.onRequestBody([](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
     if (request->url().equals("/api/setconfig") && request->method() == HTTP_POST) {
@@ -293,7 +293,7 @@ void setup() {
       }
       String* bodyStr = (String*)request->_tempObject;
       bodyStr->concat((char*)data, len);
-      
+
       if (index + len == total) { // All data received
         Serial.println("Received POST to /api/setconfig with body: " + *bodyStr);
         JSONVar jsonData = JSON.parse(*bodyStr);
@@ -314,14 +314,14 @@ void setup() {
         String name = jsonData.hasOwnProperty("name") ? (const char*) jsonData["name"] : "Unknown";
         String typeStr = jsonData.hasOwnProperty("sensorType") ? (const char*) jsonData["sensorType"] : "UNDEF";
         int typeInt = convertSensorTypeStringToInt(typeStr);
-        
+
         String p1 = jsonData.hasOwnProperty("pin1") ? String((int)jsonData["pin1"]) : "-1";
         String p2 = jsonData.hasOwnProperty("pin2") ? String((int)jsonData["pin2"]) : "-1";
         String p3 = jsonData.hasOwnProperty("pin3") ? String((int)jsonData["pin3"]) : "-1";
-        
+
         String addr_hex = jsonData.hasOwnProperty("oneWireAddress") ? (const char*)jsonData["oneWireAddress"] : "0000000000000000";
         String enabled = jsonData.hasOwnProperty("enabled") ? ( (bool)jsonData["enabled"] ? "1" : "0" ) : "0";
-        
+
         String wT = jsonData.hasOwnProperty("warningThreshold") ? String((double)jsonData["warningThreshold"], 2) : "0.00";
         String cT = jsonData.hasOwnProperty("criticalThreshold") ? String((double)jsonData["criticalThreshold"], 2) : "0.00";
         String lwT = jsonData.hasOwnProperty("lowerWarningThreshold") ? String((double)jsonData["lowerWarningThreshold"], 2) : "0.00";
@@ -336,7 +336,7 @@ void setup() {
         String command = "SET_SENSOR_CONF " + id + " " + name + " " + String(typeInt) + " " +
                          p1 + " " + p2 + " " + p3 + " " + addr_hex + " " + enabled + " " +
                          wT + " " + cT + " " + lwT + " " + lcT + "\n";
-        
+
         Serial.print("Sending to Arduino: "); Serial.println(command);
         String response = sendArduinoCommand(command);
 
