@@ -69,5 +69,5 @@ canvas {
 /* Optional: Style for when dragging over the container */
 .card-grid.drag-over {
   /* Example: light grey background - often handled by JS adding a class dynamically */
-  /* background-color: #e0e0e0; */ 
+  /* background-color: #e0e0e0; */
 }

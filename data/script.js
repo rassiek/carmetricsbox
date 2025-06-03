@@ -82,7 +82,7 @@ function initGauges() {
       var sensorConfigs = JSON.parse(this.responseText);
       var cardGrid = document.getElementById('card-grid');
       cardGrid.innerHTML = ''; // Clear any existing static content
-      
+
       // Add D&D listeners to the grid
       cardGrid.addEventListener('dragover', onDragOver);
       cardGrid.addEventListener('drop', onDrop);
@@ -97,21 +97,37 @@ function initGauges() {
           cardDiv.draggable = true;
           cardDiv.addEventListener('dragstart', onDragStart);
           cardDiv.addEventListener('dragend', onDragEnd);
-          
+
           var titleP = document.createElement('p');
           titleP.className = 'card-title';
           titleP.textContent = sensor.name;
-          
+
           var canvas = document.createElement('canvas');
           var canvasId = 'gauge-canvas-' + sensor.id;
           canvas.id = canvasId;
-          
+
           cardDiv.appendChild(titleP);
           cardDiv.appendChild(canvas);
           // DON'T append to cardGrid yet, store it
           createdCards[sensor.id] = cardDiv;
-          
+
           // Determine gauge type and options (simplified)
+
+          // ---- START DIAGNOSTIC CODE ----
+          console.log("Preparing gauge for sensor ID:", sensor.id, "Name:", sensor.name);
+          const canvasIdForDiag = 'gauge-canvas-' + sensor.id; // same as canvas.id
+          // Check the 'canvas' object directly (which is 'canvas' variable in this scope)
+          if (!canvas) {
+              console.error("ERROR: Canvas object for ID '" + canvasIdForDiag + "' was NOT created.");
+          } else if (canvas.id !== canvasIdForDiag) {
+               console.error("ERROR: Canvas object for ID '" + canvasIdForDiag + "' has mismatched ID: ", canvas.id);
+          } else if (!(canvas instanceof HTMLCanvasElement)) {
+              console.error("ERROR: Element created for ID '" + canvasIdForDiag + "' is NOT an HTMLCanvasElement. It is:", canvas);
+          } else {
+              console.log("Canvas object for ID '" + canvasIdForDiag + "' IS a valid HTMLCanvasElement and is child of cardDiv. Ready for gauge init.");
+          }
+          // ---- END DIAGNOSTIC CODE ----
+
           var gaugeOptions = {
             renderTo: canvasId,
             width: 120, // Default width
@@ -156,7 +172,7 @@ function initGauges() {
           var newGauge;
           if (sensor.id.includes("pressure") || sensor.id.includes("boost") || sensor.id.includes("voltage")) {
             gaugeOptions.width = 120; gaugeOptions.height = 120;
-            gaugeOptions.needleType = "line"; 
+            gaugeOptions.needleType = "line";
             gaugeOptions.colorNeedle = "#007F80";
             gaugeOptions.colorNeedleEnd = "#007F80";
             gaugeOptions.needleWidth = 4;
@@ -189,7 +205,7 @@ function initGauges() {
       }
 
       // After initializing gauges, call getReadings for the first time
-      getReadings(); 
+      getReadings();
     } else if (this.readyState == 4) {
       console.error("Failed to load sensor configuration. Status: " + this.status);
       var cardGrid = document.getElementById('card-grid');
@@ -227,7 +243,7 @@ function getReadings() {
       // Silently ignore failed reading updates for now, or add minimal logging
       // console.error("Failed to get readings. Status: " + this.status);
     }
-  }; 
+  };
   xhr.open("GET", "/readings", true);
   xhr.send();
 }
