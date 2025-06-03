@@ -269,6 +269,7 @@ void loadDefaultConfiguration() { /* ... same as before ... */
 }
 
 void saveConfiguration() {
+  Serial.printf("SAVE_CONF_INFO: SPIFFS Total: %d, Used: %d, Free: %d\n", SPIFFS.totalBytes(), SPIFFS.usedBytes(), SPIFFS.totalBytes() - SPIFFS.usedBytes());
   Serial.println("Saving configuration to SPIFFS...");
   JSONVar sensorsArray;
   for (int i = 0; i < numConfiguredSensors; i++) {
@@ -290,20 +291,32 @@ void saveConfiguration() {
     sensorsArray[i] = sensorConf;
   }
 
-  File configFile = SPIFFS.open(CONFIG_FILE, "w");
+  File configFile = SPIFFS.open(CONFIG_FILE, "w"); // Changed from FILE_WRITE to "w"
   if (!configFile) {
-    Serial.println("Failed to open config file for writing");
+    Serial.println("SAVE_CONF_ERROR: Failed to open config file for writing. Check SPIFFS status.");
+    Serial.printf("SAVE_CONF_DEBUG: SPIFFS.exists(CONFIG_FILE) before open: %s\n", SPIFFS.exists(CONFIG_FILE) ? "true" : "false");
     return;
   }
-  // ArduinoJSON 6: use serializeJson
+  Serial.println("SAVE_CONF_INFO: Config file opened for writing successfully.");
+
   String jsonString;
-  JSON.stringify(sensorsArray, jsonString); // Serialize to string first
-  if (configFile.print(jsonString)) { // Then print string to file
-    Serial.println("Configuration saved successfully to SPIFFS.");
+  // Corrected usage for Arduino_JSON: it typically returns the string
+  jsonString = JSON.stringify(sensorsArray);
+
+  Serial.println("SAVE_CONF_INFO: Attempting to write JSON to config file...");
+  Serial.print("SAVE_CONF_INFO: JSON String to write (length ");
+  Serial.print(jsonString.length());
+  Serial.print("): ");
+  Serial.println(jsonString);
+
+  size_t bytesWritten = configFile.print(jsonString);
+  if (bytesWritten == jsonString.length()) {
+    Serial.printf("SAVE_CONF_SUCCESS: Successfully wrote %d bytes to config file.\n", bytesWritten);
   } else {
-    Serial.println("Failed to write to config file");
+    Serial.printf("SAVE_CONF_ERROR: Bytes written (%d) does not match JSON string length (%d). File write operation may have failed or been partial.\n", bytesWritten, jsonString.length());
   }
   configFile.close();
+  Serial.println("SAVE_CONF_INFO: Config file closed.");
 }
 
 void loadConfiguration() {
