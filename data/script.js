@@ -129,7 +129,7 @@ function initGauges() {
           // ---- END DIAGNOSTIC CODE ----
 
           var gaugeOptions = {
-            renderTo: canvasId,
+            renderTo: canvas, // Changed from canvasId to the canvas DOM element directly
             width: 120, // Default width
             height: 120, // Default height for radial, adjust for linear
             units: "N/A",
