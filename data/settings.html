@@ -82,6 +82,7 @@
     <div class="topnav">
         <h1>Sensor Configuration</h1>
         <a href="index.html">View Gauges</a>
+        <a href="gpio_control.html">GPIO Control</a>
     </div>
 
     <div class="content">
@@ -162,6 +163,57 @@
             </div>
             <div id="onewire-scan-results" style="margin-top: 10px;">
                 <!-- Scan results will be populated here -->
+            </div>
+        </div>
+
+        <hr style="margin-top: 30px; margin-bottom: 20px;">
+
+        <div id="gpio-panel-config-section">
+            <h2>GPIO Control Panel Configuration</h2>
+            <div class="action-buttons">
+                <button id="btn-add-new-gpio">Add New GPIO Pin</button>
+            </div>
+            <div id="gpio-config-list-area">
+                <!-- GPIO configurations will be loaded here -->
+                <p>Loading GPIO configurations...</p>
+            </div>
+
+            <div id="gpio-edit-form-container" class="hidden" style="margin-top: 20px; border: 1px solid #ccc; padding: 20px; background-color: #f9f9f9;">
+                <h3 id="gpio-form-title">Add/Edit GPIO Pin</h3>
+                <form id="gpio-form">
+                    <input type="hidden" id="gpio-form-mode" value="add">
+                    <input type="hidden" id="original-gpio-id" value="">
+
+                    <label for="gpio-id">ID (unique, no spaces):</label>
+                    <input type="text" id="gpio-id" name="id" required>
+
+                    <label for="gpio-name">Name (user-friendly):</label>
+                    <input type="text" id="gpio-name" name="name" required>
+
+                    <label for="gpio-pin-number">ESP32 Pin Number:</label>
+                    <input type="number" id="gpio-pin-number" name="pinNumber" required>
+
+                    <label for="gpio-mode">Mode:</label>
+                    <select id="gpio-mode" name="mode">
+                        <option value="ON_OFF">ON/OFF Switch</option>
+                        <option value="BLINK">Blinking Output</option>
+                    </select>
+
+                    <div id="gpio-on-off-settings">
+                        <label for="gpio-default-state">Default State (ON if checked):</label>
+                        <input type="checkbox" id="gpio-default-state" name="defaultState">
+                    </div>
+
+                    <div id="gpio-blink-settings" class="hidden">
+                        <label for="gpio-default-blink-active">Blinking by Default (Active if checked):</label>
+                        <input type="checkbox" id="gpio-default-blink-active" name="defaultBlinkActive">
+                        <label for="gpio-default-blink-delay">Default Blink Delay (ms):</label>
+                        <input type="number" id="gpio-default-blink-delay" name="defaultBlinkDelayMs" value="500">
+                    </div>
+
+                    <button type="submit" id="btn-save-gpio-config">Save GPIO Config</button>
+                    <button type="button" id="btn-cancel-gpio-edit">Cancel</button>
+                </form>
             </div>
         </div>
     </div>
