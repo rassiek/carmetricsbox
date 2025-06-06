@@ -320,3 +320,243 @@ sensorTypeDropdown.addEventListener('change', function() {
 });
 // Initial check in case form is pre-filled on load (e.g. by browser)
 sensorTypeDropdown.dispatchEvent(new Event('change'));
+
+// --- GPIO Panel Configuration ---
+let allGPIOConfigs = [];
+
+function loadGPIOConfigurations() {
+    console.log("Loading GPIO configurations...");
+    const gpioListArea = document.getElementById('gpio-config-list-area');
+    gpioListArea.innerHTML = '<p>Loading GPIO configurations...</p>';
+
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+        if (this.readyState == 4) {
+            if (this.status == 200) {
+                try {
+                    allGPIOConfigs = JSON.parse(this.responseText);
+                    displayGPIOConfigs(allGPIOConfigs);
+                } catch (e) {
+                    gpioListArea.innerHTML = '<p style="color: red;">Error parsing GPIO configurations.</p>';
+                    console.error("Parse error for GPIO configs:", e);
+                    displayStatusMessage("Error parsing GPIO configurations from ESP32.", false);
+                }
+            } else {
+                gpioListArea.innerHTML = '<p style="color: red;">Failed to load GPIO configurations. Status: ' + this.status + '</p>';
+                displayStatusMessage("Failed to load GPIO configurations. Status: " + this.status, false);
+            }
+        }
+    };
+    xhr.open("GET", "/api/gpioconfig", true);
+    xhr.send();
+}
+
+function displayGPIOConfigs(gpioConfigs) {
+    const gpioListArea = document.getElementById('gpio-config-list-area');
+    gpioListArea.innerHTML = '';
+
+    if (!gpioConfigs || gpioConfigs.length === 0) {
+        gpioListArea.innerHTML = '<p>No GPIO pin configurations found.</p>';
+        return;
+    }
+
+    const table = document.createElement('table');
+    const thead = table.createTHead();
+    const tbody = table.createTBody();
+    const headerRow = thead.insertRow();
+    const headers = ["ID", "Name", "Pin", "Mode", "Default State/Delay", "Actions"];
+    headers.forEach(text => {
+        const th = document.createElement('th');
+        th.textContent = text;
+        headerRow.appendChild(th);
+    });
+
+    gpioConfigs.forEach(config => {
+        const row = tbody.insertRow();
+        row.insertCell().textContent = config.id;
+        row.insertCell().textContent = config.name;
+        row.insertCell().textContent = config.pinNumber;
+        row.insertCell().textContent = config.mode; // Already a string like "ON_OFF" or "BLINK"
+
+        let defaultsText = "";
+        if (config.mode === "ON_OFF") {
+            defaultsText = config.defaultState ? "ON" : "OFF";
+        } else if (config.mode === "BLINK") {
+            defaultsText = `Initial: ${config.defaultState ? "Blinking" : "Not Blinking"}, Delay: ${config.defaultBlinkDelayMs}ms`;
+        }
+        row.insertCell().textContent = defaultsText;
+
+        const actionsCell = row.insertCell();
+        const editButton = document.createElement('button');
+        editButton.textContent = "Edit";
+        editButton.onclick = function() { populateGPIOEditForm(config.id); };
+        actionsCell.appendChild(editButton);
+
+        const removeButton = document.createElement('button');
+        removeButton.textContent = "Remove";
+        removeButton.style.marginLeft = "5px";
+        removeButton.onclick = function() { handleRemoveGPIOConfig(config.id); };
+        actionsCell.appendChild(removeButton);
+    });
+    gpioListArea.appendChild(table);
+}
+
+function toggleGPIOFormFields(mode) {
+    const onOffSettings = document.getElementById('gpio-on-off-settings');
+    const blinkSettings = document.getElementById('gpio-blink-settings');
+    if (mode === 'ON_OFF') {
+        onOffSettings.classList.remove('hidden');
+        blinkSettings.classList.add('hidden');
+    } else if (mode === 'BLINK') {
+        onOffSettings.classList.add('hidden'); // Or repurpose defaultState for initial blink state
+        blinkSettings.classList.remove('hidden');
+    } else {
+        onOffSettings.classList.add('hidden');
+        blinkSettings.classList.add('hidden');
+    }
+}
+
+document.getElementById('gpio-mode').addEventListener('change', function() {
+    toggleGPIOFormFields(this.value);
+});
+
+function populateGPIOEditForm(gpioId) {
+    const form = document.getElementById('gpio-form');
+    const formContainer = document.getElementById('gpio-edit-form-container');
+    const formTitle = document.getElementById('gpio-form-title');
+
+    if (gpioId) { // Editing
+        const config = allGPIOConfigs.find(g => g.id === gpioId);
+        if (!config) {
+            displayStatusMessage("Error: GPIO config not found for editing.", false);
+            return;
+        }
+        formTitle.textContent = "Edit GPIO Pin: " + config.name;
+        form.elements['gpio-form-mode'].value = "edit";
+        form.elements['original-gpio-id'].value = config.id;
+
+        form.elements['gpio-id'].value = config.id;
+        form.elements['gpio-name'].value = config.name;
+        form.elements['gpio-pin-number'].value = config.pinNumber;
+        form.elements['gpio-mode'].value = config.mode; // e.g. "ON_OFF"
+        if (config.mode === "ON_OFF") {
+            form.elements['gpio-default-state'].checked = config.defaultState;
+        } else if (config.mode === "BLINK") {
+            form.elements['gpio-default-blink-active'].checked = config.defaultState; // defaultState used for initial blink active state
+            form.elements['gpio-default-blink-delay'].value = config.defaultBlinkDelayMs;
+        }
+        form.elements['gpio-id'].readOnly = true;
+    } else { // Adding
+        formTitle.textContent = "Add New GPIO Pin";
+        form.reset();
+        form.elements['gpio-form-mode'].value = "add";
+        form.elements['original-gpio-id'].value = "";
+        form.elements['gpio-id'].readOnly = false;
+        form.elements['gpio-default-state'].checked = false; // Explicitly uncheck
+        form.elements['gpio-default-blink-active'].checked = false; // Explicitly uncheck
+        form.elements['gpio-default-blink-delay'].value = "500";
+
+    }
+    toggleGPIOFormFields(form.elements['gpio-mode'].value); // Show/hide fields based on current mode
+    formContainer.classList.remove('hidden');
+}
+
+document.getElementById('btn-add-new-gpio').addEventListener('click', function() {
+    populateGPIOEditForm(null);
+});
+
+document.getElementById('btn-cancel-gpio-edit').addEventListener('click', function() {
+    document.getElementById('gpio-edit-form-container').classList.add('hidden');
+    document.getElementById('gpio-form').reset();
+});
+
+document.getElementById('gpio-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+    const form = event.target;
+    const mode = form.elements['gpio-form-mode'].value;
+    const originalId = form.elements['original-gpio-id'].value;
+    const id = form.elements['gpio-id'].value;
+
+    if (!id || !form.elements['gpio-name'].value || !form.elements['gpio-pin-number'].value) {
+        displayStatusMessage("Error: ID, Name, and Pin Number are required.", false);
+        return;
+    }
+
+    const gpioData = {
+        id: id,
+        name: form.elements['gpio-name'].value,
+        pinNumber: parseInt(form.elements['gpio-pin-number'].value),
+        mode: form.elements['gpio-mode'].value, // "ON_OFF" or "BLINK"
+        defaultState: form.elements['gpio-mode'].value === 'ON_OFF' ? form.elements['gpio-default-state'].checked : form.elements['gpio-default-blink-active'].checked,
+        defaultBlinkDelayMs: form.elements['gpio-mode'].value === 'BLINK' ? parseInt(form.elements['gpio-default-blink-delay'].value) : 0
+    };
+
+    let updatedConfigs;
+    if (mode === 'edit') {
+        updatedConfigs = allGPIOConfigs.map(g => g.id === originalId ? gpioData : g);
+    } else { // add
+        if (allGPIOConfigs.find(g => g.id === id)) {
+            displayStatusMessage(`Error: GPIO Pin with ID '${id}' already exists.`, false);
+            return;
+        }
+        updatedConfigs = [...allGPIOConfigs, gpioData];
+    }
+
+    console.log("Saving GPIO configurations:", updatedConfigs);
+
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+        if (this.readyState == 4) {
+            if (this.status == 200) {
+                displayStatusMessage("GPIO configurations saved successfully.", true);
+                loadGPIOConfigurations(); // Refresh list
+                document.getElementById('gpio-edit-form-container').classList.add('hidden');
+            } else {
+                try {
+                    const errResp = JSON.parse(this.responseText);
+                    displayStatusMessage("Error saving GPIO config: " + (errResp.message || this.statusText), false);
+                } catch(e) {
+                    displayStatusMessage("Error saving GPIO config. Status: " + this.status + " " + this.statusText, false);
+                }
+            }
+        }
+    };
+    xhr.open("POST", "/api/gpioconfig", true);
+    xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+    xhr.send(JSON.stringify(updatedConfigs)); // Send the entire array
+});
+
+function handleRemoveGPIOConfig(gpioIdToRemove) {
+    if (!confirm(`Are you sure you want to remove GPIO pin configuration '${gpioIdToRemove}'?`)) return;
+
+    allGPIOConfigs = allGPIOConfigs.filter(g => g.id !== gpioIdToRemove);
+
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+        if (this.readyState == 4) {
+            if (this.status == 200) {
+                displayStatusMessage(`GPIO configuration '${gpioIdToRemove}' removed successfully.`, true);
+                loadGPIOConfigurations(); // Refresh the list
+            } else {
+                try {
+                    const errResp = JSON.parse(this.responseText);
+                    displayStatusMessage("Error removing GPIO config: " + (errResp.message || this.statusText), false);
+                } catch(e) {
+                    displayStatusMessage("Error removing GPIO config. Status: " + this.status + " " + this.statusText, false);
+                }
+                // If removal failed, we might want to re-fetch to get the true state
+                loadGPIOConfigurations();
+            }
+        }
+    };
+    xhr.open("POST", "/api/gpioconfig", true);
+    xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+    xhr.send(JSON.stringify(allGPIOConfigs)); // Send the modified full list
+}
+
+// Update main page load listener
+window.removeEventListener('load', loadSensorConfigurations); // Remove old one if present
+window.addEventListener('load', function() {
+    loadSensorConfigurations();
+    loadGPIOConfigurations();
+});
