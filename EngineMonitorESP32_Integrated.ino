@@ -272,9 +272,13 @@ void readAnalogVoltageSensor(SensorConfig &sensor) { /* ... same ... */
 
 // --- GPIO Control Functions ---
 void initializeGPIOPin(GPIOPinConfig &config) {
-    if (config.pinNumber >= GPIO_NUM_MAX) {
-        Serial.printf("Error: Invalid pin number %d for GPIO %s\n", config.pinNumber, config.id.c_str());
-        return;
+    Serial.printf("INIT_GPIO: ID: %s, Name: %s, PinNum: %u, Mode: %d, Enabled: %s, DefState: %s, DefDelay: %lu\n",
+                  config.id.c_str(), config.name.c_str(), config.pinNumber, config.mode,
+                  config.enabled ? "true":"false", config.defaultState ? "true":"false", config.defaultBlinkDelayMs);
+
+    if (config.pinNumber >= GPIO_NUM_MAX) { // GPIO_NUM_MAX is typically defined in ESP-IDF, around 40-48
+        Serial.printf("ERROR_GPIO_INIT: Invalid pinNumber %u for GPIO ID '%s'. Skipping pinMode/digitalWrite.\n", config.pinNumber, config.id.c_str());
+        return; // Important: prevent using an invalid pin number
     }
     pinMode(config.pinNumber, OUTPUT);
     config.currentState = config.defaultState;
@@ -301,19 +305,41 @@ void initializeGPIOPin(GPIOPinConfig &config) {
 void handleGPIOOutputs() {
     unsigned long currentTime = millis();
     for (int i = 0; i < numConfiguredGPIOPins; i++) {
-        if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) continue;
+        Serial.printf("HANDLE_GPIO: ID: %s, PinNum: %u, Mode: %d, Enabled: %s, currentState: %s, currentDelay: %lu\n",
+                      configuredGPIOPins[i].id.c_str(), configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].mode,
+                      configuredGPIOPins[i].enabled ? "true":"false", configuredGPIOPins[i].currentState ? "true":"false", configuredGPIOPins[i].currentBlinkDelayMs);
+
+        if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
+             Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s'. Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
+             continue; // Skip further processing for this iteration if pin number is invalid
+        }
 
         if (configuredGPIOPins[i].mode == GPIO_MODE_BLINK) {
             if (configuredGPIOPins[i].currentState && configuredGPIOPins[i].currentBlinkDelayMs > 0) {
                 if (currentTime - configuredGPIOPins[i].lastBlinkToggleTime >= configuredGPIOPins[i].currentBlinkDelayMs) {
+                    // Validation before digitalWrite
+                    if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
+                         Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s' (blink toggle). Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
+                         continue;
+                    }
                     digitalWrite(configuredGPIOPins[i].pinNumber, !digitalRead(configuredGPIOPins[i].pinNumber));
                     configuredGPIOPins[i].lastBlinkToggleTime = currentTime;
                 }
             } else { // Not actively blinking (either currentState is false or delay is 0)
                  bool steadyState = (configuredGPIOPins[i].currentState && configuredGPIOPins[i].currentBlinkDelayMs == 0) ? HIGH : LOW;
+                 // Validation before digitalWrite
+                 if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
+                      Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s' (blink steady). Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
+                      continue;
+                 }
                  digitalWrite(configuredGPIOPins[i].pinNumber, steadyState);
             }
         } else { // GPIO_MODE_ON_OFF
+            // Validation before digitalWrite
+            if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
+                 Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s' (on/off). Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
+                 continue;
+            }
             digitalWrite(configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].currentState ? HIGH : LOW);
         }
     }
