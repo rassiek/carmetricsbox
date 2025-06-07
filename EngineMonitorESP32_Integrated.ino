@@ -70,6 +70,7 @@ struct GPIOPinConfig {
   String name;
   uint8_t pinNumber;
   PinModeType mode;
+  bool enabled; //Added fix1
   bool defaultState;
   unsigned long defaultBlinkDelayMs;
   bool currentState;
@@ -274,11 +275,13 @@ void readAnalogVoltageSensor(SensorConfig &sensor) { /* ... same ... */
 void initializeGPIOPin(GPIOPinConfig &config) {
     Serial.printf("INIT_GPIO: ID: %s, Name: %s, PinNum: %u, Mode: %d, Enabled: %s, DefState: %s, DefDelay: %lu\n",
                   config.id.c_str(), config.name.c_str(), config.pinNumber, config.mode,
-                  config.enabled ? "true":"false", config.defaultState ? "true":"false", config.defaultBlinkDelayMs);
-
-    if (config.pinNumber >= GPIO_NUM_MAX) { // GPIO_NUM_MAX is typically defined in ESP-IDF, around 40-48
-        Serial.printf("ERROR_GPIO_INIT: Invalid pinNumber %u for GPIO ID '%s'. Skipping pinMode/digitalWrite.\n", config.pinNumber, config.id.c_str());
-        return; // Important: prevent using an invalid pin number
+                  config.enabled ? "true":"false", config.defaultState ? "true":"false", config.defaultBlinkDelayMs);    
+   
+    
+    
+    if (config.pinNumber >= GPIO_NUM_MAX) {
+        Serial.printf("Error: Invalid pin number %d for GPIO %s\n", config.pinNumber, config.id.c_str());
+        return;
     }
     pinMode(config.pinNumber, OUTPUT);
     config.currentState = config.defaultState;
@@ -305,41 +308,19 @@ void initializeGPIOPin(GPIOPinConfig &config) {
 void handleGPIOOutputs() {
     unsigned long currentTime = millis();
     for (int i = 0; i < numConfiguredGPIOPins; i++) {
-        Serial.printf("HANDLE_GPIO: ID: %s, PinNum: %u, Mode: %d, Enabled: %s, currentState: %s, currentDelay: %lu\n",
-                      configuredGPIOPins[i].id.c_str(), configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].mode,
-                      configuredGPIOPins[i].enabled ? "true":"false", configuredGPIOPins[i].currentState ? "true":"false", configuredGPIOPins[i].currentBlinkDelayMs);
-
-        if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
-             Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s'. Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
-             continue; // Skip further processing for this iteration if pin number is invalid
-        }
+        if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) continue;
 
         if (configuredGPIOPins[i].mode == GPIO_MODE_BLINK) {
             if (configuredGPIOPins[i].currentState && configuredGPIOPins[i].currentBlinkDelayMs > 0) {
                 if (currentTime - configuredGPIOPins[i].lastBlinkToggleTime >= configuredGPIOPins[i].currentBlinkDelayMs) {
-                    // Validation before digitalWrite
-                    if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
-                         Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s' (blink toggle). Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
-                         continue;
-                    }
                     digitalWrite(configuredGPIOPins[i].pinNumber, !digitalRead(configuredGPIOPins[i].pinNumber));
                     configuredGPIOPins[i].lastBlinkToggleTime = currentTime;
                 }
             } else { // Not actively blinking (either currentState is false or delay is 0)
                  bool steadyState = (configuredGPIOPins[i].currentState && configuredGPIOPins[i].currentBlinkDelayMs == 0) ? HIGH : LOW;
-                 // Validation before digitalWrite
-                 if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
-                      Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s' (blink steady). Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
-                      continue;
-                 }
                  digitalWrite(configuredGPIOPins[i].pinNumber, steadyState);
             }
         } else { // GPIO_MODE_ON_OFF
-            // Validation before digitalWrite
-            if (configuredGPIOPins[i].pinNumber >= GPIO_NUM_MAX) {
-                 Serial.printf("ERROR_GPIO_HANDLE: Invalid pinNumber %u for GPIO ID '%s' (on/off). Skipping digitalWrite.\n", configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].id.c_str());
-                 continue;
-            }
             digitalWrite(configuredGPIOPins[i].pinNumber, configuredGPIOPins[i].currentState ? HIGH : LOW);
         }
     }
@@ -357,7 +338,33 @@ void initSPIFFS() { /* ... same ... */
 void loadDefaultGPIOConfiguration() { /* ... same ... */
   Serial.println("Loading default GPIO configurations...");
   numConfiguredGPIOPins = 0;
-  if (numConfiguredGPIOPins < MAX_GPIO_PINS) {
+
+   if (numConfiguredGPIOPins < MAX_GPIO_PINS) {
+        configuredGPIOPins[numConfiguredGPIOPins].id = "pump1";
+        configuredGPIOPins[numConfiguredGPIOPins].name = "Fuel Pump Relay";
+        configuredGPIOPins[numConfiguredGPIOPins].pinNumber = 26;
+        configuredGPIOPins[numConfiguredGPIOPins].mode = GPIO_MODE_ON_OFF;
+        configuredGPIOPins[numConfiguredGPIOPins].enabled = true; // <<< ADD THIS
+        configuredGPIOPins[numConfiguredGPIOPins].defaultState = false;
+        configuredGPIOPins[numConfiguredGPIOPins].defaultBlinkDelayMs = 0;
+        initializeGPIOPin(configuredGPIOPins[numConfiguredGPIOPins]);
+        numConfiguredGPIOPins++;
+   }
+
+   if (numConfiguredGPIOPins < MAX_GPIO_PINS) {
+        configuredGPIOPins[numConfiguredGPIOPins].id = "warn_led";
+        configuredGPIOPins[numConfiguredGPIOPins].name = "Warning LED";
+        configuredGPIOPins[numConfiguredGPIOPins].pinNumber = 27;
+        configuredGPIOPins[numConfiguredGPIOPins].mode = GPIO_MODE_BLINK;
+        configuredGPIOPins[numConfiguredGPIOPins].enabled = true; // <<< ADD THIS
+        configuredGPIOPins[numConfiguredGPIOPins].defaultState = false;
+        configuredGPIOPins[numConfiguredGPIOPins].defaultBlinkDelayMs = 500;
+        initializeGPIOPin(configuredGPIOPins[numConfiguredGPIOPins]);
+        numConfiguredGPIOPins++;
+   }
+
+  
+/*///saveGPIOConfiguration  if (numConfiguredGPIOPins < MAX_GPIO_PINS) {
     configuredGPIOPins[numConfiguredGPIOPins++] = { "pump1", "Fuel Pump", 26, GPIO_MODE_ON_OFF, false, 0, false, 0, 0 };
   }
   if (numConfiguredGPIOPins < MAX_GPIO_PINS) {
@@ -366,7 +373,12 @@ void loadDefaultGPIOConfiguration() { /* ... same ... */
   for(int i=0; i < numConfiguredGPIOPins; i++){
     initializeGPIOPin(configuredGPIOPins[i]);
   }
-  Serial.println(String(numConfiguredGPIOPins) + " default GPIO pins loaded and initialized.");
+
+*/ 
+
+  Serial.printf("%d default GPIO configs loaded.\n", numConfiguredGPIOPins);
+
+  ///Serial.println(String(numConfiguredGPIOPins) + " default GPIO pins loaded and initialized.");
 }
 
 void saveGPIOConfiguration() { /* ... same ... */
@@ -378,6 +390,7 @@ void saveGPIOConfiguration() { /* ... same ... */
     gpioConf["name"] = configuredGPIOPins[i].name;
     gpioConf["pinNumber"] = configuredGPIOPins[i].pinNumber;
     gpioConf["mode"] = pinModeTypeToString(configuredGPIOPins[i].mode);
+    gpioConf["enabled"] = configuredGPIOPins[i].enabled; // <<< ADD THIS
     gpioConf["defaultState"] = configuredGPIOPins[i].defaultState;
     gpioConf["defaultBlinkDelayMs"] = configuredGPIOPins[i].defaultBlinkDelayMs;
     gpioArray[i] = gpioConf;
@@ -402,11 +415,20 @@ void loadGPIOConfiguration() { /* ... same ... */
         numConfiguredGPIOPins = 0;
         for (int i = 0; i < parsedConfig.length(); i++) {
           if (numConfiguredGPIOPins >= MAX_GPIO_PINS) { Serial.println("MAX_GPIO_PINS reached while loading GPIO config."); break; }
-          JSONVar gpioJson = parsedConfig[i]; GPIOPinConfig tempConf;
+          JSONVar gpioJson = parsedConfig[i]; 
+          GPIOPinConfig tempConf;
           tempConf.id = String((const char*) gpioJson["id"]);
           tempConf.name = String((const char*) gpioJson["name"]);
           tempConf.pinNumber = (uint8_t) (int) gpioJson["pinNumber"];
           tempConf.mode = stringToPinModeType(String((const char*)gpioJson["mode"]));
+            // >>> ADD THIS BLOCK <<<
+              if (gpioJson.hasOwnProperty("enabled")) {
+                  tempConf.enabled = (bool)gpioJson["enabled"];
+                  //tempConf.enabled = gpioJson["enabled"].as<bool>();
+              } else {
+                  tempConf.enabled = true; // Default to true if missing
+              }
+              // >>> END OF BLOCK <<<      
           tempConf.defaultState = (bool) gpioJson["defaultState"];
           tempConf.defaultBlinkDelayMs = (unsigned long) (int) gpioJson["defaultBlinkDelayMs"];
           initializeGPIOPin(tempConf);
@@ -542,7 +564,7 @@ void discoverOneWireDevices(bool forceScan = false, bool printToSerial = false) 
             Serial.print(" Temp: "); Serial.print(tempC); Serial.print("C");
         }
         // Note: isParasitePowerMode is on the OneWire object
-        if (oneWireDiscovery.isParasitePowerMode()) Serial.print(" (Parasite Power)");
+  //// Fix2      if (oneWireDiscovery.isParasitePowerMode()) Serial.print(" (Parasite Power)");
         Serial.println();
       }
     } else {
@@ -611,6 +633,7 @@ void initWebServer() { /* ... same ... */
   server.addHandler(&events);
   server.on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest *request){ /* ... same ... */
     JSONVar sensorsArray;
+    int gpioArrayIndex = 0; //Fix3
     for(int i=0; i < numConfiguredSensors; i++){
         JSONVar sensorConf;
         sensorConf["id"] = configuredSensors[i].id;
@@ -686,66 +709,29 @@ void initWebServer() { /* ... same ... */
         static String bodyContent_gpio;
         if (index == 0) { bodyContent_gpio = ""; Serial.println("/api/gpioconfig POST received (onRequestBody)"); }
         bodyContent_gpio.concat((char*)data, len);
-        if (index + len == total) { // All data received
-            Serial.println("POST_API_GPIOCONFIG: Full body received.");
-            Serial.print("POST_API_GPIOCONFIG: Body content: ");
-            Serial.println(bodyContent_gpio);
-
-            Serial.printf("POST_API_GPIOCONFIG: Entry. Current numConfiguredGPIOPins before processing POST: %d\n", numConfiguredGPIOPins);
-
-            JSONVar newConfigs = JSON.parse(bodyContent_gpio);
-
-            if (newConfigs.typeof() == "array") {
-                int receivedArraySize = 0;
-                // Determine receivedArraySize safely for Arduino_JSON.h JSONVar arrays
-                // This loop counts how many actual objects are in the JSONVar array.
-                while(newConfigs[receivedArraySize].typeof() == "object" && receivedArraySize < MAX_GPIO_PINS) {
-                    receivedArraySize++;
-                }
-                Serial.printf("POST_API_GPIOCONFIG: Received %d valid objects in POSTed JSON array.\n", receivedArraySize);
-
-                // --- CRITICAL PLACEMENT ---
+        if (index + len == total) {
+            Serial.println("Full GPIO body: " + bodyContent_gpio);
+            JSONVar gpioJsonArray = JSON.parse(bodyContent_gpio);
+            bodyContent_gpio = "";
+            if (JSON.typeof(gpioJsonArray) == "array") {
                 numConfiguredGPIOPins = 0;
-                Serial.println("POST_API_GPIOCONFIG: numConfiguredGPIOPins reset to 0 (before populating from POST).");
-                // --- END CRITICAL PLACEMENT ---
-
-                for (int i = 0; i < receivedArraySize; i++) {
-                    // No need to check numConfiguredGPIOPins >= MAX_GPIO_PINS here if receivedArraySize is already capped or checked
-
-                    JSONVar pinJson = newConfigs[i];
-                    // We already know pinJson is an object from the receivedArraySize calculation loop.
-
-                    GPIOPinConfig tempPinConfig;
-                    tempPinConfig.id = (const char*)pinJson["id"];
-                    tempPinConfig.name = (const char*)pinJson["name"];
-                    tempPinConfig.pinNumber = (uint8_t)(int)pinJson["pinNumber"];
-                    tempPinConfig.mode = stringToPinModeType((const char*)pinJson["mode"]);
-
-                    if (pinJson.hasOwnProperty("enabled")) {
-                        tempPinConfig.enabled = (bool)pinJson["enabled"];
-                    } else {
-                        tempPinConfig.enabled = true; // Default if missing
-                    }
-                    tempPinConfig.defaultState = (bool)pinJson["defaultState"];
-                    tempPinConfig.defaultBlinkDelayMs = (unsigned long)(double)pinJson["defaultBlinkDelayMs"];
-
-                    // Other fields like currentState, currentBlinkDelayMs, lastBlinkToggleTime
-                    // are initialized by initializeGPIOPin.
-
-                    configuredGPIOPins[numConfiguredGPIOPins] = tempPinConfig;
-                    initializeGPIOPin(configuredGPIOPins[numConfiguredGPIOPins]);
-                    numConfiguredGPIOPins++;
+                for (int i = 0; i < gpioJsonArray.length(); i++) {
+                    if (numConfiguredGPIOPins >= MAX_GPIO_PINS) { Serial.println("MAX_GPIO_PINS reached."); break; }
+                    JSONVar pinJson = gpioJsonArray[i];
+                    GPIOPinConfig tempConf;
+                    tempConf.id = String((const char*) pinJson["id"]);
+                    tempConf.name = String((const char*) pinJson["name"]);
+                    tempConf.pinNumber = (uint8_t)(int)pinJson["pinNumber"];
+                    tempConf.mode = stringToPinModeType(String((const char*)pinJson["mode"]));
+                    tempConf.defaultState = (bool)pinJson["defaultState"];
+                    tempConf.defaultBlinkDelayMs = (unsigned long)(int)pinJson["defaultBlinkDelayMs"];
+                    initializeGPIOPin(tempConf);
+                    configuredGPIOPins[numConfiguredGPIOPins++] = tempConf;
                 }
-                Serial.printf("POST_API_GPIOCONFIG: numConfiguredGPIOPins after processing POSTed data: %d\n", numConfiguredGPIOPins);
-
                 saveGPIOConfiguration();
-                request->send(200, "application/json", "{\"status\":\"success\", \"message\":\"GPIO configuration updated and saved\"}");
-                bodyContent_gpio = ""; // Clear static buffer after use
+                request->send(200, "application/json", "{\"status\":\"success\", \"message\":\"GPIO configurations updated and saved via onRequestBody\"}");
             } else {
-                Serial.println("POST_API_GPIOCONFIG: Error - Invalid JSON format or not an array.");
-                Serial.print("Attempted to parse: "); Serial.println(bodyContent_gpio);
-                request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Invalid JSON format: Expected an array.\"}");
-                bodyContent_gpio = ""; // Clear static buffer
+                request->send(400, "application/json", "{\"status\":\"error\", \"message\":\"Invalid JSON array for GPIO config\"}");
             }
         }
     }
@@ -796,6 +782,31 @@ void initWebServer() { /* ... same ... */
     for(size_t i=0; i < unconfiguredList.size(); i++){ jsonArray[i] = unconfiguredList[i]; }
     request->send(200, "application/json", JSON.stringify(jsonArray));
   });
+ 
+  /*
+  
+  
+  server.on("/api/gpioconfig", HTTP_GET, [](AsyncWebServerRequest *request){  //... same ... 
+    JSONVar gpioArray;
+    Serial.printf("POST_API_GPIOCONFIG: Entry. Current numConfiguredGPIOPins: %d ",numConfiguredGPIOPins);
+    numConfiguredGPIOPins = 0;
+    Serial.printf("POST_API_GPIOCONFIG: nuConfiguredGPIOPins reset to 0.");
+    for(int i=0; i < numConfiguredGPIOPins; i++){
+        JSONVar gpioConf;
+        gpioConf["id"] = configuredGPIOPins[i].id;
+        gpioConf["name"] = configuredGPIOPins[i].name;
+        gpioConf["pinNumber"] = configuredGPIOPins[i].pinNumber;
+        gpioConf["mode"] = pinModeTypeToString(configuredGPIOPins[i].mode);
+        gpioConf["defaultState"] = configuredGPIOPins[i].defaultState;
+        gpioConf["defaultBlinkDelayMs"] = configuredGPIOPins[i].defaultBlinkDelayMs;
+        gpioArray[i] = gpioConf;
+    }
+    request->send(200, "application/json", JSON.stringify(gpioArray));
+  });
+
+*/
+
+
   server.on("/api/gpioconfig", HTTP_GET, [](AsyncWebServerRequest *request){
     Serial.println("API_INFO: GET /api/gpioconfig called.");
     Serial.printf("API_INFO: Current numConfiguredGPIOPins to be serialized: %d\n", numConfiguredGPIOPins);
@@ -833,7 +844,9 @@ void initWebServer() { /* ... same ... */
     Serial.printf("API_INFO: Sending GET /api/gpioconfig response: %s\n", jsonResponseString.c_str());
     request->send(200, "application/json", jsonResponseString);
 });
-  server.on("/api/gpio/status", HTTP_GET, [](AsyncWebServerRequest *request){ /* ... same ... */
+
+/*
+  server.on("/api/gpio/status", HTTP_GET, [](AsyncWebServerRequest *request){ // ... same ... 
     JSONVar gpioStatusArray;
     for(int i=0; i < numConfiguredGPIOPins; i++){
         JSONVar gpioState;
@@ -850,6 +863,65 @@ void initWebServer() { /* ... same ... */
     }
     request->send(200, "application/json", JSON.stringify(gpioStatusArray));
   });
+
+  server.on("/api/gpioconfig", HTTP_GET, [](AsyncWebServerRequest *request){
+    JSONVar gpioArray;
+    Serial.println("[GET] /api/gpioconfig: Entry");
+    Serial.printf("[GET] /api/gpioconfig: numConfiguredGPIOPins before reset = %d\n", numConfiguredGPIOPins);
+
+    // Reset the count (likely a logic issue — see note below)
+    //numConfiguredGPIOPins = 0;
+ //   Serial.println("[GET] /api/gpioconfig: numConfiguredGPIOPins reset to %d\n",numConfiguredGPIOPins);
+
+    for(int i = 0; i < numConfiguredGPIOPins; i++){
+        JSONVar gpioConf;
+        gpioConf["id"] = configuredGPIOPins[i].id;
+        gpioConf["name"] = configuredGPIOPins[i].name;
+        gpioConf["pinNumber"] = configuredGPIOPins[i].pinNumber;
+        gpioConf["mode"] = pinModeTypeToString(configuredGPIOPins[i].mode);
+        gpioConf["defaultState"] = configuredGPIOPins[i].defaultState;
+        gpioConf["defaultBlinkDelayMs"] = configuredGPIOPins[i].defaultBlinkDelayMs;
+        gpioArray[i] = gpioConf;
+
+        Serial.printf("[GET] /api/gpioconfig: Added GPIO ID: %d, Pin: %d, Name: %s\n",
+                      configuredGPIOPins[i].id,
+                      configuredGPIOPins[i].pinNumber,
+                      configuredGPIOPins[i].name.c_str());
+    }
+
+    String response = JSON.stringify(gpioArray);
+    Serial.printf("[GET] /api/gpioconfig: Responding with JSON: %s\n", response.c_str());
+    request->send(200, "application/json", response);
+});
+
+*/
+  
+  server.on("/api/gpio/status", HTTP_GET, [](AsyncWebServerRequest *request){ // ... same ... 
+    JSONVar gpioStatusArray;
+    int gpioArrayIndex = 0; //Fix3
+
+    for(int i=0; i < numConfiguredGPIOPins; i++){
+        JSONVar gpioState;
+        gpioState["id"] = configuredGPIOPins[i].id;
+        gpioState["pin_number"] = configuredGPIOPins[i].pinNumber;
+        gpioState["current_control_state"] = configuredGPIOPins[i].currentState;
+        if (configuredGPIOPins[i].pinNumber < GPIO_NUM_MAX) {
+             pinMode(configuredGPIOPins[i].pinNumber, OUTPUT);
+        }
+        gpioState["actual_pin_level"] = digitalRead(configuredGPIOPins[i].pinNumber);
+        gpioState["mode"] = pinModeTypeToString(configuredGPIOPins[i].mode);
+        gpioState["blink_delay_ms"] = configuredGPIOPins[i].currentBlinkDelayMs;
+        //Fix4 gpioStatusArray[gpioStatusArray.size()] = gpioState;
+        gpioStatusArray[gpioArrayIndex++] = gpioState;
+        // FixErrors1 gpioStatusArray[gpioStatusArray++] = gpioState;
+
+    }
+    request->send(200, "application/json", JSON.stringify(gpioStatusArray));
+  });
+
+
+
+  
 
   server.begin();
   Serial.println("Web Server started.");
@@ -1015,4 +1087,4 @@ void loop() {
   discoverOneWireDevices();
 }
 
-[end of EngineMonitorESP32_Integrated.ino]
+//[end of EngineMonitorESP32_Integrated.ino]
