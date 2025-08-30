@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sensor Configuration</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="all.css"> <!-- Assuming this has common styles -->
+    <link rel="stylesheet" type="text/css" href="style.css"> <!-- Main dashboard styles -->
+    <!-- <link rel="stylesheet" type="text/css" href="settings.css"> --> <!-- Specific styles for this page -->
+    <style>
+        /* Basic styling for settings page - can be moved to settings.css */
+        #sensor-config-area table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        #sensor-config-area th, #sensor-config-area td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 0.8em;
+        }
+        #sensor-config-area th {
+            background-color: #f2f2f2;
+        }
+        .action-buttons button {
+            margin: 5px;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        #sensor-edit-form-container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            margin-top: 20px;
+            background-color: #f9f9f9;
+        }
+        #sensor-edit-form-container h3 {
+            margin-top: 0;
+        }
+        #sensor-edit-form-container label {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        #sensor-edit-form-container input[type="text"],
+        #sensor-edit-form-container input[type="number"],
+        #sensor-edit-form-container select {
+            width: calc(100% - 16px);
+            padding: 8px;
+            margin-top: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #sensor-edit-form-container input[type="checkbox"] {
+            margin-top: 10px;
+        }
+        #sensor-edit-form-container button {
+            margin-top: 15px;
+            padding: 10px 15px;
+        }
+        .hidden {
+            display: none;
+        }
+        .status-message {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="topnav">
+        <h1>Sensor Configuration</h1>
+        <a href="index.html">View Gauges</a>
+        <a href="gpio_control.html">GPIO Control</a>
+    </div>
+
+    <div class="content">
+        <h2>Sensor List</h2>
+        <div class="action-buttons">
+            <button id="btn-add-new-sensor">Add New Sensor</button>
+            <button id="btn-save-all-to-esp32-flash">Commit All to ESP32 Flash</button>
+            <button id="btn-load-defaults-esp32">Load Defaults to ESP32 (and Save to Flash)</button>
+        </div>
+        <div id="status-messages"></div>
+        <div id="sensor-config-area">
+            <!-- Sensor configurations will be loaded here by JavaScript -->
+            <p>Loading sensor configurations...</p>
+        </div>
+
+        <div id="sensor-edit-form-container" class="hidden">
+            <h3 id="form-title">Add/Edit Sensor</h3>
+            <form id="sensor-form">
+                <input type="hidden" id="form-mode" value="add"> <!-- 'add' or 'edit' -->
+                <input type="hidden" id="original-sensor-id" value="">
+
+                <label for="sensor-id">ID:</label>
+                <input type="text" id="sensor-id" name="id" required>
+
+                <label for="sensor-name">Name:</label>
+                <input type="text" id="sensor-name" name="name" required>
+
+                <label for="sensor-type">Type:</label>
+                <select id="sensor-type" name="sensorType">
+                    <option value="UNDEF">Undefined</option>
+                    <option value="PRES_A">Analog Pressure</option>
+                    <option value="DS18B20">DS18B20 Temperature</option>
+                    <option value="MAX6675">MAX6675 Thermocouple</option>
+                    <option value="BMP085">BMP085 Temperature</option>
+                    <option value="VOLT_A">Analog Voltage</option>
+                </select>
+
+                <label for="sensor-pin1">Pin 1:</label>
+                <input type="number" id="sensor-pin1" name="pin1" value="-1">
+
+                <label for="sensor-pin2">Pin 2:</label>
+                <input type="number" id="sensor-pin2" name="pin2" value="-1">
+
+                <label for="sensor-pin3">Pin 3 (e.g., CLK for MAX6675):</label>
+                <input type="number" id="sensor-pin3" name="pin3" value="-1">
+
+                <label for="sensor-onewire">OneWire Address (Hex, for DS18B20):</label>
+                <input type="text" id="sensor-onewire" name="oneWireAddress" value="0000000000000000">
+
+                <label for="sensor-enabled">Enabled:</label>
+                <input type="checkbox" id="sensor-enabled" name="enabled" checked>
+
+                <hr>
+                <h4>Thresholds:</h4>
+                <label for="sensor-warn-thresh">Warning Threshold (Upper):</label>
+                <input type="number" step="0.1" id="sensor-warn-thresh" name="warningThreshold" value="0.0">
+
+                <label for="sensor-crit-thresh">Critical Threshold (Upper):</label>
+                <input type="number" step="0.1" id="sensor-crit-thresh" name="criticalThreshold" value="0.0">
+
+                <label for="sensor-lower-warn-thresh">Lower Warning Threshold:</label>
+                <input type="number" step="0.1" id="sensor-lower-warn-thresh" name="lowerWarningThreshold" value="0.0">
+
+                <label for="sensor-lower-crit-thresh">Lower Critical Threshold:</label>
+                <input type="number" step="0.1" id="sensor-lower-crit-thresh" name="lowerCriticalThreshold" value="0.0">
+
+                <button type="submit" id="btn-save-sensor">Save Sensor</button>
+                <button type="button" id="btn-cancel-edit">Cancel</button>
+            </form>
+        </div>
+
+        <hr style="margin-top: 30px; margin-bottom: 20px;">
+
+        <div id="onewire-tools-container">
+            <h2>OneWire DS18B20 Tools</h2>
+            <div class="action-buttons">
+                <button id="btn-scan-onewire">Scan for Unconfigured DS18B20 Sensors</button>
+            </div>
+            <div id="onewire-scan-results" style="margin-top: 10px;">
+                <!-- Scan results will be populated here -->
+            </div>
+        </div>
+
+        <hr style="margin-top: 30px; margin-bottom: 20px;">
+
+        <div id="gpio-panel-config-section">
+            <h2>GPIO Control Panel Configuration</h2>
+            <div class="action-buttons">
+                <button id="btn-add-new-gpio">Add New GPIO Pin</button>
+            </div>
+            <div id="gpio-config-list-area">
+                <!-- GPIO configurations will be loaded here -->
+                <p>Loading GPIO configurations...</p>
+            </div>
+
+            <div id="gpio-edit-form-container" class="hidden" style="margin-top: 20px; border: 1px solid #ccc; padding: 20px; background-color: #f9f9f9;">
+                <h3 id="gpio-form-title">Add/Edit GPIO Pin</h3>
+                <form id="gpio-form">
+                    <input type="hidden" id="gpio-form-mode" value="add">
+                    <input type="hidden" id="original-gpio-id" value="">
+
+                    <label for="gpio-id">ID (unique, no spaces):</label>
+                    <input type="text" id="gpio-id" name="id" required>
+
+                    <label for="gpio-name">Name (user-friendly):</label>
+                    <input type="text" id="gpio-name" name="name" required>
+
+                    <label for="gpio-pin-number">ESP32 Pin Number:</label>
+                    <input type="number" id="gpio-pin-number" name="pinNumber" required>
+
+                    <label for="gpio-mode">Mode:</label>
+                    <select id="gpio-mode" name="mode">
+                        <option value="ON_OFF">ON/OFF Switch</option>
+                        <option value="BLINK">Blinking Output</option>
+                    </select>
+
+                    <div id="gpio-on-off-settings">
+                        <label for="gpio-default-state">Default State (ON if checked):</label>
+                        <input type="checkbox" id="gpio-default-state" name="defaultState">
+                    </div>
+
+                    <div id="gpio-blink-settings" class="hidden">
+                        <label for="gpio-default-blink-active">Blinking by Default (Active if checked):</label>
+                        <input type="checkbox" id="gpio-default-blink-active" name="defaultBlinkActive">
+                        <label for="gpio-default-blink-delay">Default Blink Delay (ms):</label>
+                        <input type="number" id="gpio-default-blink-delay" name="defaultBlinkDelayMs" value="500">
+                    </div>
+
+                    <button type="submit" id="btn-save-gpio-config">Save GPIO Config</button>
+                    <button type="button" id="btn-cancel-gpio-edit">Cancel</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="settings.js"></script>
+</body>
+</html>
