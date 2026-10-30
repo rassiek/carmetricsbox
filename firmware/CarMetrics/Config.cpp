@@ -9,6 +9,7 @@ const char* sensorTypeToStr(SensorType t) {
   switch (t) {
     case SensorType::DS18B20: return "ds18b20";
     case SensorType::MAX6675: return "max6675";
+    case SensorType::MCP9600: return "mcp9600";
     case SensorType::BMP:     return "bmp";
     case SensorType::ADC:     return "adc";
     case SensorType::ADS1115: return "ads1115";
@@ -18,6 +19,7 @@ const char* sensorTypeToStr(SensorType t) {
 SensorType sensorTypeFromStr(const String& s) {
   if (s == "ds18b20") return SensorType::DS18B20;
   if (s == "max6675") return SensorType::MAX6675;
+  if (s == "mcp9600") return SensorType::MCP9600;
   if (s == "bmp")     return SensorType::BMP;
   if (s == "adc")     return SensorType::ADC;
   if (s == "ads1115") return SensorType::ADS1115;
@@ -181,7 +183,7 @@ void sensorToJson(const SensorConfig& s, JsonObject o) {
   o["id"] = s.id; o["name"] = s.name; o["unit"] = s.unit;
   o["type"] = sensorTypeToStr(s.type); o["enabled"] = s.enabled;
   o["address"] = s.address; o["pin"] = s.pin; o["sckPin"] = s.sckPin; o["soPin"] = s.soPin;
-  o["adsAddress"] = s.adsAddress; o["adsChannel"] = s.adsChannel;
+  o["adsAddress"] = s.adsAddress; o["adsChannel"] = s.adsChannel; o["mcpAddress"] = s.mcpAddress;
   o["bmpField"] = bmpFieldToStr(s.bmpField);
   putF(o, "divider", s.divider); putF(o, "inMin", s.inMin); putF(o, "inMax", s.inMax);
   putF(o, "outMin", s.outMin); putF(o, "outMax", s.outMax);
@@ -205,7 +207,7 @@ void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
   o["apSsid"] = s.apSsid; o["apPass"] = includeSecrets ? s.apPass : "";
   o["staSsid"] = s.staSsid; o["staPass"] = includeSecrets ? s.staPass : "";
   o["hostname"] = s.hostname; o["adminPass"] = includeSecrets ? s.adminPass : "";
-  o["i2cSda"] = s.i2cSda; o["i2cScl"] = s.i2cScl;
+  o["i2cSda"] = s.i2cSda; o["i2cScl"] = s.i2cScl; o["i2cKhz"] = s.i2cKhz;
   o["oneWirePin"] = s.oneWirePin; o["oneWireResolution"] = s.oneWireResolution;
   o["oledType"] = s.oledType; o["oledFlip"] = s.oledFlip; o["oledClock"] = s.oledClock;
   o["oledPageSeconds"] = s.oledPageSeconds; o["oledContrast"] = s.oledContrast;
@@ -238,6 +240,7 @@ static bool sensorFromJson(JsonObjectConst o, SensorConfig& s, String& err) {
   s.address = getS(o, "address", ""); s.address.trim(); s.address.toUpperCase();
   s.pin = getI(o, "pin", -1); s.sckPin = getI(o, "sckPin", -1); s.soPin = getI(o, "soPin", -1);
   s.adsAddress = getI(o, "adsAddress", 0x48); s.adsChannel = getI(o, "adsChannel", 0);
+  s.mcpAddress = getI(o, "mcpAddress", 0x67);
   s.bmpField = bmpFieldFromStr(getS(o, "bmpField", "temperature"));
   s.divider = getF(o, "divider", 1); s.inMin = getF(o, "inMin", 0); s.inMax = getF(o, "inMax", 1);
   s.outMin = getF(o, "outMin", 0); s.outMax = getF(o, "outMax", 1);
@@ -260,6 +263,9 @@ static bool sensorFromJson(JsonObjectConst o, SensorConfig& s, String& err) {
     if (isnan(s.divider) || s.divider <= 0) { err = "Sensor '" + s.id + "': divider must be > 0"; return false; }
     if (isnan(s.inMin) || isnan(s.inMax) || s.inMax == s.inMin) { err = "Sensor '" + s.id + "': input range is empty"; return false; }
     if (isnan(s.outMin) || isnan(s.outMax)) { err = "Sensor '" + s.id + "': output range missing"; return false; }
+  }
+  if (s.type == SensorType::MCP9600 && (s.mcpAddress < 0x60 || s.mcpAddress > 0x67)) {
+    err = "Sensor '" + s.id + "': MCP9600 address must be 0x60-0x67"; return false;
   }
   if (s.type == SensorType::ADS1115) {
     if (s.adsAddress < 0x48 || s.adsAddress > 0x4B) { err = "Sensor '" + s.id + "': ADS1115 address must be 0x48-0x4B"; return false; }
@@ -316,6 +322,7 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   s.hostname = getS(o, "hostname", s.hostname);
   p = getS(o, "adminPass", ""); if (p.length()) s.adminPass = p;
   s.i2cSda = getI(o, "i2cSda", s.i2cSda); s.i2cScl = getI(o, "i2cScl", s.i2cScl);
+  s.i2cKhz = getI(o, "i2cKhz", s.i2cKhz) <= 100 ? 100 : 400;
   s.oneWirePin = getI(o, "oneWirePin", s.oneWirePin);
   s.oneWireResolution = constrain(getI(o, "oneWireResolution", s.oneWireResolution), 9, 12);
   s.oledType = getS(o, "oledType", s.oledType);

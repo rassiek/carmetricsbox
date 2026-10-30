@@ -82,7 +82,7 @@ static void resizeRuntime(const Config& oldCfg) {
 static void applyConfig(Config* next) {
   const SystemConfig &a = gConfig.sys, &b = next->sys;
   bool reboot = a.apSsid != b.apSsid || a.apPass != b.apPass || a.staSsid != b.staSsid || a.staPass != b.staPass ||
-                a.hostname != b.hostname || a.i2cSda != b.i2cSda || a.i2cScl != b.i2cScl;
+                a.hostname != b.hostname || a.i2cSda != b.i2cSda || a.i2cScl != b.i2cScl || a.i2cKhz != b.i2cKhz;
   {
     StateLock lk;
     Config old = gConfig;
@@ -120,7 +120,7 @@ void setup() {
     Serial.println("[fs] mount failed - formatting");
     LittleFS.begin(true);
   }
-  Wire.begin(gConfig.sys.i2cSda, gConfig.sys.i2cScl, 400000);
+  Wire.begin(gConfig.sys.i2cSda, gConfig.sys.i2cScl, gConfig.sys.i2cKhz * 1000UL);
 
   Sensors::begin();
   History::begin();

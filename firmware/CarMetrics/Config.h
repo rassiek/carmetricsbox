@@ -10,7 +10,7 @@
 #define MAX_SENSORS 24
 #define MAX_RELAYS 12
 
-enum class SensorType : uint8_t { DS18B20, MAX6675, BMP, ADC, ADS1115, UNKNOWN };
+enum class SensorType : uint8_t { DS18B20, MAX6675, MCP9600, BMP, ADC, ADS1115, UNKNOWN };
 enum class BmpField : uint8_t { TEMPERATURE, PRESSURE, ALTITUDE };
 enum class OledStyle : uint8_t { OFF, TEXT, BAR };
 
@@ -28,6 +28,7 @@ struct SensorConfig {
   int soPin = -1;          // MAX6675 SO  (may be shared between MAX6675s)
   uint8_t adsAddress = 0x48;  // ADS1115 I2C address (0x48-0x4B)
   uint8_t adsChannel = 0;     // ADS1115 channel 0-3
+  uint8_t mcpAddress = 0x67;  // MCP9600/MCP9601 thermocouple amp I2C address (0x60-0x67)
   BmpField bmpField = BmpField::TEMPERATURE;
 
   // --- calibration (analog types: ADC, ADS1115) ---
@@ -77,6 +78,7 @@ struct SystemConfig {
 
   // Buses
   int i2cSda = 21, i2cScl = 22;
+  uint16_t i2cKhz = 400;             // 100 if an MCP9600 misbehaves (it clock-stretches)
   int oneWirePin = 4;
   uint8_t oneWireResolution = 11;    // 9..12 bits (11 = 0.125 °C, 375 ms)
 

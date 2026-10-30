@@ -5,6 +5,7 @@
 
   const TEMPLATES = {
     ds18b20: { unit: '°C', gaugeMin: 0, gaugeMax: 120, decimals: 0, smoothing: 1, oledStyle: 'text', hysteresis: 1 },
+    mcp9600: { unit: '°C', gaugeMin: 0, gaugeMax: 800, decimals: 0, smoothing: 0.5, oledStyle: 'bar', mcpAddress: 0x67, hysteresis: 10 },
     max6675: { unit: '°C', gaugeMin: 0, gaugeMax: 800, decimals: 0, smoothing: 0.5, oledStyle: 'bar', sckPin: 5, pin: 17, soPin: 16, hysteresis: 10 },
     adc: { unit: 'psi', pin: 32, divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 100, faultLowV: 0.2, faultHighV: 4.8,
            gaugeMin: 0, gaugeMax: 100, decimals: 0, smoothing: 0.3, oledStyle: 'bar', hysteresis: 1 },
@@ -23,10 +24,11 @@
     'volts': { label: 'Plain voltage (no scaling)', unit: 'V', divider: 1, inMin: 0, inMax: 1, outMin: 0, outMax: 1, faultLowV: null, faultHighV: null, gaugeMin: 0, gaugeMax: 3.3, decimals: 2 },
   };
 
-  const typeName = { ds18b20: 'DS18B20', max6675: 'MAX6675', adc: 'ESP32 analog', ads1115: 'ADS1115', bmp: 'BMP' };
+  const typeName = { ds18b20: 'DS18B20', mcp9600: 'MCP9600', max6675: 'MAX6675', adc: 'ESP32 analog', ads1115: 'ADS1115', bmp: 'BMP' };
   function describe(s) {
     switch (s.type) {
       case 'ds18b20': return s.address ? `1-Wire ${s.address}` : '1-Wire, no address assigned';
+      case 'mcp9600': return `MCP9600 I2C 0x${(+s.mcpAddress).toString(16)}`;
       case 'max6675': return `MAX6675 SCK ${s.sckPin} CS ${s.pin} SO ${s.soPin}`;
       case 'adc': return `GPIO ${s.pin}`;
       case 'ads1115': return `ADS1115 0x${(+s.adsAddress).toString(16)} ch ${s.adsChannel}`;
@@ -69,7 +71,7 @@
   function add() {
     const type = $('#newType').value;
     const s = Object.assign({ id: uniqueId(type), name: 'New ' + typeName[type], type, enabled: true, address: '', pin: -1, sckPin: -1, soPin: -1,
-      adsAddress: 0x48, adsChannel: 0, bmpField: 'temperature', divider: 1, inMin: 0, inMax: 1, outMin: 0, outMax: 1,
+      adsAddress: 0x48, adsChannel: 0, mcpAddress: 0x67, bmpField: 'temperature', divider: 1, inMin: 0, inMax: 1, outMin: 0, outMax: 1,
       faultLowV: null, faultHighV: null, offset: 0, oledLabel: '', warnLow: null, critLow: null, warnHigh: null, critHigh: null,
       engineRunningOnly: false }, TEMPLATES[type]);
     sensors.push(s);
@@ -121,6 +123,10 @@
       hw.push(field('1-Wire address', 'address', s, { type: 'select', options: opts, wide: true }));
     } else if (s.type === 'max6675') {
       hw.push(field('SCK pin', 'sckPin', s, { nullable: false }), field('CS pin', 'pin', s, { nullable: false }), field('SO pin', 'soPin', s, { nullable: false }));
+    } else if (s.type === 'mcp9600') {
+      hw.push(field('I2C address', 'mcpAddress', s, { type: 'select', numeric: true,
+        options: [0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67].map(a => [a, '0x' + a.toString(16) + (a === 0x67 ? ' (Adafruit default)' : a === 0x60 ? ' (ADDR→GND)' : '')]) }),
+        h('p', { class: 'muted small wide', style: 'margin:0' }, 'K-type. Mount it in the cab box and run K-type extension cable to the probe. The MCP9601 also reports open/short probes. If readings drop out, set I2C speed to 100 kHz on the System page.'));
     } else if (s.type === 'bmp') {
       hw.push(field('Measurement', 'bmpField', s, { type: 'select', options: [['temperature', 'Temperature'], ['pressure', 'Pressure (hPa)'], ['altitude', 'Altitude (m)']] }));
     } else if (s.type === 'adc') {

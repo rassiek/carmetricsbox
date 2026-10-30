@@ -12,7 +12,7 @@ Firmware and the web app can both be updated over Wi-Fi.
 
 - **Sensors** – add, remove and reorder them from the web app, with no code changes:
   - DS18B20 1-Wire temperatures (coolant, intake, gearbox, transfer case…). The bus scan shows each sensor's live temperature so you can tell them apart.
-  - MAX6675 K-type thermocouple (EGT)
+  - EGT thermocouple through an **MCP9600/MCP9601** (I2C, no extra pins – recommended) or a **MAX6675** (SPI, 3 pins)
   - Analog through an **ESP32 pin** (ADC1, GPIO 32–39) or an **ADS1115** channel (16-bit, I2C). Each sensor has its own calibration, with presets for 0.5–4.5 V pressure senders and B25 battery modules.
   - BMP180 / BMP280 (auto-detected) for cabin temperature, pressure and altitude
 - **Alerts** – high/low warning and critical limits per sensor, with hysteresis.
@@ -38,7 +38,8 @@ Firmware and the web app can both be updated over Wi-Fi.
 |---|---|---|
 | I2C SDA / SCL | 21 / 22 | OLED, BMP180/280, ADS1115 share the bus |
 | 1-Wire (DS18B20) | 4 | **4.7 kΩ pull-up to 3.3 V** (2.2 kΩ for long CAT6 runs). Power the sensors from 3.3 V |
-| MAX6675 SCK / CS / SO | 5 / 17 / 16 | Power the MAX6675 from **3.3 V** |
+| MAX6675 SCK / CS / SO | 5 / 17 / 16 | Only if you keep the MAX6675. Power it from **3.3 V** |
+| MCP9600 / MCP9601 | I2C (0x60–0x67) | Replaces the MAX6675 – no GPIOs needed |
 | Boost pressure | 32 | 0–30 psi sender through a divider |
 | Oil pressure | 34 | 0–100 psi sender through a divider |
 | Starter battery | 35 | B25 module (÷5) |
@@ -47,6 +48,14 @@ Firmware and the web app can both be updated over Wi-Fi.
 | Relays | 26 / 27 | Disabled until you enable them |
 
 All pins can be changed in the web app.
+
+**EGT wiring:**
+
+- **Where the amplifier goes:** put the thermocouple amplifier (MCP9600 or MAX6675) **in the cab box**, not the engine bay.
+- **Probe cable:** run **K-type thermocouple extension cable** from the probe all the way to the amplifier's terminals. It must not be CAT6 or copper wire, or the reading will be wrong.
+- **What this saves:** only two wires go through the firewall, instead of power plus three SPI lines over CAT6.
+- **MCP9600 or MCP9601:** both sit on the existing I2C bus. The MCP9601 also reports an open or shorted probe.
+- **If MCP9600 readings drop out:** set I2C speed to 100 kHz on the System page, because the chip stretches the I2C clock.
 
 **Analog inputs.** The pressure senders are 5 V parts with a 0.5–4.5 V output. Bring that down below 3.3 V:
 
@@ -79,7 +88,8 @@ The first flash must be over USB, because it installs the new partition layout. 
    - Adafruit MAX6675 1.1.2
    - Adafruit BMP280 3.0.0
    - Adafruit BMP085 1.2.4
-   - Adafruit ADS1X15 2.6.2 (Adafruit Unified Sensor and BusIO install with them)
+   - Adafruit ADS1X15 2.6.2
+   - Adafruit MCP9600 2.0.4 (Adafruit Unified Sensor and BusIO install with these)
 3. **Firmware:** open `firmware/CarMetrics/CarMetrics.ino` and upload.
 4. **Web app:**
    1. Run `python3 tools/build_web.py`. This writes `firmware/CarMetrics/data/` and, if it finds `mklittlefs`, `build/littlefs.bin`.

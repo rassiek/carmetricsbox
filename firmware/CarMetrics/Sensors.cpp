@@ -10,6 +10,7 @@ void selftestFakeSensors();
 #include <Adafruit_BMP280.h>
 #include <Adafruit_BMP085.h>
 #include <Adafruit_ADS1X15.h>
+#include <Adafruit_MCP9600.h>
 #include <map>
 #include <memory>
 #include <array>
@@ -40,6 +41,14 @@ Adafruit_BMP085 bmp180;
 enum { BMP_NONE, BMP_280, BMP_180 } bmpKind = BMP_NONE;
 bool bmpProbed = false;
 uint32_t bmpLast = 0;
+
+// ---------------------------------------------------------------- MCP9600 / MCP9601
+// I2C thermocouple amp: no extra GPIOs, sits on the OLED/BMP bus. The MCP9601
+// variant flags open/short probes (status 0x10/0x20); on the MCP9600, 0x10 means
+// "input out of range", which is also a fault.
+struct Mcp { Adafruit_MCP9600 dev; bool found = false; };
+std::map<uint8_t, std::unique_ptr<Mcp>> mcp;
+uint32_t mcpLast = 0;
 
 // ---------------------------------------------------------------- ADS1115
 struct Ads { Adafruit_ADS1115 dev; bool found = false; };
@@ -176,6 +185,21 @@ void updateMax6675(uint32_t now) {
   }
 }
 
+void updateMcp9600(uint32_t now) {
+  if (now - mcpLast < 250) return;
+  mcpLast = now;
+  for (size_t i = 0; i < gConfig.sensors.size(); i++) {
+    const SensorConfig& c = gConfig.sensors[i];
+    if (!c.enabled || c.type != SensorType::MCP9600) continue;
+    auto it = mcp.find(c.mcpAddress);
+    if (it == mcp.end() || !it->second->found) { setStatus(i, ST_NOT_FOUND); continue; }
+    uint8_t st = it->second->dev.getStatus();
+    float t = it->second->dev.readThermocouple();
+    if ((st & 0x30) || isnan(t) || t < -200 || t > 1372) setFail(i, ST_FAULT, NAN, 2);
+    else setOk(i, t);
+  }
+}
+
 void updateBmp(uint32_t now) {
   if (now - bmpLast < 1000) return;
   bmpLast = now;
@@ -268,6 +292,21 @@ void Sensors::begin() {
     Serial.printf("[bmp] %s\n", gSys.bmpModel.c_str());
   }
 
+  // MCP9600 / MCP9601 thermocouple amplifiers
+  for (auto& c : cfg.sensors) {
+    if (!c.enabled || c.type != SensorType::MCP9600 || mcp.count(c.mcpAddress)) continue;
+    std::unique_ptr<Mcp> m(new Mcp());
+    m->found = m->dev.begin(c.mcpAddress, &Wire);
+    if (m->found) {
+      m->dev.setThermocoupleType(MCP9600_TYPE_K);
+      m->dev.setADCresolution(MCP9600_ADCRESOLUTION_16);  // ~80 ms per conversion, 0.0625 C
+      m->dev.setFilterCoefficient(2);
+      m->dev.enable(true);
+    }
+    Serial.printf("[mcp9600] 0x%02X %s\n", c.mcpAddress, m->found ? "found" : "NOT found");
+    mcp[c.mcpAddress] = std::move(m);
+  }
+
   // ADS1115 modules
   for (auto& c : cfg.sensors) {
     if (!c.enabled || c.type != SensorType::ADS1115 || ads.count(c.adsAddress)) continue;
@@ -304,6 +343,7 @@ void Sensors::update() {
   updateAnalog(now);
   updateDs18b20(now);
   updateMax6675(now);
+  updateMcp9600(now);
   updateBmp(now);
 }
 

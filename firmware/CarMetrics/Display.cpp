@@ -104,8 +104,8 @@ bool i2cPresent(uint8_t addr) {
 }
 
 void doReconfigure() {
-  String type; bool flip; uint8_t contrast;
-  { StateLock lk; type = gConfig.sys.oledType; flip = gConfig.sys.oledFlip; contrast = gConfig.sys.oledContrast; }
+  String type; bool flip; uint8_t contrast; uint16_t khz;
+  { StateLock lk; type = gConfig.sys.oledType; flip = gConfig.sys.oledFlip; contrast = gConfig.sys.oledContrast; khz = gConfig.sys.i2cKhz; }
   if (oled) { oled->clearDisplay(); oled->setPowerSave(1); delete oled; oled = nullptr; }
   currentType = type;
   String status = "off";
@@ -124,7 +124,7 @@ void doReconfigure() {
       oled = makeDriver(type, flip);
       if (oled) {
         if (at3d && !at3c) oled->setI2CAddress(0x3D * 2);
-        oled->setBusClock(400000);
+        oled->setBusClock(khz * 1000UL);
         oled->begin();
         oled->setContrast(contrast);
         status = "ok";

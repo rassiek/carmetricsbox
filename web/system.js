@@ -43,7 +43,7 @@
     for (const el of form().elements) {
       if (!el.name) continue;
       if (el.type === 'checkbox') out[el.name] = el.checked;
-      else if (el.type === 'number' || el.name === 'oneWireResolution') out[el.name] = el.value === '' ? null : +el.value;
+      else if (el.type === 'number' || el.name === 'oneWireResolution' || el.name === 'i2cKhz') out[el.name] = el.value === '' ? null : +el.value;
       else out[el.name] = el.value;
     }
     try {

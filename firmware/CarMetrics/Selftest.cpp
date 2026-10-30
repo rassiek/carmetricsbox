@@ -83,6 +83,12 @@ void selftestLoop() {
       c.sensors.push_back(t2);
       check(validateConfig(c, err), "second MAX6675 sharing SCK/SO accepted", err);
     }
+    {  // MCP9600 address range
+      JsonDocument d; deserializeJson(d, "[{\"id\":\"egt\",\"type\":\"mcp9600\",\"mcpAddress\":72}]");
+      std::vector<SensorConfig> v; check(!sensorsFromJson(d.as<JsonVariantConst>(), v, err), "MCP9600 bad address rejected", err);
+      JsonDocument d2; deserializeJson(d2, "[{\"id\":\"egt\",\"type\":\"mcp9600\",\"mcpAddress\":103,\"unit\":\"C\"}]");
+      check(sensorsFromJson(d2.as<JsonVariantConst>(), v, err) && v[0].type == SensorType::MCP9600 && v[0].mcpAddress == 0x67, "MCP9600 sensor parsed", err);
+    }
     check(validateConfig(base, err), "default config valid", err);
     // --- JSON round trip
     {
