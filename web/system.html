@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a10">
+  <title>CarMetrics - System</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <main>
+    <div class="panel"><h3>Status</h3><table id="info"></table></div>
+
+    <div class="panel">
+      <h3>Firmware &amp; web app update</h3>
+      <p class="muted small">Upload <code>CarMetrics.ino.bin</code> (firmware) or <code>littlefs.bin</code> (web app) from your phone or laptop.
+        The device reboots afterwards. Settings are kept – they live in NVS, not the filesystem.</p>
+      <div class="fields">
+        <div><label>What</label><select id="otaTarget"><option value="firmware">Firmware (.bin)</option><option value="filesystem">Web app (littlefs.bin)</option></select></div>
+        <div><label>File</label><input type="file" id="otaFile" accept=".bin"></div>
+      </div>
+      <div class="row" style="margin-top:10px"><button id="otaGo" class="primary">Upload</button>
+        <div class="progress" style="flex:1"><div id="otaBar"></div></div><span id="otaPct" class="small muted"></span></div>
+    </div>
+
+    <form id="sys" class="panel" onsubmit="return false">
+      <h3>Settings</h3>
+      <fieldset><legend>Wi-Fi (changes reboot the device)</legend><div class="fields">
+        <div><label>Access point name</label><input name="apSsid"></div>
+        <div><label>Access point password (blank = keep)</label><input name="apPass" type="password" autocomplete="new-password"></div>
+        <div><label>Also join network (optional)</label><input name="staSsid" placeholder="e.g. phone hotspot"></div>
+        <div><label>Network password (blank = keep)</label><input name="staPass" type="password" autocomplete="new-password"></div>
+        <div><label>Hostname (.local)</label><input name="hostname"></div>
+        <div><label>Admin password (blank = keep)</label><input name="adminPass" type="password" autocomplete="new-password"></div>
+      </div></fieldset>
+      <fieldset><legend>OLED</legend><div class="fields">
+        <div><label>Display</label><select name="oledType">
+          <option value="none">None</option>
+          <option value="ssd1306_128x64">SSD1306 128×64</option>
+          <option value="sh1106_128x64">SH1106 128×64 (1.3")</option>
+          <option value="ssd1327_128x128">SSD1327 128×128 (EA)</option>
+          <option value="ssd1327_ws_128x128">SSD1327 128×128 (Waveshare)</option></select></div>
+        <div><label>Page rotation (s)</label><input name="oledPageSeconds" type="number" min="1" max="60"></div>
+        <div><label>Contrast (0-255)</label><input name="oledContrast" type="number" min="0" max="255"></div>
+        <label class="check"><input type="checkbox" name="oledFlip"> Rotate 180°</label>
+        <label class="check"><input type="checkbox" name="oledClock"> Show clock</label>
+      </div><p class="muted small">Which sensors appear, and as text or bar, is set per sensor on the Sensors page (order follows the list).</p></fieldset>
+      <fieldset><legend>Alerts &amp; engine detection</legend><div class="fields">
+        <div><label>Buzzer GPIO (-1 = none)</label><input name="buzzerPin" type="number"></div>
+        <label class="check"><input type="checkbox" name="buzzerActiveLow"> Buzzer active low</label>
+        <div><label>Warning LED GPIO (-1 = none)</label><input name="ledPin" type="number"></div>
+        <label class="check"><input type="checkbox" name="ledActiveLow"> LED active low</label>
+        <div><label>Engine running when sensor…</label><select name="engineSensorId"></select></div>
+        <div><label>…is above</label><input name="engineRunningAbove" type="number" step="any"></div>
+        <div><label>for (seconds)</label><input name="engineDelaySeconds" type="number" min="0"></div>
+      </div></fieldset>
+      <fieldset><legend>Buses &amp; misc</legend><div class="fields">
+        <div><label>I2C SDA (reboot)</label><input name="i2cSda" type="number"></div>
+        <div><label>I2C SCL (reboot)</label><input name="i2cScl" type="number"></div>
+        <div><label>1-Wire GPIO</label><input name="oneWirePin" type="number"></div>
+        <div><label>1-Wire resolution</label><select name="oneWireResolution"><option value="9">9 bit (94 ms)</option><option value="10">10 bit (188 ms)</option><option value="11">11 bit (375 ms)</option><option value="12">12 bit (750 ms)</option></select></div>
+        <div><label>Sea-level pressure (hPa)</label><input name="seaLevelHpa" type="number" step="any"></div>
+        <div><label>Chart sample interval (s)</label><input name="historyIntervalSeconds" type="number" min="1"></div>
+        <div><label>Time zone offset (min)</label><input name="tzOffsetMinutes" type="number"></div>
+      </div></fieldset>
+      <div class="row"><button id="sysSave" class="primary">Save settings</button></div>
+    </form>
+
+    <div class="panel">
+      <h3>Backup &amp; maintenance</h3>
+      <div class="row">
+        <a class="btn" href="/api/config/export">Download config</a>
+        <label class="btn" style="margin:0;color:var(--text);font-size:15px">Restore config…<input type="file" id="import" accept=".json" class="hidden"></label>
+        <span class="spacer"></span>
+        <button id="reboot" class="danger">Reboot</button>
+      </div>
+      <p class="muted small">Backups never include passwords.</p>
+    </div>
+  </main>
+  <script src="system.js"></script>
+</body>
+</html>

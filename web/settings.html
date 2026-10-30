@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a10">
+  <title>CarMetrics - Sensors</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <div class="row">
+        <h3 style="margin:0">Sensors</h3><span id="dirty" class="pill warn hidden">unsaved changes</span>
+        <span class="spacer"></span>
+        <select id="newType" style="width:auto">
+          <option value="ds18b20">DS18B20 temperature (1-Wire)</option>
+          <option value="max6675">Thermocouple (MAX6675)</option>
+          <option value="adc">Analog – ESP32 pin</option>
+          <option value="ads1115">Analog – ADS1115 channel</option>
+          <option value="bmp">BMP180/BMP280 (temp, pressure, altitude)</option>
+        </select>
+        <button id="add">Add</button>
+      </div>
+      <div id="list" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="save" class="primary">Save changes</button>
+        <button id="discard">Discard</button>
+        <span class="spacer"></span>
+        <button id="reset" class="danger small">Reset sensors &amp; relays to defaults</button>
+      </div>
+    </div>
+
+    <div id="editor" class="panel hidden"></div>
+
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">1-Wire bus</h3><span class="spacer"></span><button id="scan">Scan</button></div>
+      <p class="muted small">Every DS18B20 on the bus is listed with its live temperature. To find which is which, warm one sensor
+        in your hand, scan again, and assign the one that rose. Assigning only changes the list above — press <b>Save changes</b>.</p>
+      <div id="ow"></div>
+    </div>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>

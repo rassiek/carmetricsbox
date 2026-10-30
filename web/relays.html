@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a10">
+  <title>CarMetrics - Relays</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <main>
+    <h2>Controls</h2>
+    <div id="controls" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))"></div>
+    <p id="none" class="muted hidden">No enabled relays. Configure them below.</p>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="row"><h3 style="margin:0">Relay setup</h3><span id="dirty" class="pill warn hidden">unsaved changes</span>
+        <span class="spacer"></span><button id="add">Add relay</button></div>
+      <p class="muted small">Most cheap relay boards switch ON when their input is LOW – tick <b>Active low</b> for those.
+        Avoid GPIO 2, 5 and 15 for relays (they toggle during boot). GPIO 0, 12 and 34–39 are rejected.</p>
+      <div style="overflow-x:auto"><table id="cfg"></table></div>
+      <div class="row" style="margin-top:10px"><button id="save" class="primary">Save changes</button><button id="discard">Discard</button></div>
+    </div>
+  </main>
+  <script src="relays.js"></script>
+</body>
+</html>

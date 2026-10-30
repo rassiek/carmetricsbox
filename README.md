@@ -1,39 +1,143 @@
-# carmetricsbox
-This project uses  
-1. 1 Wire Interface  (Digital Pin 7) => Four 1 Wire temp sensors (CoolantTemp, GearBox Temp, Transfer Case Temp and Intake Mainifold/ Air temp)
-2. SPI Interface (Digital Pin 4,5,6) => One Thermocouple Amplifier with K-Type Thermocouple (EGT Temperature)
-3. Analog Interface (Analog Pin 3 and 4) Two 5V 0-100psi Pressure Transducers (Boost Pressure 0-30psi  and Oil Pressure 0-100Psi 0.5 to 4.5V reading)
-4. I2C Interface (Digital PIN 20 and 21) One OLED 128x128 Display (Metrics Display) + One BMP180 Barometric Pressure/Temperature/Altitude Sensor (Cabin Temp and Altitude Sensor) 
-    To Add
-6. Two B25 Voltage Sensor Detection Module (Starter Battery and Auxilliary Battery Sensors)
+# CarMetrics
 
-Other components 
-1. 1 4.7 KOHM Resistor as a pull up between data/ signal Pin 7 and VCC.
-2. 1 5V Power supply in the engine bay with a jumper cable to arduino's ground (Arduino is in the Cab)
+An engine monitor that runs on a single ESP32. It reads temperature, pressure and voltage sensors,
+shows them on an OLED in the cab and on a phone over Wi-Fi, sounds alarms, and switches relays.
+Firmware and the web app can both be updated over Wi-Fi.
 
-All 1 Wire sensors, Pressure Transducers and Themocouple Amplifier get power from the secondary 5V power supply above in the engine bay.
-All data/ signal pins terminate to a CAT6 wall outlet jack in the engine bay. 
-The arduino powers the OLED and the BMP180 Barometric Pressure/Temperature/Altitude Sensor
-All other signal Pins terminate on a second CAT6 Wall outlet jack attached to the box with Arduino. 
-There is a cat6 cable connecting the two cat6 jacks in the cabin and the engine bay running through the firewall.
-Arduino is powered indipendently using a 13.8 -9V buck converter. But it can also be powered using a normal 5v source.
-The Arduino, Display and the Temp/Pressure sensors are in a small box that fits between the driver A Pilar and the Intrument Cluster. 
+> **v4** replaces the Arduino Mega + ESP32 pair (kept in [`legacy/`](legacy)) with one ESP32.
+> It has been compiled and run in Espressif's ESP32 emulator (QEMU), where a self-test of config,
+> alerts, relays and OLED rendering passes. It has **not yet been tested on real hardware**.
 
---------------------------------------------------------------------------------------------------
-Notes 2024 Jan
-Added integration to ESP32 via UART (Serial 2) -
-ESP32 listents to serial 2 data coming from Serial2.print on Arduino and reads the last complete block of sensor and time data.
-ESP32 converts that data to JSOn and exposes it on a /readings enpoint
-This is then visualized on the root path / as gauges using Javascript, CSS and HTML
-A second /charts page shows the trends of various metrics over time as long as the browser remains open (not stored anywhere in ESP32)
-ESP32 Exposes a wifi network that allows you to connect and access the page at http://192.168.4.1/. It can also connect to your exixting wifi network by commenting out ( //Set ESP32 as Wifi Client). You can use as both AP and client but I have noted that ESP32 is running out of resources if you do that. 
+## What it does
 
+- **Sensors** – add, remove and reorder them from the web app, with no code changes:
+  - DS18B20 1-Wire temperatures (coolant, intake, gearbox, transfer case…). The bus scan shows each sensor's live temperature so you can tell them apart.
+  - MAX6675 K-type thermocouple (EGT)
+  - Analog through an **ESP32 pin** (ADC1, GPIO 32–39) or an **ADS1115** channel (16-bit, I2C). Each sensor has its own calibration, with presets for 0.5–4.5 V pressure senders and B25 battery modules.
+  - BMP180 / BMP280 (auto-detected) for cabin temperature, pressure and altitude
+- **Alerts** – high/low warning and critical limits per sensor, with hysteresis.
+  - A wiring fault (broken wire, missing sensor) is an alert too.
+  - Oil pressure and similar sensors can be set to only alarm while the engine is running (detected from battery voltage).
+  - Mute from the web app. A new or worse alert un-mutes.
+- **OLED** – choose SSD1306/SH1106 128×64 or SSD1327 128×128 in settings.
+  - Each sensor appears as a text cell or a bar gauge with threshold ticks.
+  - Alerting values are highlighted (critical ones blink); pages rotate if everything doesn't fit.
+  - Optional clock.
+- **Web app** – gauges, 30-minute charts (kept on the ESP32), sensor setup, relay controls, system settings.
+  - Live updates over Server-Sent Events.
+  - The whole app is 35 KB gzipped.
+- **Relays** – on/off or blinking, active-low support, a chosen state at boot.
+  - Pin checks block GPIOs that would break booting or clash with sensors.
+- **Updates over Wi-Fi** – upload firmware or the web app from the System page, or use ArduinoOTA from the IDE.
+  - Settings live in NVS, so they survive both kinds of update and power cuts while saving.
+- **Admin password** protects settings, relays and updates (HTTP user `admin`).
 
------------------------------------------------------------------------------------------------------
-Future Plans
-Add a buttons page to enable buttons/ sliders and sen values to Arduino from ESP32 that are then used to trigger actions via a relay block and/or optocouplers.
-Add a page on ESP32 to manage basic sensor configurations like allocate newly discovered one wire sensors or add an additional sensor to I2C, Analog Port etc. 
+## Wiring (ESP32 is 3.3 V – not 5 V tolerant)
 
+| Function | Default GPIO | Notes |
+|---|---|---|
+| I2C SDA / SCL | 21 / 22 | OLED, BMP180/280, ADS1115 share the bus |
+| 1-Wire (DS18B20) | 4 | **4.7 kΩ pull-up to 3.3 V** (2.2 kΩ for long CAT6 runs). Power the sensors from 3.3 V |
+| MAX6675 SCK / CS / SO | 5 / 17 / 16 | Power the MAX6675 from **3.3 V** |
+| Boost pressure | 32 | 0–30 psi sender through a divider |
+| Oil pressure | 34 | 0–100 psi sender through a divider |
+| Starter battery | 35 | B25 module (÷5) |
+| Aux battery | 33 | B25 module, disabled by default |
+| Buzzer / warning LED | 18 / 19 | |
+| Relays | 26 / 27 | Disabled until you enable them |
 
+All pins can be changed in the web app.
 
+**Analog inputs.** The pressure senders are 5 V parts with a 0.5–4.5 V output. Bring that down below 3.3 V:
 
+- **Divider:** 10 kΩ from the signal to the ESP32 pin, 20 kΩ from the pin to ground. This divides by 1.5, so 4.5 V becomes 3.0 V, which matches the default calibration.
+- **Or an ADS1115:** power it from 3.3 V and keep the same dividers in front of it. It's much more accurate than the ESP32's own analog pins.
+
+On each input, also fit a 1 kΩ series resistor, a 3.3 V zener/TVS to ground and a 100 nF capacitor to protect against engine-bay voltage spikes.
+
+Analog sensors **must** use GPIO 32–39. The ESP32's other analog pins stop working while Wi-Fi is on.
+
+## First-time install (USB)
+
+The first flash must be over USB, because it installs the new partition layout. After that, everything can be done over Wi-Fi.
+
+### Option A – no IDE: flash the full image
+
+1. Open https://espressif.github.io/esptool-js/ in Chrome or Edge and connect the ESP32 over USB.
+2. Flash `carmetrics-full-flash.bin` at address **0x0**. This one image holds the bootloader, partitions, firmware and web app.
+
+### Option B – Arduino IDE 2
+
+1. **Board:** install *esp32 by Espressif* (tested with 2.0.17) and select **ESP32 Dev Module**.
+   - Set **Partition Scheme** to **Minimal SPIFFS**. This only sets the size limit; the real layout comes from `firmware/CarMetrics/partitions.csv`.
+2. **Libraries:** install these from the Library Manager (versions tested):
+   - ArduinoJson 7.2.1
+   - ESP Async WebServer 3.12.1 *and* Async TCP 4.0.0 – the **ESP32Async** versions
+   - U8g2 2.37.1
+   - OneWire 2.3.8
+   - DallasTemperature 4.0.6
+   - Adafruit MAX6675 1.1.2
+   - Adafruit BMP280 3.0.0
+   - Adafruit BMP085 1.2.4
+   - Adafruit ADS1X15 2.6.2 (Adafruit Unified Sensor and BusIO install with them)
+3. **Firmware:** open `firmware/CarMetrics/CarMetrics.ino` and upload.
+4. **Web app:**
+   1. Run `python3 tools/build_web.py`. This writes `firmware/CarMetrics/data/` and, if it finds `mklittlefs`, `build/littlefs.bin`.
+   2. Get it onto the ESP32 in one of two ways:
+      - Upload `data/` with the *LittleFS upload* plugin.
+      - Join the Wi-Fi and open http://192.168.4.1. Until the web app is installed, the ESP32 shows a simple upload page; upload `littlefs.bin` there.
+
+## Using it
+
+1. **Connect:** join the Wi-Fi network **CarMetrics** (password `carmetrics`) and open http://192.168.4.1 or http://carmetrics.local.
+2. **Change passwords:** on the **System** page, change the Wi-Fi and admin passwords (the admin password is also `carmetrics`).
+3. **Assign temperature sensors:** on the **Sensors** page, press **Scan**, assign each 1-Wire address, then **Save changes**.
+4. **Check the analog sensors:** the editor shows the live voltage at each sensor, which helps you confirm the calibration.
+
+**Updating later:**
+
+1. **Build the firmware file:** in Arduino IDE use *Sketch → Export Compiled Binary*. It writes `CarMetrics.ino.bin`.
+2. **Build the web app file:** run `tools/build_web.py`. It writes `littlefs.bin`.
+3. **Upload:** on the **System → Firmware & web app update** page, pick the file and press Upload. This works from a phone.
+
+## Project layout
+
+```
+firmware/CarMetrics/   ESP32 firmware (Arduino sketch, split into modules – see header of CarMetrics.ino)
+web/                   web app sources (plain HTML/JS/CSS, no build step besides gzip)
+tools/build_web.py     gzips web/ into firmware data/ and builds littlefs.bin
+legacy/                previous Arduino + ESP32 versions
+```
+
+### Emulator self-test
+
+`Selftest.cpp` compiles only with `-DCM_EMULATOR_TEST -DCM_EMU_SELFTEST`.
+
+- It skips Wi-Fi and the ADC (QEMU emulates neither) and feeds fake sensor values.
+- It checks config validation, saving and reloading, alert levels, mute and relays.
+- It prints the OLED frame buffer as PBM images.
+
+Normal builds don't include any of it.
+
+### HTTP API
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| `GET /events` | | Live state every second (`state`) and config changes (`config`) |
+| `GET /api/state` | | Current readings, alert levels and relay states |
+| `GET /api/info` | | Version, memory, network status |
+| `GET /api/config` | | Full config, without passwords |
+| `GET /api/history` | | Chart history |
+| `GET /api/onewire` | | Last 1-Wire bus scan |
+| `POST /api/onewire/scan` | | Start a new bus scan |
+| `POST /api/config/sensors` | ✔ | Replace the sensor list |
+| `POST /api/config/relays` | ✔ | Replace the relay list |
+| `POST /api/config/system` | ✔ | Change system settings |
+| `POST /api/config/import` | ✔ | Restore a config backup |
+| `POST /api/config/reset` | ✔ | Reset sensors and relays to defaults |
+| `GET /api/config/export` | ✔ | Download a config backup |
+| `POST /api/relays/control` | ✔ | `{id, on, blinkMs}` |
+| `POST /api/alerts/mute` | | `{minutes}`, where 0 = unmute |
+| `POST /api/time` | | `{epochMs}` – set the clock |
+| `POST /api/update?target=firmware\|filesystem` | ✔ | Install an update |
+| `POST /api/reboot` | ✔ | Reboot |
