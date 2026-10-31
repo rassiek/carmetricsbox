@@ -229,7 +229,7 @@ void Health::toJson(JsonObject o) {
   else fw["state"] = "factory";
   fw["rollbackAvailable"] = esp_ota_check_rollback_is_possible();
   if (otaNote.length()) fw["note"] = otaNote;
-  fw["sketchKB"] = ESP.getSketchSize() / 1024; fw["slotKB"] = (ESP.getSketchSize() + ESP.getFreeSketchSpace()) / 1024;
+  fw["sketchKB"] = ESP.getSketchSize() / 1024; fw["slotKB"] = ESP.getFreeSketchSpace() / 1024;   // both OTA slots are the same size
 
   JsonObject up = o["uptime"].to<JsonObject>();
   up["s"] = millis() / 1000; up["boots"] = bootCount;
