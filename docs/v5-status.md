@@ -1,6 +1,6 @@
 # CarMetrics v5 – build status (31 Oct 2026)
 
-Phases 0 and 1 of the [v5 design](v5-design-and-backlog.md) are built on the `v4` branch (one commit on top of the v4 work).
+Phases 0 and 1 of the [v5 design](v5-design-and-backlog.md) are built on the `v5` branch (branched from `v4`).
 Phases 2 (touch display) and 3 (multi-board) are not started.
 
 ## Decisions taken before building
