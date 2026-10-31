@@ -60,3 +60,19 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 5. Enable the turbo timer; after a drive, idle and watch the banner count down.
 6. Trigger a warning (e.g. lower a threshold) and check the recording on **Events**.
 7. If fitted: ignition input with sleep after 2 min; GPS on a free UART pin.
+
+## Bench test results (31 Oct 2026, classic ESP32)
+
+- v5 installed over USB (`carmetrics-full-flash.bin`); settings carried over from v4.
+- Board health panel works: CPU 5% / 3%, loop 0.3 ms average (247 ms max once), ~118 KB free, task stacks 4–9 KB headroom.
+- **Wi-Fi joining is unreliable:** it joined the saved network (HouseLAN) only once. Cause not yet known.
+- Known display bug, fixed in source: firmware slot showed 2978 KB instead of 1664 KB.
+- Over-the-air uploads failed earlier ("Wrong Magic Byte" = the full USB image was uploaded; later drops while the laptop kept leaving the AP). The System page now checks files before uploading.
+
+## Next session
+
+1. **Wi-Fi diagnostics and fix:** log each join attempt (networks seen, RSSI, chosen network, disconnect reason codes) on the System page; more persistent retries; check the AP channel switch and laptop drop-outs.
+2. **Next phase:** the user asked for "phase 2" after testing. Earlier the agreed order was multi-board (phase 3) before the touch display (phase 2, needs a JC3248W535 board). Confirm which at the start.
+3. Bigger partition layout for 8/16 MB boards before multi-board (core 3.x builds have ~120–200 KB free).
+
+Toolchain notes for a new session: `devenv/` (Docker or `setup-toolchain.sh`) installs arduino-cli, core 2.0.17 + 3.3.12, libraries and QEMU. `tools/cm.sh build | build3 esp32s3 | selftest | webtest`.
