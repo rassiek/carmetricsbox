@@ -16,7 +16,7 @@
 
 | Step | Backlog | What | Testable without a 2nd board |
 |---|---|---|---|
-| 1 | #17 | Protocol: envelope, hello/announce, heartbeat, config push (fragmented), point stream, commands, acks. Transport interface with a loopback link | Yes (emulator) |
+| 1 | #17 | Protocol: envelope, hello/announce, heartbeat, config push (fragmented), point stream, commands, acks. Transport interface with a loopback link. **Message format done** (`Proto.*`, `Link.h`); the exchange logic (who sends what when) comes with step 2 | Yes (PC test + emulator) |
 | 2 | #20, #21 | Roles in one firmware: **sensor board** (reads + local alarms, OLED/buzzer), **relay board** (safe state off/on/hold on link loss). Main board registers remote points `board.point` | Yes (loopback) |
 | 3 | #19 | ESP-NOW link: channel hunt 1–13, encrypted pairing (accept on the main board), heartbeat 1 s, lost after 5 s, re-hunt | Needs 2 boards |
 | 4 | #22 | Boards page: list, pair/accept, per-board settings, link quality; remote points in gauges, charts, alarms, black box, cloud | Mock server + emulator |
@@ -31,3 +31,19 @@
 - **Ownership:** the main board owns the whole configuration and pushes each board its share; boards keep it in their own NVS and run without the main board.
 - **Failure behaviour:** as in the design: sensor boards alarm locally; relay boards go to their safe state after the timeout; points show "link lost" and a fault alert after 3 missed heartbeats (with the 5 s rule above).
 - **Limits:** up to 3 extra boards in this phase (ESP-NOW allows more; encrypted peers are limited, ~6 in AP+STA mode).
+
+## Protocol (step 1, built)
+
+`firmware/CarMetrics/Proto.h` / `.cpp`, `Link.h`. Plain C++, tested on a PC with `tools/cm.sh prototest` (address and undefined-behaviour sanitizers) and once on the chip in the emulator self-test.
+
+| Message | Direction | Content | Size |
+|---|---|---|---|
+| hello | board → all | role, chip, channel, MAC, firmware, name, config revision, point count | 45–64 B |
+| heartbeat | both, 1 s | uptime, config revision, worst alarm level, flags (safe mode, relays safe, needs config, muted), RSSI, point count | 22 B |
+| config | main → board | the board's share of the settings (JSON), 200 B chunks, CRC-32 over the whole; any order, duplicates fine, newer revision restarts | ≤ 223 B per chunk, up to 32 KB |
+| config-ack | board → main | accepted / bad CRC / invalid (with reason) / too big | ≤ 64 B |
+| points | board → main | up to 39 values per frame: value, status, alarm level, by index; tagged with the config revision | ≤ 248 B |
+| command | main → board | relay on/off/blink, mute, identify, reboot | 17 B |
+| ack | board → main | answer to a command | 13 B |
+
+Frames: `'C'`, version, type, from, to, sequence number, length, payload, CRC-16. Damaged, foreign, truncated or other-version frames are dropped; a per-board sequence tracker drops duplicates and counts lost frames for the link-quality figure.

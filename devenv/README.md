@@ -20,6 +20,7 @@ This is the toolchain used to develop and test CarMetrics:
 | `tools/cm.sh selftest` | Boots the firmware in the **ESP32 emulator** and runs the built-in self-test (about 60 checks). Writes the log and OLED screenshots to `build/emu/` |
 | `tools/cm.sh emu 60` | Boots the firmware in the emulator for 60 s and shows the serial log |
 | `tools/cm.sh webtest` | Runs a headless Chrome test of every web page against a mock ESP32. Screenshots go to `build/webtest/` |
+| `tools/cm.sh prototest` | Tests the board-to-board protocol on this PC (g++, a few seconds) |
 | `tools/cm.sh all` | All of the above |
 
 **What the emulator can't do:** it has no Wi-Fi radio, ADC or real I2C/1-Wire devices. The self-test build fakes sensor values and skips Wi-Fi. Weather, uploads and real sensors still need the real board.

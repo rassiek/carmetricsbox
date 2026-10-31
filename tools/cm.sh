@@ -7,7 +7,8 @@
 #   tools/cm.sh selftest [secs]    run the firmware self-test in the ESP32 emulator
 #   tools/cm.sh emu [secs]         boot the firmware in the emulator and show the log
 #   tools/cm.sh webtest            headless browser test of the web app (mock ESP32)
-#   tools/cm.sh all                build + build3 esp32 + build3 esp32s3 + selftest + webtest
+#   tools/cm.sh prototest          board-to-board protocol test on this PC (g++, a few seconds)
+#   tools/cm.sh all                prototest + build + build3 esp32 + build3 esp32s3 + selftest + webtest
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PREFIX="${CM_PREFIX:-/opt/cm}"
@@ -92,6 +93,13 @@ cmd_emu() {
   grep -av "^$\|^ets \|^rst:\|^configsip\|^clk_drv\|^mode:\|^load:\|^entry" "$OUT/emu/qemu.log" | head -200
 }
 
+cmd_prototest() {
+  mkdir -p "$OUT/prototest"
+  g++ -std=c++17 -Wall -Wextra -Werror -O1 -fsanitize=address,undefined -I "$SKETCH" \
+    "$ROOT/tools/prototest/proto_test.cpp" "$SKETCH/Proto.cpp" -o "$OUT/prototest/proto_test"
+  "$OUT/prototest/proto_test"
+}
+
 cmd_webtest() {
   python3 "$ROOT/tools/webtest/mock_server.py" "$ROOT/web" 8099 > "$OUT/mock.log" 2>&1 &
   MOCK_PID=$!
@@ -106,6 +114,7 @@ case "${1:-}" in
   selftest) cmd_selftest "${2:-}" ;;
   emu) cmd_emu "${2:-}" ;;
   webtest) cmd_webtest ;;
-  all) cmd_build && cmd_build3 esp32 && cmd_build3 esp32s3 && cmd_selftest && cmd_webtest ;;
-  *) sed -n '2,11p' "$0"; exit 1 ;;
+  prototest) cmd_prototest ;;
+  all) cmd_prototest && cmd_build && cmd_build3 esp32 && cmd_build3 esp32s3 && cmd_selftest && cmd_webtest ;;
+  *) sed -n '2,12p' "$0"; exit 1 ;;
 esac

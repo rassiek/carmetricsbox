@@ -2,6 +2,7 @@
 #ifdef CM_EMU_SELFTEST
 #include "State.h"
 #include "WifiMgr.h"
+#include "Proto.h"
 #include "Display.h"
 #include "History.h"
 #include "Outputs.h"
@@ -132,6 +133,15 @@ void selftestLoop() {
       check(String(WifiMgr::reasonText(15)).indexOf("password") >= 0 && String(WifiMgr::reasonText(201)) == "network not found", "Wi-Fi reason codes in plain words");
       JsonDocument w; { StateLock lk; WifiMgr::toJson(w.to<JsonObject>()); }
       check(w["log"].is<JsonArray>() && w["scan"].is<JsonArray>() && w["remembered"].is<JsonObject>(), "Wi-Fi join log JSON");
+      {   // board-to-board protocol on the chip itself (the full test runs on a PC: tools/cm.sh prototest)
+        uint8_t fr[Proto::MAX_FRAME]; Proto::Header h; h.src = 2; h.seq = 9;
+        Proto::Points pm; pm.count = Proto::MAX_POINTS_PER_FRAME;
+        for (int i = 0; i < pm.count; i++) { pm.points[i].value = i * 0.5f; pm.points[i].level = i % 3; }
+        size_t n = Proto::encodePoints(fr, h, pm);
+        Proto::Header h2; const uint8_t* p; size_t pn; Proto::Points d;
+        bool ok = n == 248 && !Proto::parse(fr, n, h2, p, pn) && Proto::decodePoints(p, pn, d) && d.count == pm.count && d.points[38].value == 19.0f;
+        check(ok && Proto::crc32((const uint8_t*)"123456789", 9) == 0xCBF43926u, "board-to-board frames encode and decode on the ESP32", String(n) + " bytes");
+      }
       Config c2 = base; SensorConfig r; r.id = "rpm"; r.type = SensorType::RPM; r.pin = 18; c2.sensors.push_back(r);
       check(!validateConfig(c2, err), "RPM on the buzzer pin rejected", err);
       Config c3 = base; c3.sys.ignitionPin = 23; c3.sys.sleepAfterMinutes = 10;

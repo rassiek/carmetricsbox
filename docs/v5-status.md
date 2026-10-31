@@ -30,7 +30,9 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 | 12 | Computed sensors | Done | A − B, A + B, rate per minute, minutes in warning, A − curve(B) |
 | 13 | Alarm black box | Done | 30 s before + 30 s after each new warning/critical alarm, newest 10 kept on LittleFS, Events page |
 | 14 | Other optional sensors | Done | INA226, MPU-6050 roll/pitch, switch inputs, BME280 humidity, non-linear analog curves (fuel senders). ICM-42688 not yet |
-| 15–23 | Touch display, multi-board | Not started | Next: phase 3 (multi-board) as agreed |
+| 15–16 | Touch display | Not started | After phase 3 |
+| 17 | Board-to-board protocol | Message format done | `Proto.*`, `Link.h`, PC test `tools/cm.sh prototest` (20 checks); see [phase 3 plan](v5-phase3-plan.md) |
+| 18–23 | CAN, ESP-NOW, board roles, Boards page, remote updates | Not started | Order in the [phase 3 plan](v5-phase3-plan.md) |
 
 ## How it was tested
 
@@ -97,8 +99,8 @@ Tested: builds on 2.0.17 (1.35 MB) and 3.3.12 (ESP32 1.52 MB, S3 1.50 MB), emula
 
 ## Next session
 
-1. **Bench-test the Wi-Fi fix** (above) when the spare board is free; one board is in the car, so dev work continues first.
-2. **Phase 3 (multi-board), confirmed before phase 2.** Plan agreed: [v5-phase3-plan.md](v5-phase3-plan.md) (ESP-NOW default, CAN optional, sensor + relay roles together). Start with step 1, the protocol with a loopback link. Note: ESP-NOW must share the channel of the network the main board joins, so remote boards need to follow channel changes.
+1. Wi-Fi fix bench-tested OK by the user (31 Oct).
+2. **Phase 3 (multi-board), confirmed before phase 2.** Plan agreed: [v5-phase3-plan.md](v5-phase3-plan.md) (ESP-NOW default, CAN optional, sensor + relay roles together). Step 1 message format done (emulator self-test 62/62). Next: step 2, the board roles and the exchange logic over the loopback link. Note: ESP-NOW must share the channel of the network the main board joins, so remote boards need to follow channel changes.
 3. Bigger partition layout for 8/16 MB boards before multi-board (core 3.x builds have ~120–200 KB free).
 
 Toolchain notes for a new session: `devenv/` (Docker or `setup-toolchain.sh`) installs arduino-cli, core 2.0.17 + 3.3.12, libraries and QEMU. `tools/cm.sh build | build3 esp32s3 | selftest | webtest`.

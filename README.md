@@ -72,6 +72,7 @@ both be updated over Wi-Fi.
 | Aux battery | 33 | B25 module, disabled by default |
 | Buzzer / warning LED | 18 / 19 | |
 | Relays | 26 / 27 | Disabled until you enable them |
+| Ignition sense (optional) | 25 suggested | Must be a wake-capable (RTC) pin with an internal pull-up: on a classic ESP32 use 25 (or 13/14). Not 34–39: no pull-up. Through an opto-coupler, input active low |
 
 All pins can be changed in the web app.
 
