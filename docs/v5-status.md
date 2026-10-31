@@ -31,7 +31,7 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 | 13 | Alarm black box | Done | 30 s before + 30 s after each new warning/critical alarm, newest 10 kept on LittleFS, Events page |
 | 14 | Other optional sensors | Done | INA226, MPU-6050 roll/pitch, switch inputs, BME280 humidity, non-linear analog curves (fuel senders). ICM-42688 not yet |
 | 15–16 | Touch display | Not started | After phase 3 |
-| 17 | Board-to-board protocol | Message format done | `Proto.*`, `Link.h`, PC test `tools/cm.sh prototest` (20 checks); see [phase 3 plan](v5-phase3-plan.md) |
+| 17 | Board-to-board protocol | Format + exchange logic done | `Proto.*`, `Link.h`, `BoardNet.*`; PC test `tools/cm.sh prototest` (36 checks incl. two boards over a lossy simulated link); see [phase 3 plan](v5-phase3-plan.md) |
 | 18–23 | CAN, ESP-NOW, board roles, Boards page, remote updates | Not started | Order in the [phase 3 plan](v5-phase3-plan.md) |
 
 ## How it was tested
@@ -97,10 +97,24 @@ Tested: builds on 2.0.17 (1.35 MB) and 3.3.12 (ESP32 1.52 MB, S3 1.50 MB), emula
 - **Clock "not set":** the web app sent the browser's time only once per browser tab, so after a reboot or OTA with the tab still open the board never got the time again (NTP needs Wi-Fi, which was failing). The live state now says when the board has no clock and the web app sends the time whenever that happens. The source (internet, GPS, browser) is shown on the System page, and the board's time is shown in the header on every page.
 - **Weather "InvalidInput":** Open-Meteo sends a chunked HTTP/1.1 reply and the JSON parser read the raw stream including the chunk sizes. The request now uses HTTP/1.0. Error text is clearer ("reply not readable").
 
+## Memory and storage (31 Oct 2026)
+
+Measured from the build map and the emulator; the classic ESP32 is the tight one.
+
+| Change | Saving |
+|---|---|
+| Chart history stored as 16-bit floats (~3 significant digits, NaN kept; every value round-trips) | Half the RAM: 15 sensors x 30 min = 10.8 KB instead of 21.6 KB. Matters more with remote boards' points added |
+| Chart history sent as a chunked reply instead of being built in RAM first | Removes a ~30 KB temporary peak on every Charts page load (would be ~250 KB with 4 h of history) |
+| Weather reply filtered while parsing (only `current` + elevation) | Smaller JSON document while TLS already holds ~40 KB |
+| Boards with PSRAM (S3 N8R8/N16R8, WROVER) keep the history in PSRAM, 4 h instead of 30 min | Internal RAM stays free for Wi-Fi, TLS, ESP-NOW |
+| Health panel: "largest block" now counts internal RAM only; shows chart memory and where it lives | Honest numbers on PSRAM boards |
+
+Flash: firmware 1.36 MB of the 1.62 MB slot on core 2.0.17 (~260 KB free), 1.50–1.52 MB on core 3.x (~120 KB free). Keep the classic 4 MB board on **core 2.0.17**; the bigger partition layout comes with the 8/16 MB S3. Biggest flash users are the Wi-Fi/TLS/lwIP libraries (~500 KB, needed); our own largest is `Config.cpp` (54 KB, JSON handling). Options not taken yet: drop ArduinoOTA (IDE uploads over the network; ~6 KB flash, 1.7 KB RAM), since the web page does updates.
+
 ## Next session
 
 1. Wi-Fi fix bench-tested OK by the user (31 Oct).
-2. **Phase 3 (multi-board), confirmed before phase 2.** Plan agreed: [v5-phase3-plan.md](v5-phase3-plan.md) (ESP-NOW default, CAN optional, sensor + relay roles together). Step 1 message format done (emulator self-test 62/62). Next: step 2, the board roles and the exchange logic over the loopback link. Note: ESP-NOW must share the channel of the network the main board joins, so remote boards need to follow channel changes.
+2. **Phase 3 (multi-board), confirmed before phase 2.** Plan agreed: [v5-phase3-plan.md](v5-phase3-plan.md) (ESP-NOW default, CAN optional, sensor + relay roles together). Step 1 done; step 2 exchange logic done (`BoardNet`). Next: wire it into the firmware: role setting, sensor board / relay board behaviour, remote points in the main board's state, history and alarms; then the ESP-NOW link (step 3). Note: ESP-NOW must share the channel of the network the main board joins, so remote boards need to follow channel changes.
 3. Bigger partition layout for 8/16 MB boards before multi-board (core 3.x builds have ~120–200 KB free).
 
 Toolchain notes for a new session: `devenv/` (Docker or `setup-toolchain.sh`) installs arduino-cli, core 2.0.17 + 3.3.12, libraries and QEMU. `tools/cm.sh build | build3 esp32s3 | selftest | webtest`.

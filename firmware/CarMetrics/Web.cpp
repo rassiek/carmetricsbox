@@ -418,9 +418,11 @@ void setupRoutes() {
   });
 
   server.on("/api/history", HTTP_GET, [](AsyncWebServerRequest* req) {
-    AsyncResponseStream* res = req->beginResponseStream("application/json", 4096);
+    std::shared_ptr<History::Reader> rd;
+    { StateLock lk; rd = std::make_shared<History::Reader>(); }
+    AsyncWebServerResponse* res = req->beginChunkedResponse("application/json",
+      [rd](uint8_t* buf, size_t max, size_t) -> size_t { return rd->read(buf, max); });
     res->addHeader("Cache-Control", "no-store");
-    { StateLock lk; History::writeJson(*res); }
     req->send(res);
   });
 

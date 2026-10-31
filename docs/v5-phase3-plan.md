@@ -17,7 +17,7 @@
 | Step | Backlog | What | Testable without a 2nd board |
 |---|---|---|---|
 | 1 | #17 | Protocol: envelope, hello/announce, heartbeat, config push (fragmented), point stream, commands, acks. Transport interface with a loopback link. **Message format done** (`Proto.*`, `Link.h`); the exchange logic (who sends what when) comes with step 2 | Yes (PC test + emulator) |
-| 2 | #20, #21 | Roles in one firmware: **sensor board** (reads + local alarms, OLED/buzzer), **relay board** (safe state off/on/hold on link loss). Main board registers remote points `board.point` | Yes (loopback) |
+| 2 | #20, #21 | Roles in one firmware: **sensor board** (reads + local alarms, OLED/buzzer), **relay board** (safe state off/on/hold on link loss). Main board registers remote points `board.point`. **Exchange logic done** (`BoardNet.*`: pairing, heartbeats, config push, points, commands); firmware wiring next | Yes (loopback) |
 | 3 | #19 | ESP-NOW link: channel hunt 1–13, encrypted pairing (accept on the main board), heartbeat 1 s, lost after 5 s, re-hunt | Needs 2 boards |
 | 4 | #22 | Boards page: list, pair/accept, per-board settings, link quality; remote points in gauges, charts, alarms, black box, cloud | Mock server + emulator |
 | 5 | #18 | CAN link (TWAI + SN65HVD230), same messages, segmented into 8-byte frames | Needs 2 boards + transceivers |
@@ -45,5 +45,21 @@
 | points | board → main | up to 39 values per frame: value, status, alarm level, by index; tagged with the config revision | ≤ 248 B |
 | command | main → board | relay on/off/blink, mute, identify, reboot | 17 B |
 | ack | board → main | answer to a command | 13 B |
+| assign | main → all | pairing: "the board with this MAC is now board N" (or unpaired again) | 18–41 B |
 
 Frames: `'C'`, version, type, from, to, sequence number, length, payload, CRC-16. Damaged, foreign, truncated or other-version frames are dropped; a per-board sequence tracker drops duplicates and counts lost frames for the link-quality figure.
+
+## Exchange logic (step 2, first half, built)
+
+`BoardNet.h` / `.cpp`: `NodeSession` on an extra board, `MainSession` on the main board, both on any `Link`. Tested on a PC: a main board and a sensor + relay board over a loopback link with simulated time.
+
+| Behaviour | Tested |
+|---|---|
+| Unpaired board says hello every 2 s; main board lists it as "found"; accept → `ASSIGN` (by MAC) gives it id 1; stored on both sides | yes |
+| Settings pushed in chunks, resent every 2 s until acknowledged; revision = CRC-32 of the settings, so identical settings are never re-applied (also after a main board restart) | 25 % and 40 % random loss, 8 seeds |
+| Refused settings come back with the board's reason; the board keeps its last good settings | yes |
+| Live values + local alarm level every second, ignored if they belong to another settings revision | yes |
+| Relay command acts exactly once although answers are lost (resent with the same sequence number; the board answers again without acting) | yes |
+| 3 s silence (Wi-Fi search) = nothing happens; 7 s = link lost on both sides (relays to safe state), then automatic recovery | yes |
+| Main board restart: paired boards restored from storage, back online without re-pairing | yes |
+| Forget: board returns to unpaired and is offered again | yes |

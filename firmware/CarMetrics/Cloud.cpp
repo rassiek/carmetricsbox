@@ -368,8 +368,13 @@ bool fetchWeather(const WeatherConfig& wc, String& err) {
   if (!http.begin(client, url)) { err = "weather: bad URL"; return false; }
   int code = http.GET();
   if (code != 200) { err = "weather: " + (code > 0 ? "HTTP " + String(code) : HTTPClient::errorToString(code)); http.end(); return false; }
+  // Keep only what's used ("current" + elevation): the reply also carries units,
+  // time zone etc. per town, and this runs while TLS already holds ~40 KB of RAM.
+  JsonDocument filter;
+  JsonObject fo = wc.towns.size() > 1 ? filter.add<JsonObject>() : filter.to<JsonObject>();
+  fo["current"] = true; fo["elevation"] = true;
   JsonDocument doc;
-  DeserializationError e = deserializeJson(doc, http.getStream());
+  DeserializationError e = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
   http.end();
   if (e) { err = String("weather: reply not readable (") + e.c_str() + ")"; return false; }
   std::vector<WeatherReading> out;

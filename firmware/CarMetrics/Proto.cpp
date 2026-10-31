@@ -165,6 +165,15 @@ bool decodeAck(const uint8_t* p, size_t n, Ack& m) {
   return r.ok;
 }
 
+size_t encodeAssign(uint8_t* out, const Header& h, const Assign& m) {
+  return frame(out, h, ASSIGN, [&](Writer& w) { w.bytes(m.mac, 6); w.u8(m.board); w.str(m.name, sizeof(m.name)); });
+}
+bool decodeAssign(const uint8_t* p, size_t n, Assign& m) {
+  Reader r(p, n);
+  r.take(m.mac, 6); m.board = r.u8(); r.str(m.name, sizeof(m.name));
+  return r.ok;
+}
+
 // ---- configuration transfer
 ConfigChunk makeChunk(uint32_t rev, const uint8_t* all, size_t total, uint32_t crc, uint16_t index) {
   ConfigChunk c;
@@ -226,7 +235,7 @@ bool SeqTracker::fresh(uint16_t seq) {
 const char* typeName(uint8_t t) {
   switch (t) {
     case HELLO: return "hello"; case HEARTBEAT: return "heartbeat"; case CONFIG_CHUNK: return "config";
-    case CONFIG_ACK: return "config-ack"; case POINTS: return "points"; case COMMAND: return "command"; case ACK: return "ack";
+    case CONFIG_ACK: return "config-ack"; case POINTS: return "points"; case COMMAND: return "command"; case ACK: return "ack"; case ASSIGN: return "assign";
     default: return "unknown";
   }
 }

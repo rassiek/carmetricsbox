@@ -1,6 +1,7 @@
 #include "Health.h"
 #include "State.h"
 #include "Board.h"
+#include "History.h"
 #include <Preferences.h>
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -241,7 +242,9 @@ void Health::toJson(JsonObject o) {
 
   JsonObject m = o["memory"].to<JsonObject>();
   m["free"] = ESP.getFreeHeap(); m["min"] = ESP.getMinFreeHeap();
-  m["largest"] = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  m["largest"] = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);   // internal RAM: what TLS and Wi-Fi need
+  m["historyKB"] = (History::bytes() + 512) / 1024;
+  m["historyIn"] = ESP.getPsramSize() > 0 ? "PSRAM" : "RAM";
   m["psramFree"] = ESP.getFreePsram();
 #ifndef CM_EMULATOR_TEST   // walking the filesystem with QEMU's slow flash trips the interrupt watchdog
   m["fsUsed"] = LittleFS.usedBytes(); m["fsTotal"] = LittleFS.totalBytes();

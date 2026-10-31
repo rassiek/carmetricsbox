@@ -144,7 +144,7 @@ class H(BaseHTTPRequestHandler):
             except Exception: return
         if p == "/api/config": return self.send_json(200, dict(cfg, revision=rev))
         if p == "/api/state": return self.send_json(200, state())
-        if p == "/api/history": return self.send_json(200, {"interval": 5, "count": 120, "ageMs": 1000, "series": history})
+        if p == "/api/history": return self.send_json(200, {"interval": 5, "len": 360, "count": 120, "ageMs": 1000, "series": history})
         if p == "/api/info": return self.send_json(200, dict(version="4.0.0", build="Oct 30 2026", uptimeS=int(time.time() - T0) + 3700, heapFree=180000, heapMin=150000,
                 fsUsed=60000, fsTotal=589824, sketchSize=1037125, sketchFree=1703936, apSsid="CarMetrics", apIp="192.168.4.1", staSsid="", ip="",
                 rssi=0, hostname="carmetrics", stationHpa=834.2, seaLevelHpa=1016.4, seaLevelSource="weather: Nairobi", internet=True, ntp=True, bmp="BMP180", oled="ok", timeSynced=clock_set, timeSource="browser", resetReason=1, sseClients=1))
@@ -163,7 +163,7 @@ class H(BaseHTTPRequestHandler):
                 board=dict(id="esp32_devkit", name="ESP32 DevKit (WROOM-32, 4 MB)", setting="auto"),
                 firmware=dict(version="5.0.0-dev", build="Oct 31 2026", core="2.0.17", idf="v4.4.7", slot="app0", state="confirmed", rollbackAvailable=True, sketchKB=1255, slotKB=1664),
                 uptime=dict(s=up, boots=42, resetReason="power on", history=["power on", "restart", "power on", "low voltage (brown-out)"]),
-                safeMode=False, crashCount=0, memory=dict(free=182000, min=151000, largest=110592, psramFree=0, fsUsed=60000, fsTotal=589824),
+                safeMode=False, crashCount=0, memory=dict(free=182000, min=151000, largest=110592, psramFree=0, historyKB=10, historyIn="RAM", fsUsed=60000, fsTotal=589824),
                 cpu=[18, 9], loop=dict(avgUs=840, maxUs=6200), tasks=[dict(name="loop", stackFree=4920), dict(name="oled", stackFree=2810), dict(name="net", stackFree=7400)],
                 wifi=dict(connected=True, ssid="Phone", rssi=-61, channel=6, apClients=1), flash=dict(configWrites=1, bufferWrites=0, bufferKB=0),
                 clients=dict(events=1, websocket=0)))

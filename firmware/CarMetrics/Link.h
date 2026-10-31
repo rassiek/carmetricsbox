@@ -32,7 +32,9 @@ class LoopbackLink : public Link {
   bool send(uint8_t, const uint8_t* frame, size_t len) override {
     if (!peer || len > Proto::MAX_FRAME) return false;
     sent++;
-    if (dropEvery && sent % dropEvery == 0) { dropped++; return true; }   // lost "in the air"
+    rnd = rnd * 1103515245u + 12345u;     // repeatable pseudo-random losses
+    bool lose = cut || (dropEvery && sent % dropEvery == 0) || (dropPercent && (rnd >> 16) % 100 < dropPercent);
+    if (lose) { dropped++; return true; }   // lost "in the air"
     peer->inbox.emplace_back(frame, frame + len);
     return true;
   }
@@ -46,6 +48,9 @@ class LoopbackLink : public Link {
   }
   uint32_t dropEvery = 0;   // 0 = never
   bool reverse = false;
+  bool cut = false;         // out of range: everything is lost
+  uint32_t dropPercent = 0; // random losses
+  uint32_t rnd = 1;
   uint32_t sent = 0, dropped = 0;
  private:
   LoopbackLink* peer = nullptr;

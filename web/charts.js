@@ -80,6 +80,7 @@
   async function build() {
     const [cfg, hist] = await Promise.all([api('/api/config'), api('/api/history')]);
     interval = hist.interval || 5;
+    maxLen = hist.len || 360;
     $('#span').textContent = `Last ${Math.round(maxLen * interval / 60)} minutes, one point every ${interval}s. Tap a legend entry to hide or show a line.`;
     const box = $('#charts');
     box.innerHTML = '';

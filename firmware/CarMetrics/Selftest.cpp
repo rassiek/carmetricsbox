@@ -222,6 +222,12 @@ void selftestLoop() {
     { StateLock lk; check(gSys.muted, "mute works"); }
     String h; { StateLock lk; struct S : Print { String* s; size_t write(uint8_t c) override { *s += (char)c; return 1; } } p; p.s = &h; History::writeJson(p); }
     check(h.startsWith("{\"interval\":5") && h.indexOf("\"coolant_temp\":[") > 0, "history JSON", h.substring(0, 90));
+    {   // the chunked reader sends exactly the same JSON, whatever the piece size
+      String c; uint8_t b[37]; size_t n;
+      { StateLock lk; History::Reader rd; while ((n = rd.read(b, sizeof(b))) > 0) c.concat((const char*)b, n); }
+      auto noAge = [](String j) { int a = j.indexOf("\"ageMs\":"), e = j.indexOf(',', a); return a < 0 ? j : j.substring(0, a) + j.substring(e + 1); };
+      check(noAge(c) == noAge(h) && c.length() > 200, "history streamed in pieces = same JSON", String(c.length()) + " bytes, " + String(History::bytes()) + " B RAM");
+    }
   }
   if (step == 5 && now > 41000) {
     step++;

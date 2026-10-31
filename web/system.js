@@ -43,7 +43,7 @@
       ['Uptime', dur(m.uptime.s), `boot #${m.uptime.boots}, last reset: ${m.uptime.resetReason}`],
       ['CPU core 0', pct(m.cpu[0]), 'Wi-Fi, display, uploads'],
       ['CPU core 1', pct(m.cpu[1]), 'sensors, alarms, web'],
-      ['Free memory', k(mem.free), `lowest ${k(mem.min)}, largest block ${k(mem.largest)}`],
+      ['Free memory', k(mem.free), `lowest ${k(mem.min)}, largest block ${k(mem.largest)}` + (mem.historyKB !== undefined ? `, charts ${mem.historyKB} KB in ${mem.historyIn}` : '')],
       ['Loop time', (m.loop.avgUs / 1000).toFixed(1) + ' ms', `max ${(m.loop.maxUs / 1000).toFixed(1)} ms (10 s)`],
       ['Wi-Fi', m.wifi.connected ? `${m.wifi.rssi} dBm` : 'not joined', m.wifi.connected ? `${m.wifi.ssid}, ch ${m.wifi.channel}` : `${m.wifi.apClients} on CarMetrics AP`],
       ['Flash writes', String(m.flash.configWrites + m.flash.bufferWrites), `settings ${m.flash.configWrites}, buffer ${m.flash.bufferWrites} (${m.flash.bufferKB} KB)`],

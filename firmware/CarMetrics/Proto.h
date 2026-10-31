@@ -33,6 +33,7 @@ enum Type : uint8_t {
   POINTS = 5,        // board -> main: live values, by index into the board's point list
   COMMAND = 6,       // main -> board: relay, mute, identify, reboot
   ACK = 7,           // reply to a COMMAND
+  ASSIGN = 8,        // main -> all: "the board with this MAC is now board N" (pairing; N = UNPAIRED to forget it)
 };
 
 enum Role : uint8_t { ROLE_MAIN = 0, ROLE_SENSOR = 1, ROLE_RELAY = 2, ROLE_SENSOR_RELAY = 3, ROLE_DISPLAY = 4 };
@@ -107,6 +108,12 @@ struct Ack {
   uint8_t status = 0;          // 0 = done, else an error code
 };
 
+struct Assign {
+  uint8_t mac[6] = {0};
+  uint8_t board = UNPAIRED;
+  char name[24] = "";
+};
+
 // ---- frames
 // encode*: write a complete frame into out (MAX_FRAME bytes); return its length, 0 on error.
 size_t encodeHello(uint8_t* out, const Header& h, const Hello& m);
@@ -116,6 +123,7 @@ size_t encodeConfigAck(uint8_t* out, const Header& h, const ConfigAck& m);
 size_t encodePoints(uint8_t* out, const Header& h, const Points& m);
 size_t encodeCommand(uint8_t* out, const Header& h, const Command& m);
 size_t encodeAck(uint8_t* out, const Header& h, const Ack& m);
+size_t encodeAssign(uint8_t* out, const Header& h, const Assign& m);
 
 // Check a received frame (marker, version, length, CRC) and split it.
 // Returns nullptr when valid, else a short reason ("bad CRC"...).
@@ -130,6 +138,7 @@ bool decodeConfigAck(const uint8_t* p, size_t n, ConfigAck& m);
 bool decodePoints(const uint8_t* p, size_t n, Points& m);
 bool decodeCommand(const uint8_t* p, size_t n, Command& m);
 bool decodeAck(const uint8_t* p, size_t n, Ack& m);
+bool decodeAssign(const uint8_t* p, size_t n, Assign& m);
 
 // ---- configuration transfer
 uint32_t crc32(const uint8_t* data, size_t len, uint32_t crc = 0);

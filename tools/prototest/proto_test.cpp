@@ -2,13 +2,15 @@
 // Build + run: tools/cm.sh prototest
 #include "Proto.h"
 #include "Link.h"
+#include "Half.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
 static int passed = 0, failed = 0;
-static void check(bool ok, const char* what, const std::string& detail = "") {
+void boardsTest();
+void check(bool ok, const char* what, const std::string& detail = "") {
   (ok ? passed : failed)++;
   printf("%s %s %s\n", ok ? "PASS" : "FAIL", what, detail.c_str());
 }
@@ -145,10 +147,31 @@ int main() {
           "lost " + std::to_string(t.lost()));
   }
 
+  // half floats for the chart history: ~3 significant digits, NaN kept
+  {
+    struct { float v, tol; } cases[] = {{0, 0}, {14.53f, 0.008f}, {486.3f, 0.25f}, {1661, 0.5f}, {4123, 2}, {-40, 0}, {0.37f, 0.0002f}, {101.5f, 0.03f}, {65504, 0}, {-12.25f, 0}};
+    bool ok = true; std::string worst;
+    for (auto& c : cases) {
+      float back = Half::toFloat(Half::fromFloat(c.v));
+      if (std::fabs(back - c.v) > c.tol) { ok = false; worst += std::to_string(c.v) + "->" + std::to_string(back) + " "; }
+    }
+    check(ok, "half floats keep chart precision", worst);
+    check(std::isnan(Half::toFloat(Half::fromFloat(NAN))) && std::isnan(Half::toFloat(Half::NaN)), "half floats keep NaN (no value)");
+    check(std::isinf(Half::toFloat(Half::fromFloat(1e6f))), "half floats: out of range -> infinity, not garbage");
+    bool exact = true;   // every half value survives a round trip through float
+    for (uint32_t h = 0; h < 0x10000; h++) {
+      float f = Half::toFloat((uint16_t)h);
+      if (std::isnan(f)) continue;
+      if (Half::fromFloat(f) != h) { exact = false; worst = std::to_string(h); break; }
+    }
+    check(exact, "all 65536 half values round-trip exactly", worst);
+  }
+
   // known CRC values (so the ESP32 and a PC agree)
   check(crc32((const uint8_t*)"123456789", 9) == 0xCBF43926u, "CRC-32 check value");
   check(crc16((const uint8_t*)"123456789", 9) == 0x29B1, "CRC-16/CCITT check value");
 
+  boardsTest();
   printf("DONE: %d passed, %d failed\n", passed, failed);
   return failed ? 1 : 0;
 }

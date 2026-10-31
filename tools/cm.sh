@@ -96,7 +96,8 @@ cmd_emu() {
 cmd_prototest() {
   mkdir -p "$OUT/prototest"
   g++ -std=c++17 -Wall -Wextra -Werror -O1 -fsanitize=address,undefined -I "$SKETCH" \
-    "$ROOT/tools/prototest/proto_test.cpp" "$SKETCH/Proto.cpp" -o "$OUT/prototest/proto_test"
+    "$ROOT/tools/prototest/proto_test.cpp" "$ROOT/tools/prototest/boards_test.cpp" "$SKETCH/Proto.cpp" "$SKETCH/BoardNet.cpp" \
+    -o "$OUT/prototest/proto_test"
   "$OUT/prototest/proto_test"
 }
 
