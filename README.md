@@ -164,6 +164,17 @@ The ESP32 needs to **join a Wi-Fi network that has internet**. Set **System → 
 
 **Web app updates** erase any unsent backlog on flash. The System page warns you first.
 
+### Dev environment (Docker)
+
+`devenv/` contains the exact toolchain used during development: arduino-cli, ESP32 core 2.0.17, pinned libraries and Espressif's ESP32 emulator (QEMU). It also includes headless web tests.
+
+See [devenv/README.md](devenv/README.md). In short:
+
+```
+docker build -t carmetrics-dev devenv
+docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh all
+```
+
 ### Emulator self-test
 
 `Selftest.cpp` compiles only with `-DCM_EMULATOR_TEST -DCM_EMU_SELFTEST`.

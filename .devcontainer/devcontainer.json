@@ -1,0 +1,7 @@
+{
+  "name": "CarMetrics",
+  "build": { "dockerfile": "../devenv/Dockerfile", "context": "../devenv" },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/work,type=bind",
+  "workspaceFolder": "/work",
+  "customizations": { "vscode": { "extensions": ["ms-vscode.cpptools"] } }
+}
