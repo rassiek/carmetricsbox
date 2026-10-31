@@ -98,7 +98,7 @@ Tested: builds on 2.0.17 (1.35 MB) and 3.3.12 (ESP32 1.52 MB, S3 1.50 MB), emula
 ## Next session
 
 1. **Bench-test the Wi-Fi fix** (above) when the spare board is free; one board is in the car, so dev work continues first.
-2. **Phase 3 (multi-board), confirmed before phase 2.** Transport: **ESP-NOW is the default, CAN is the optional second transport.** Plan to be agreed before building. Note: ESP-NOW must share the channel of the network the main board joins, so remote boards need to follow channel changes.
+2. **Phase 3 (multi-board), confirmed before phase 2.** Plan agreed: [v5-phase3-plan.md](v5-phase3-plan.md) (ESP-NOW default, CAN optional, sensor + relay roles together). Start with step 1, the protocol with a loopback link. Note: ESP-NOW must share the channel of the network the main board joins, so remote boards need to follow channel changes.
 3. Bigger partition layout for 8/16 MB boards before multi-board (core 3.x builds have ~120–200 KB free).
 
 Toolchain notes for a new session: `devenv/` (Docker or `setup-toolchain.sh`) installs arduino-cli, core 2.0.17 + 3.3.12, libraries and QEMU. `tools/cm.sh build | build3 esp32s3 | selftest | webtest`.
