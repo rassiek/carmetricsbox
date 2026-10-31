@@ -16,6 +16,7 @@
 #include <WiFi.h>
 #include <sys/time.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <esp_partition.h>
 
 namespace {
@@ -39,8 +40,19 @@ bool requireAuth(AsyncWebServerRequest* req) {
   return false;
 }
 
+// Is there one free block big enough for a reply of n bytes (plus headroom for
+// Wi-Fi / TCP)? Out of memory, the response buffer's `new` throws and the
+// board aborts (crash 1 Nov 2026, async_tcp: cbuf::resize -> abort).
+static bool roomFor(size_t n) {
+  return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > n + 8192;
+}
+
 void sendJson(AsyncWebServerRequest* req, int code, JsonDocument& doc) {
-  AsyncResponseStream* res = req->beginResponseStream("application/json");
+  size_t n = measureJson(doc);
+  if (!roomFor(n)) { req->send(503, "text/plain", "Low memory, try again in a moment"); return; }
+  // Buffer sized once: growing it byte by byte re-allocated and copied it for
+  // every few bytes, needing twice the memory and fragmenting the heap.
+  AsyncResponseStream* res = req->beginResponseStream("application/json", n + 32);
   res->setCode(code);
   res->addHeader("Cache-Control", "no-store");
   serializeJson(doc, *res);
@@ -510,7 +522,9 @@ void setupRoutes() {
     if (!requireAuth(req)) return;
     JsonDocument doc;
     { StateLock lk; configToJson(gConfig, doc.to<JsonObject>(), false); }
-    AsyncResponseStream* res = req->beginResponseStream("application/json");
+    size_t n = measureJsonPretty(doc);
+    if (!roomFor(n)) { req->send(503, "text/plain", "Low memory, try again in a moment"); return; }
+    AsyncResponseStream* res = req->beginResponseStream("application/json", n + 32);
     res->addHeader("Content-Disposition", "attachment; filename=carmetrics-config.json");
     serializeJsonPretty(doc, *res);
     req->send(res);
@@ -637,8 +651,14 @@ void Web::update() {
     Health::setClientCounts(events.count(), ws.count());
     if (events.count() > 0 || ws.count() > 0) {
       String st = stateString();
-      if (events.count() > 0) events.send(st.c_str(), "state", ++eventId);
-      if (ws.count() > 0) ws.textAll(st);
+      // Don't queue more for clients that aren't keeping up (a phone with the
+      // page in the background): each queued second holds ~1-2 KB until sent.
+      if (events.count() > 0 && events.avgPacketsWaiting() < 3) events.send(st.c_str(), "state", ++eventId);
+      if (ws.count() > 0) {
+        AsyncWebSocketSharedBuffer buf = std::make_shared<std::vector<uint8_t>>(st.begin(), st.end());   // one copy for all
+        for (auto& c : ws.getClients())
+          if (c.status() == WS_CONNECTED && c.queueLen() < 3) c.text(buf);
+      }
     }
   }
 }
