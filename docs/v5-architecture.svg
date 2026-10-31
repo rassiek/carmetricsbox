@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 492" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+<rect width="760" height="492" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a8f98"/></marker></defs>
+<text x="24" y="30" font-size="15" font-weight="600" fill="#1f2328">One main board runs everything; optional boards join over CAN or ESP-NOW</text>
+<g fill="none" stroke="#8a8f98" stroke-width="1.25">
+<path d="M124 112V141H250V170" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M380 112V170" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M636 112V141H510V170" stroke-dasharray="5 4" marker-end="url(#a)" marker-start="url(#a)"/>
+<path d="M174 230H190" marker-end="url(#a)"/><path d="M570 230H586" marker-end="url(#a)"/>
+<path d="M380 290V350"/><path d="M190 350V390"/><path d="M570 350V390"/>
+<path d="M120 350H640" stroke-width="3"/>
+</g>
+<g fill="none" stroke="#8a8f98" stroke-width="1.25">
+<rect x="24" y="56" width="200" height="56" rx="8"/><rect x="280" y="56" width="200" height="56" rx="8"/><rect x="536" y="56" width="200" height="56" rx="8"/>
+<rect x="24" y="170" width="150" height="120" rx="8"/><rect x="586" y="200" width="150" height="60" rx="8"/>
+<rect x="60" y="390" width="260" height="76" rx="8"/><rect x="440" y="390" width="260" height="76" rx="8"/>
+</g>
+<rect x="190" y="170" width="380" height="120" rx="8" fill="#2f6fde" fill-opacity="0.12" stroke="#2f6fde" stroke-width="2"/>
+<g text-anchor="middle" fill="#1f2328">
+<text x="124" y="80" font-weight="600">Phone or tablet</text><text x="124" y="98" font-size="11.5" fill="#59636e">Web UI, the primary display</text>
+<text x="380" y="80" font-weight="600">Internet (optional)</text><text x="380" y="98" font-size="11.5" fill="#59636e">Cloud upload, weather, time</text>
+<text x="636" y="80" font-weight="600">Touch display (optional)</text><text x="636" y="98" font-size="11.5" fill="#59636e">e.g. JC3248W535</text>
+<text x="187" y="134" font-size="11.5" fill="#59636e">Wi-Fi</text><text x="573" y="134" font-size="11.5" fill="#59636e">ESP-NOW or Wi-Fi</text>
+<text x="380" y="196" font-size="15" font-weight="600">Main board (default: the only one)</text>
+<text x="380" y="220" font-size="11.5">Web UI + API, configuration, history</text>
+<text x="380" y="238" font-size="11.5">Local sensors, alarms, buzzer, relays</text>
+<text x="380" y="256" font-size="11.5">Cloud upload, weather, saved Wi-Fi</text>
+<text x="380" y="274" font-size="11.5" fill="#59636e">ESP32 or ESP32-S3, dual core</text>
+<text x="661" y="224" font-weight="600">OLED (optional)</text><text x="661" y="242" font-size="11.5" fill="#59636e">I2C, on the main board</text>
+<text x="190" y="414" font-weight="600">Sensor board (optional)</text><text x="190" y="432" font-size="11.5">Engine bay: temps, pressures, EGT</text><text x="190" y="450" font-size="11.5" fill="#59636e">Alarms locally if the link drops</text>
+<text x="570" y="414" font-weight="600">Relay board (optional)</text><text x="570" y="432" font-size="11.5">Fans, lights, pumps near the loads</text><text x="570" y="450" font-size="11.5" fill="#59636e">Safe state if the link drops</text>
+</g>
+<text x="390" y="146" font-size="11.5" fill="#59636e">Wi-Fi (joined network)</text>
+<g fill="#1f2328" font-size="11.5"><text x="36" y="194" font-size="13" font-weight="600">Optional inputs</text><text x="36" y="214">GPS (UART)</text><text x="36" y="231">RPM (W terminal)</text><text x="36" y="248">Ignition sense</text><text x="36" y="265">IMU, INA226, fuel</text></g>
+<text x="398" y="340" font-size="11.5" fill="#59636e">CAN bus (wired); ESP-NOW as fallback</text>
+</svg>
