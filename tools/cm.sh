@@ -29,7 +29,7 @@ compile() {   # compile <outdir> <fqbn-options> [extra cpp flags]
 }
 
 merge() {     # merge <bindir> <flash-freq> <output>
-  $ESPTOOL --chip esp32 merge_bin --fill-flash-size 4MB -o "$3" --flash_mode dio --flash_freq "$2" --flash_size 4MB \
+  $ESPTOOL --chip esp32 merge_bin -o "$3" --flash_mode dio --flash_freq "$2" --flash_size 4MB \
     0x1000 "$1/CarMetrics.ino.bootloader.bin" 0x8000 "$1/CarMetrics.ino.partitions.bin" \
     0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$1/CarMetrics.ino.bin" \
     0x350000 "$OUT/littlefs.bin" > /dev/null
