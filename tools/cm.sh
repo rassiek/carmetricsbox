@@ -74,6 +74,7 @@ run_qemu() {  # run_qemu <flags> <seconds>
   # QEMU needs 40 MHz DIO flash; it has no Wi-Fi radio or ADC (CM_EMULATOR_TEST skips/fakes those)
   rm -rf "$OUT/emu" && compile "$OUT/emu" "PartitionScheme=min_spiffs,FlashFreq=40,FlashMode=dio,DebugLevel=info" "$1"
   merge "$OUT/emu" 40m "$OUT/emu/flash.bin"
+  truncate -s 4M "$OUT/emu/flash.bin"   # QEMU needs a full-size flash image
   echo "== running emulator for $2 s (log: build/emu/qemu.log)"
   timeout "$2" "$QEMU" -nographic -machine esp32 -m 4M -drive "file=$OUT/emu/flash.bin,if=mtd,format=raw" > "$OUT/emu/qemu.log" 2>&1 || true
 }
