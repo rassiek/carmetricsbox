@@ -18,7 +18,7 @@
       ['Memory', `${kb(i.heapFree)} free (lowest ${kb(i.heapMin)})`],
       ['Web app storage', `${kb(i.fsUsed)} / ${kb(i.fsTotal)}`],
       ['Firmware space', `${kb(i.sketchSize)} used, ${kb(i.sketchFree)} slot`],
-      ['Clock', i.timeSynced ? 'set from browser' : 'not set'],
+      ['Clock', i.timeSynced ? 'set from ' + (i.timeSource || 'browser') : 'not set'],
     ];
     const t = $('#info');
     t.innerHTML = '';

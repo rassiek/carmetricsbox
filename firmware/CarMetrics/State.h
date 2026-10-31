@@ -67,6 +67,7 @@ struct SystemRuntime {
   bool muted = false;
   uint32_t muteUntilMs = 0;
   bool timeSynced = false;
+  const char* timeSource = "";  // "internet", "GPS" or "browser"
   String bmpModel = "none";     // "BMP280", "BMP180", "none"
   String oledStatus = "off";    // "ok", "not found", "off"
   String ip, apIp;

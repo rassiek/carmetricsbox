@@ -99,6 +99,8 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await p.locator('#wLog tr').count()) === 4, 'Wi-Fi join log rows');
   check((await p.locator('#wLog').innerText()).includes('4-way handshake timeout'), 'Wi-Fi join log shows the disconnect reason');
   check((await p.locator('#wState').innerText()).includes('HouseLAN'), 'Wi-Fi state pill');
+  check((await p.locator('#info').innerText()).includes('set from browser'), 'board clock set from the browser after a fresh boot');
+  check(/\d\d:\d\d/.test(await p.locator('#clock').innerText()), 'board clock shown in the header', await p.locator('#clock').innerText());
   check((await p.locator('#hTasks tr').count()) === 4, 'task stack table');
   check((await p.locator('#bSel option').count()) === 3, 'board profiles listed');
   await p.selectOption('#bSel', 'esp32_wrover'); await p.click('#bSave'); await p.waitForTimeout(700);

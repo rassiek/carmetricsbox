@@ -61,7 +61,7 @@ bool parse(char* s) {
       g.speedKmh = *f[7] ? atof(f[7]) * 1.852f : NAN;
       g.heading = *f[8] ? atof(f[8]) : NAN;
       g.lastFixMs = now;
-      if (!gSys.timeSynced) { setClockFromRmc(f[1], f[9]); gSys.timeSynced = true; }
+      if (!gSys.timeSynced) { setClockFromRmc(f[1], f[9]); gSys.timeSynced = true; gSys.timeSource = "GPS"; }
     }
     return true;
   }

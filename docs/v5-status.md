@@ -90,6 +90,11 @@ Tested: builds on 2.0.17 (1.35 MB) and 3.3.12 (ESP32 1.52 MB, S3 1.50 MB), emula
 
 **Bench check for the fix:** flash `carmetrics-full-flash.bin` over USB (the web app changed too, so a firmware-only OTA isn't enough), open System → Wi-Fi joins, and check: joins HouseLAN within ~10 s of boot; reboot → rejoins via "remembered" without a scan; turn the hotspot / router off and on → "connection lost", rejoin within a minute; laptop stays on the CarMetrics AP throughout. If it still fails, the reason codes in the log say why.
 
+## Clock and weather fixes (31 Oct 2026)
+
+- **Clock "not set":** the web app sent the browser's time only once per browser tab, so after a reboot or OTA with the tab still open the board never got the time again (NTP needs Wi-Fi, which was failing). The live state now says when the board has no clock and the web app sends the time whenever that happens. The source (internet, GPS, browser) is shown on the System page, and the board's time is shown in the header on every page.
+- **Weather "InvalidInput":** Open-Meteo sends a chunked HTTP/1.1 reply and the JSON parser read the raw stream including the chunk sizes. The request now uses HTTP/1.0. Error text is clearer ("reply not readable").
+
 ## Next session
 
 1. **Bench-test the Wi-Fi fix** (above) when the spare board is free; one board is in the car, so dev work continues first.

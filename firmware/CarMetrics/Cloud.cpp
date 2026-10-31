@@ -362,13 +362,16 @@ bool fetchWeather(const WeatherConfig& wc, String& err) {
   HTTPClient http;
   http.setConnectTimeout(8000);
   http.setTimeout(15000);
+  // HTTP/1.0: Open-Meteo answers HTTP/1.1 requests with a chunked body, and
+  // parsing the raw stream then fails with "InvalidInput" (chunk sizes in the JSON).
+  http.useHTTP10(true);
   if (!http.begin(client, url)) { err = "weather: bad URL"; return false; }
   int code = http.GET();
   if (code != 200) { err = "weather: " + (code > 0 ? "HTTP " + String(code) : HTTPClient::errorToString(code)); http.end(); return false; }
   JsonDocument doc;
   DeserializationError e = deserializeJson(doc, http.getStream());
   http.end();
-  if (e) { err = String("weather: ") + e.c_str(); return false; }
+  if (e) { err = String("weather: reply not readable (") + e.c_str() + ")"; return false; }
   std::vector<WeatherReading> out;
   auto one = [&](JsonObjectConst o, const WeatherTown& t) {
     WeatherReading w;
@@ -428,7 +431,7 @@ void netTask(void*) {
       StateLock lk;
       gNet.sta = sta;
       if (!sta) gNet.internet = false;
-      if (ntpOk && sta && !gNet.ntp) { gNet.ntp = true; gSys.timeSynced = true; }
+      if (ntpOk && sta && !gNet.ntp) { gNet.ntp = true; gSys.timeSynced = true; gSys.timeSource = "internet"; }
     }
 
     // ---- weather

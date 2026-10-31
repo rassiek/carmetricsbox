@@ -50,6 +50,7 @@ const CM = (() => {
     if (rev !== null && s.rev !== rev) onConfigChanged();
     rev = s.rev;
     lastState = s;
+    if (s.clock === false) syncTime();
     listeners.forEach(fn => fn(s));
     updateHeader(s);
   }
@@ -129,6 +130,7 @@ const CM = (() => {
     const hd = h('header', {},
       h('span', { class: 'brand' }, 'CarMetrics'),
       h('nav', {}, pages.map(([href, name]) => h('a', { href, class: href === here ? 'active' : '' }, name))),
+      h('span', { id: 'clock', class: 'pill', title: 'Board clock' }, '--:--'),
       h('span', { id: 'engine', class: 'pill' }, 'engine ?'),
       h('span', { id: 'alert', class: 'pill ok' }, 'OK'),
       h('button', { id: 'mute', class: 'small hidden', onclick: toggleMute }, 'Mute'),
@@ -145,6 +147,13 @@ const CM = (() => {
       m.classList.toggle('hidden', s.level === 'ok' && !s.muted);
       m.textContent = s.muted ? `Muted ${Math.ceil((s.muteLeftS || 0) / 60)}m` : 'Mute';
     }
+    const c = $('#clock');
+    if (c) {
+      const t = s.epoch ? new Date(s.epoch * 1000) : null;
+      c.textContent = t ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'clock not set';
+      c.title = t ? `Board clock, set from ${s.clockSrc || 'browser'}` : 'The board has no time yet (no internet, GPS or browser)';
+      c.className = 'pill ' + (t ? '' : 'warn');
+    }
     if (e) { e.textContent = s.engine ? 'engine on' : 'engine off'; e.className = 'pill ' + (s.engine ? 'ok' : ''); }
     let b = $('#safeBanner');
     if (s.safe && !b) {
@@ -160,18 +169,19 @@ const CM = (() => {
     } catch (e) { toast(e.message, true); }
   }
 
-  // Give the ESP32 the time once (it has no RTC) so the OLED clock works.
+  // The ESP32 has no battery-backed clock: after every reboot it needs the time
+  // again (internet, GPS or this browser). Send it whenever the board says it
+  // has none - not just once per tab, which missed reboots and OTA updates.
+  let lastTimeSync = 0;
   async function syncTime() {
-    try {
-      if (sessionStorage.getItem('cmTime')) return;
-      await api('/api/time', { body: { epochMs: Date.now() } });
-      sessionStorage.setItem('cmTime', '1');
-    } catch (e) { /* ignore */ }
+    if (Date.now() - lastTimeSync < 30000) return;
+    lastTimeSync = Date.now();
+    try { await api('/api/time', { body: { epochMs: Date.now() } }); } catch (e) { lastTimeSync = 0; }
   }
 
   function fmt(v, dec) { return v === null || v === undefined || Number.isNaN(v) ? '--' : Number(v).toFixed(dec); }
   const statusText = { ok: '', waiting: 'waiting', unassigned: 'not assigned', not_found: 'not found', fault: 'FAULT', disabled: 'disabled' };
 
-  document.addEventListener('DOMContentLoaded', () => { header(); connectWs(); syncTime(); });
+  document.addEventListener('DOMContentLoaded', () => { header(); connectWs(); });
   return { $, h, api, toast, live, onConfig, fmt, statusText, command, board, get state() { return lastState; } };
 })();

@@ -59,6 +59,8 @@ void stateToJson(JsonObject o) {  // lock held
   o["engine"] = gSys.engineRunning;
   o["level"] = alertLevelStr(gSys.overallLevel);
   o["muted"] = gSys.muted;
+  if (!gSys.timeSynced) o["clock"] = false;   // the web app then sends the browser's time
+  else { o["epoch"] = (uint32_t)time(nullptr); o["clockSrc"] = gSys.timeSource; }
   if (Health::safeMode()) o["safe"] = true;
   if (gSys.ignition >= 0) o["ign"] = gSys.ignition == 1;
   if (gConfig.turbo.enabled) {
@@ -398,7 +400,7 @@ void setupRoutes() {
       doc["hostname"] = gConfig.sys.hostname;
       doc["bmp"] = gSys.bmpModel;
       doc["oled"] = gSys.oledStatus;
-      doc["timeSynced"] = gSys.timeSynced;
+      doc["timeSynced"] = gSys.timeSynced; doc["timeSource"] = gSys.timeSource;
       doc["resetReason"] = (int)esp_reset_reason();
       doc["sseClients"] = events.count();
       doc["internet"] = gNet.internet; doc["ntp"] = gNet.ntp;
@@ -452,6 +454,7 @@ void setupRoutes() {
     settimeofday(&tv, nullptr);
     StateLock lk;
     gSys.timeSynced = true;
+    if (!gNet.ntp) gSys.timeSource = "browser";
     sendStatus(req, 200, "Time set");
   });
 

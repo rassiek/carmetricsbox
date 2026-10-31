@@ -56,6 +56,7 @@ cfg = {
 rev = 1
 relay_state = {r["id"]: dict(on=False, out=False, blinkMs=r["blinkMs"]) for r in cfg["relays"]}
 muted_until = 0
+clock_set = False   # like a freshly booted ESP32: no time until the web app sends it
 lock = threading.Lock()
 
 def value(s, t):
@@ -95,6 +96,8 @@ def state():
     egt = out["sensors"].get("egt", {}).get("v")
     if cfg["turbo"]["enabled"] and egt is not None:
         out["turbo"] = {"phase": "cooling" if egt > cfg["turbo"]["safeEgt"] else "ok", "leftS": 25, "safe": cfg["turbo"]["safeEgt"], "egt": round(egt)}
+    if not clock_set: out["clock"] = False
+    else: out["epoch"] = int(time.time()); out["clockSrc"] = "browser"
     out["muted"] = time.time() < muted_until
     if out["muted"]: out["muteLeftS"] = int(muted_until - time.time())
     return out
@@ -144,7 +147,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/history": return self.send_json(200, {"interval": 5, "count": 120, "ageMs": 1000, "series": history})
         if p == "/api/info": return self.send_json(200, dict(version="4.0.0", build="Oct 30 2026", uptimeS=int(time.time() - T0) + 3700, heapFree=180000, heapMin=150000,
                 fsUsed=60000, fsTotal=589824, sketchSize=1037125, sketchFree=1703936, apSsid="CarMetrics", apIp="192.168.4.1", staSsid="", ip="",
-                rssi=0, hostname="carmetrics", stationHpa=834.2, seaLevelHpa=1016.4, seaLevelSource="weather: Nairobi", internet=True, ntp=True, bmp="BMP180", oled="ok", timeSynced=True, resetReason=1, sseClients=1))
+                rssi=0, hostname="carmetrics", stationHpa=834.2, seaLevelHpa=1016.4, seaLevelSource="weather: Nairobi", internet=True, ntp=True, bmp="BMP180", oled="ok", timeSynced=clock_set, timeSource="browser", resetReason=1, sseClients=1))
         if p == "/api/v2/board":
             r = lambda a, b: list(range(a, b + 1))
             valid = [x for x in r(0, 39) if x not in r(6, 11) + [20, 24] + r(28, 31)]
@@ -246,14 +249,16 @@ class H(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def do_POST(self):
-        global rev, muted_until
+        global rev, muted_until, clock_set
         p = self.path.split("?")[0]
         raw = self.body()
         j = json.loads(raw) if raw and self.headers.get("Content-Type", "").startswith("application/json") else None
         if p == "/api/alerts/mute":
             muted_until = time.time() + j.get("minutes", 5) * 60 if j.get("minutes", 5) > 0 else 0
             return self.send_json(200, {"ok": True, "message": "Muted"})
-        if p == "/api/time": return self.send_json(200, {"ok": True, "message": "Time set"})
+        if p == "/api/time":
+            clock_set = True
+            return self.send_json(200, {"ok": True, "message": "Time set"})
         if p == "/api/v2/command":
             j = (j or {})
             if j.get("cmd") == "mute":
