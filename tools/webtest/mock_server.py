@@ -164,6 +164,15 @@ class H(BaseHTTPRequestHandler):
                 cpu=[18, 9], loop=dict(avgUs=840, maxUs=6200), tasks=[dict(name="loop", stackFree=4920), dict(name="oled", stackFree=2810), dict(name="net", stackFree=7400)],
                 wifi=dict(connected=True, ssid="Phone", rssi=-61, channel=6, apClients=1), flash=dict(configWrites=1, bufferWrites=0, bufferKB=0),
                 clients=dict(events=1, websocket=0)))
+        if p == "/api/v2/wifi":
+            up = int(time.time() - T0) + 3700
+            return self.send_json(200, dict(uptimeS=up, state="connected", ssid="HouseLAN", channel=6, saved=2, apClients=1, rssi=-58, ip="192.168.1.40",
+                remembered=dict(ssid="HouseLAN", channel=6, bssid="A4:2B:B0:11:22:33"), scanAgeS=95, scanTotal=7,
+                scan=[dict(ssid="HouseLAN", rssi=-58, ch=6, security="WPA2", saved=True), dict(ssid="Neighbour", rssi=-80, ch=11, security="WPA2/WPA3", saved=False),
+                      dict(ssid="(hidden)", rssi=-85, ch=1, security="WPA2", saved=False)],
+                log=[dict(t=up - 90, event="joined", ssid="HouseLAN", bssid="A4:2B:B0:11:22:33", ch=6, rssi=-58, **{"try": 2}, ms=2400, note="192.168.1.40"),
+                     dict(t=up - 95, event="failed", ssid="HouseLAN", bssid="A4:2B:B0:11:22:33", ch=6, rssi=-60, **{"try": 1}, reason=15, reasonText="4-way handshake timeout (wrong password?)", ms=5100),
+                     dict(t=up - 400, event="no saved network in range", note="5 network(s) seen", ms=2600)]))
         if p == "/api/blackbox":
             return self.send_json(200, dict(enabled=True, keep=10, events=[dict(seq=3, bytes=5200, epoch=int(time.time()) - 3600, uptimeS=1820, reason="coolant_temp warn"),
                                                                         dict(seq=2, bytes=5100, epoch=0, uptimeS=640, reason="hot shutdown: EGT 412 C")]))
@@ -250,6 +259,9 @@ class H(BaseHTTPRequestHandler):
             if j.get("cmd") == "mute":
                 muted_until = time.time() + 60 * j.get("minutes", 5) if j.get("minutes", 5) > 0 else 0
                 return self.send_json(200, {"ok": True, "message": "ok"})
+        if p == "/api/v2/wifi/search":
+            if not self.authed(): return
+            return self.send_json(200, {"ok": True, "message": "Searching for networks"})
         if p == "/api/onewire/scan": return self.send_json(202, {"ok": True, "message": "Scanning"})
         if not self.authed(): return
         with lock:

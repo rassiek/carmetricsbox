@@ -96,6 +96,9 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   await p.fill('#altNow', '1661'); await p.click('#altCal'); await p.waitForTimeout(600);
   check((await toast()).includes('Sea-level'), 'altitude calibration');
   check((await p.locator('#hKv > div').count()) >= 10, 'board health tiles');
+  check((await p.locator('#wLog tr').count()) === 4, 'Wi-Fi join log rows');
+  check((await p.locator('#wLog').innerText()).includes('4-way handshake timeout'), 'Wi-Fi join log shows the disconnect reason');
+  check((await p.locator('#wState').innerText()).includes('HouseLAN'), 'Wi-Fi state pill');
   check((await p.locator('#hTasks tr').count()) === 4, 'task stack table');
   check((await p.locator('#bSel option').count()) === 3, 'board profiles listed');
   await p.selectOption('#bSel', 'esp32_wrover'); await p.click('#bSave'); await p.waitForTimeout(700);

@@ -23,6 +23,14 @@
       <div class="row"><button id="hLeave" class="danger hidden">Leave safe mode (reboot)</button></div>
     </div>
 
+    <div class="panel" id="wifi">
+      <div class="row"><h3 style="margin:0">Wi-Fi joins</h3><span class="spacer"></span><span id="wState" class="pill">…</span>
+        <button id="wSearch" class="small" type="button">Search now</button></div>
+      <p class="muted small" id="wSum"></p>
+      <details><summary class="small">Networks seen in the last search</summary><table id="wScan" class="small"></table></details>
+      <table id="wLog" class="small" style="margin-top:10px"></table>
+    </div>
+
     <div class="panel">
       <h3>Board</h3>
       <div class="fields">

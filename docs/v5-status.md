@@ -21,7 +21,7 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 | 3 | Board metrics | Done | Uptime, boot count, last 10 reset reasons, heap / largest block / PSRAM, CPU per core (tick sampling), loop time, task stacks, Wi-Fi, flash writes, clients, chip temperature. Optional `sys_*` cloud upload |
 | 4 | Point model, `/api/v2`, WebSocket | Done | `local.<id>` points, `/ws` with auth + commands, SSE and v1 API kept. Web app uses WebSocket, falls back to SSE, then polling |
 | 5 | Rollback + safe mode | Done | New firmware confirmed after 60 s; 3 crash resets → safe mode (known-good config, relays off, no internet). Config keeps "previous" (undo) and "good" (after 5 min healthy) copies |
-| 6 | Saved Wi-Fi networks | Done | Up to 8 with priority; async scan with back-off; optional "don't scan while the AP is in use"; v4 single network migrates automatically |
+| 6 | Saved Wi-Fi networks | Done | Up to 8 with priority; v4 single network migrates automatically. Join logic reworked after the bench test, see "Wi-Fi fix" below |
 | 7 | Ignition sense + deep sleep | Done | Debounced input, sleep N min after key-off (postponed while someone is connected), wake on ignition (RTC GPIO, validated); upload buffer saved to flash first |
 | 8 | RPM | Done | Interrupt pulse counting, 120 µs de-glitch, calibrate from a known RPM (`/api/rpm/calibrate`) |
 | 9 | GPS | Done | NMEA RMC + GGA with checksum, speed / altitude / satellites / heading / HDOP sensors, sets the clock; absent module = "not found", never alarms by default |
@@ -65,14 +65,35 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 
 - v5 installed over USB (`carmetrics-full-flash.bin`); settings carried over from v4.
 - Board health panel works: CPU 5% / 3%, loop 0.3 ms average (247 ms max once), ~118 KB free, task stacks 4–9 KB headroom.
-- **Wi-Fi joining is unreliable:** it joined the saved network (HouseLAN) only once. Cause not yet known.
+- **Wi-Fi joining is unreliable:** it joined the saved network (HouseLAN) only once. Probable causes found and fixed, see below; not yet retested.
 - Known display bug, fixed in source: firmware slot showed 2978 KB instead of 1664 KB.
 - Over-the-air uploads failed earlier ("Wrong Magic Byte" = the full USB image was uploaded; later drops while the laptop kept leaving the AP). The System page now checks files before uploading.
 
+## Wi-Fi fix (31 Oct 2026, after the bench test)
+
+Same join code as v4, so the problem probably predates v5. Likely causes found in the code, all addressed in `WifiMgr.cpp`:
+
+| Problem | Fix |
+|---|---|
+| Back-off doubled to **5 min** after a few misses, so the board looked dead | Capped at 60 s; reset when networks change, on connection loss and by **Search now** |
+| `WiFi.begin(ssid, pass)` threw away the scan result; the driver scanned again (slower, AP interrupted twice, may pick another router) | Join with the channel + BSSID from our scan; up to 3 routers per round, best first |
+| Any failure = 20 s wait + back-off; the ESP32 often fails the first handshake | 3 quick tries per router (1.5 s apart), 2 for password-like reasons, next router for "not found" |
+| No disconnect reason recorded | Event handler records the ESP-IDF reason code; shown in plain words |
+| AP started on channel 1, then jumped to the joined network's channel and dropped the laptop (the OTA drop-outs) | Last joined network (SSID, BSSID, channel) kept in NVS (`cmwifi`); AP starts on that channel and the board rejoins it directly, no scan |
+| Hidden networks never matched (scan skipped them) | Scan includes hidden; if nothing saved is visible, the best saved network is tried by name |
+| WPA/TKIP-only routers refused by the core's WPA2 minimum | Minimum security follows what the scan reports |
+| Hostname set after `WiFi.mode()` (ignored on 2.0.17), modem sleep on | Hostname first, sleep off |
+
+**Join log:** System page → *Wi-Fi joins* (also `GET /api/v2/wifi`, serial `[wifi]` lines): state, radio channel, remembered network, last scan (name, signal, channel, security, ★ = saved), last 20 attempts with reason codes. **Search now** (`POST /api/v2/wifi/search`) scans immediately; while joined it only refreshes the list.
+
+Tested: builds on 2.0.17 (1.35 MB) and 3.3.12 (ESP32 1.52 MB, S3 1.50 MB), emulator self-test 61/61 (2 new), web UI test (3 new). The radio itself is untested: needs the bench.
+
+**Bench check for the fix:** flash `carmetrics-full-flash.bin` over USB (the web app changed too, so a firmware-only OTA isn't enough), open System → Wi-Fi joins, and check: joins HouseLAN within ~10 s of boot; reboot → rejoins via "remembered" without a scan; turn the hotspot / router off and on → "connection lost", rejoin within a minute; laptop stays on the CarMetrics AP throughout. If it still fails, the reason codes in the log say why.
+
 ## Next session
 
-1. **Wi-Fi diagnostics and fix:** log each join attempt (networks seen, RSSI, chosen network, disconnect reason codes) on the System page; more persistent retries; check the AP channel switch and laptop drop-outs.
-2. **Next phase:** the user asked for "phase 2" after testing. Earlier the agreed order was multi-board (phase 3) before the touch display (phase 2, needs a JC3248W535 board). Confirm which at the start.
+1. **Bench-test the Wi-Fi fix** (above) when the spare board is free; one board is in the car, so dev work continues first.
+2. **Phase 3 (multi-board), confirmed before phase 2.** Transport: **ESP-NOW is the default, CAN is the optional second transport.** Plan to be agreed before building. Note: ESP-NOW must share the channel of the network the main board joins, so remote boards need to follow channel changes.
 3. Bigger partition layout for 8/16 MB boards before multi-board (core 3.x builds have ~120–200 KB free).
 
 Toolchain notes for a new session: `devenv/` (Docker or `setup-toolchain.sh`) installs arduino-cli, core 2.0.17 + 3.3.12, libraries and QEMU. `tools/cm.sh build | build3 esp32s3 | selftest | webtest`.

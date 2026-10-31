@@ -59,6 +59,33 @@
     $('#hResets').textContent = 'Recent resets (newest first): ' + m.uptime.history.join(', ');
   }
 
+  // ---- Wi-Fi join log (refreshes every 5 s)
+  const ago = (now, t) => { const s = now - t; return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : (s / 3600).toFixed(1) + ' h ago'; };
+  async function loadWifi() {
+    const w = await api('/api/v2/wifi');
+    const st = $('#wState');
+    st.textContent = w.state + (w.ssid ? ` – ${w.ssid}` : '');
+    st.className = 'pill ' + (w.state === 'connected' ? 'ok' : w.state === 'off' ? '' : 'warn');
+    const r = w.remembered || {};
+    $('#wSum').textContent = [
+      w.ip ? `IP ${w.ip}, ${w.rssi} dBm` : '',
+      `radio channel ${w.channel || '–'}`,
+      `${w.apClients ?? 0} on the CarMetrics access point`,
+      r.ssid ? `remembered: ${r.ssid} on channel ${r.channel}` : 'no network remembered yet',
+      w.nextTryS ? `next try in ${w.nextTryS} s` : '',
+    ].filter(Boolean).join(' · ');
+    $('#wScan').replaceChildren(
+      h('tr', {}, h('th', {}, w.scanAgeS < 0 ? 'No search yet' : `Network (${w.scanTotal} seen, ${ago(w.uptimeS, w.uptimeS - w.scanAgeS)})`), h('th', {}, 'Signal'), h('th', {}, 'Ch'), h('th', {}, 'Security')),
+      ...w.scan.map(n => h('tr', {}, h('td', {}, n.ssid + (n.saved ? ' ★' : '')), h('td', {}, n.rssi + ' dBm'), h('td', {}, String(n.ch)), h('td', {}, n.security))));
+    $('#wLog').replaceChildren(
+      h('tr', {}, h('th', {}, 'When'), h('th', {}, 'What'), h('th', {}, 'Details')),
+      ...(w.log.length ? w.log.map(e => {
+        const det = [e.ch ? `ch ${e.ch}` : '', e.rssi ? `${e.rssi} dBm` : '', e.try ? `try ${e.try}` : '', e.reasonText ? `${e.reasonText} (${e.reason})` : '', e.note || '', e.ms ? `${(e.ms / 1000).toFixed(1)} s` : ''].filter(Boolean).join(', ');
+        const bad = e.event !== 'joined';
+        return h('tr', {}, h('td', {}, ago(w.uptimeS, e.t)), h('td', { style: bad ? 'color:var(--warn)' : 'color:var(--ok)' }, e.event + (e.ssid ? ` ${e.ssid}` : '')), h('td', { title: e.bssid || '' }, det));
+      }) : [h('tr', {}, h('td', { colspan: 3, class: 'muted' }, 'No join attempts yet'))]));
+  }
+
   // ---- board profile
   let boards = null;
   async function loadBoard() {
@@ -192,6 +219,11 @@
     loadConfig().catch(e => toast(e.message, true));
     const hl = () => loadHealth().catch(() => {});
     hl(); setInterval(hl, 5000);
+    const wl = () => loadWifi().catch(() => {});
+    wl(); setInterval(wl, 5000);
+    $('#wSearch').onclick = async () => {
+      try { toast((await api('/api/v2/wifi/search', { method: 'POST' })).message); setTimeout(wl, 4000); } catch (e) { toast(e.message, true); }
+    };
     loadBoard().catch(e => toast(e.message, true));
     $('#bSel').onchange = showBoard;
     $('#bSave').onclick = saveBoard;

@@ -7,6 +7,7 @@
 #include "Health.h"
 #include "Board.h"
 #include "BlackBox.h"
+#include "WifiMgr.h"
 #include <set>
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
@@ -265,6 +266,16 @@ void setupV2Routes() {
     JsonDocument doc;
     { StateLock lk; Health::toJson(doc.to<JsonObject>()); }
     sendJson(req, 200, doc);
+  });
+  server.on("/api/v2/wifi", HTTP_GET, [](AsyncWebServerRequest* req) {
+    JsonDocument doc;
+    { StateLock lk; WifiMgr::toJson(doc.to<JsonObject>()); }
+    sendJson(req, 200, doc);
+  });
+  server.on("/api/v2/wifi/search", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireAuth(req)) return;
+    WifiMgr::searchNow();
+    sendStatus(req, 200, "Searching for networks");
   });
   server.on("/api/v2/board", HTTP_GET, [](AsyncWebServerRequest* req) {
     JsonDocument doc;

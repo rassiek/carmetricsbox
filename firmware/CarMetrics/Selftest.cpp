@@ -1,6 +1,7 @@
 // Emulator self-test (QEMU). Only compiled with -DCM_EMU_SELFTEST; not part of normal builds.
 #ifdef CM_EMU_SELFTEST
 #include "State.h"
+#include "WifiMgr.h"
 #include "Display.h"
 #include "History.h"
 #include "Outputs.h"
@@ -128,6 +129,9 @@ void selftestLoop() {
       check(ok && sc.networks.size() == 2 && sc.networks[0].ssid == "Home" && sc.networks[1].ssid == "Phone" && sc.networks[1].pass == "secret123", "Wi-Fi list + v4 network migrated", err);
       JsonDocument d2; deserializeJson(d2, "{\"networks\":[{\"ssid\":\"Home\",\"pass\":\"\",\"priority\":3}]}");
       check(systemFromJson(d2.as<JsonVariantConst>(), sc, err) && sc.networks.size() == 1 && sc.networks[0].pass == "homepass1" && sc.networks[0].priority == 3, "blank Wi-Fi password keeps the saved one", err);
+      check(String(WifiMgr::reasonText(15)).indexOf("password") >= 0 && String(WifiMgr::reasonText(201)) == "network not found", "Wi-Fi reason codes in plain words");
+      JsonDocument w; { StateLock lk; WifiMgr::toJson(w.to<JsonObject>()); }
+      check(w["log"].is<JsonArray>() && w["scan"].is<JsonArray>() && w["remembered"].is<JsonObject>(), "Wi-Fi join log JSON");
       Config c2 = base; SensorConfig r; r.id = "rpm"; r.type = SensorType::RPM; r.pin = 18; c2.sensors.push_back(r);
       check(!validateConfig(c2, err), "RPM on the buzzer pin rejected", err);
       Config c3 = base; c3.sys.ignitionPin = 23; c3.sys.sleepAfterMinutes = 10;
