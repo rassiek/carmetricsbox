@@ -216,7 +216,8 @@ void updateBmp(uint32_t now) {
   float t = NAN, p = NAN;  // °C, hPa
   if (bmpKind == BMP_280) { t = bmp280.readTemperature(); p = bmp280.readPressure() / 100.0f; }
   else if (bmpKind == BMP_180) { t = bmp180.readTemperature(); p = bmp180.readPressure() / 100.0f; }
-  float alt = isnan(p) ? NAN : 44330.0f * (1.0f - powf(p / gConfig.sys.seaLevelHpa, 0.1903f));
+  float sl; { StateLock lk; sl = effectiveSeaLevelHpa(); gSys.stationHpa = (p > 300 && p < 1200) ? p : NAN; }
+  float alt = isnan(p) ? NAN : 44330.0f * (1.0f - powf(p / sl, 0.1903f));
 
   for (size_t i = 0; i < gConfig.sensors.size(); i++) {
     const SensorConfig& c = gConfig.sensors[i];

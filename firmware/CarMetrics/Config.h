@@ -105,10 +105,42 @@ struct SystemConfig {
   int16_t tzOffsetMinutes = 180;           // Nairobi UTC+3, updated by browser
 };
 
+// Public weather (Open-Meteo) for chosen towns - only fetched when the ESP32 has internet.
+struct WeatherTown { String name; float lat = 0, lon = 0; };
+struct WeatherConfig {
+  bool enabled = true;
+  std::vector<WeatherTown> towns;    // default: Nairobi
+  String refTown = "Nairobi";        // its sea-level pressure calibrates the altimeter
+  bool autoSeaLevel = true;
+  uint16_t refreshMinutes = 20;
+};
+
+// Metrics upload with an offline ring buffer (RAM first, flash backlog when offline).
+struct CloudConfig {
+  bool enabled = false;
+  String protocol = "zabbix";        // "zabbix" (trapper) | "influx" (line protocol over HTTP)
+  uint32_t intervalMs = 60000;       // 250 (every reading) | 1000 | 5000 | 10000 | 30000 | 60000 | 300000
+  uint16_t uploadEverySec = 60;      // how often to send while online
+  uint16_t bufferKB = 256;           // flash backlog cap; oldest data dropped beyond this
+  bool onlyEngineRunning = true;     // don't record while parked
+  // Zabbix trapper
+  String zbxServer;
+  uint16_t zbxPort = 10051;
+  String zbxHost = "carmetrics";     // host name as configured in Zabbix
+  bool zbxPacked = true;             // one JSON item per sample (cheapest) vs one item per metric
+  String zbxPskIdentity, zbxPsk;     // optional TLS-PSK (psk = hex)
+  // InfluxDB line protocol (InfluxDB v1/v2, VictoriaMetrics, Grafana Cloud...)
+  String influxUrl;                  // e.g. http://vm.example:8428/write
+  String influxAuth;                 // optional Authorization header value ("Token xyz", "Basic ...")
+  String influxMeasurement = "carmetrics";
+};
+
 struct Config {
   SystemConfig sys;
   std::vector<SensorConfig> sensors;
   std::vector<RelayConfig> relays;
+  WeatherConfig weather;
+  CloudConfig cloud;
 };
 
 // --- helpers ---
@@ -135,6 +167,10 @@ bool sensorsFromJson(JsonVariantConst v, std::vector<SensorConfig>& out, String&
 bool relaysFromJson(JsonVariantConst v, std::vector<RelayConfig>& out, String& err);
 bool systemFromJson(JsonVariantConst v, SystemConfig& out, String& err);
 bool configFromJson(JsonVariantConst v, Config& out, String& err);
+bool weatherFromJson(JsonVariantConst v, WeatherConfig& out, String& err);
+bool cloudFromJson(JsonVariantConst v, CloudConfig& out, String& err);
+void weatherToJson(const WeatherConfig& w, JsonObject o);
+void cloudToJson(const CloudConfig& c, JsonObject o, bool includeSecrets);
 
 // Cross-checks pins, ids, references. Returns false with a human readable error.
 bool validateConfig(const Config& c, String& err);

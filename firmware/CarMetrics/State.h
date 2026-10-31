@@ -49,8 +49,37 @@ struct SystemRuntime {
   String oledStatus = "off";    // "ok", "not found", "off"
   String ip, apIp;
   int otaProgress = -1;         // 0..100 while updating
+  float stationHpa = NAN;       // latest raw BMP pressure (for altitude calibration)
   uint32_t configRevision = 0;  // bumped on every applied change
 };
+
+struct WeatherReading {
+  String name, time;
+  float temp = NAN, feels = NAN, rh = NAN, precip = NAN, cloud = NAN;
+  float msl = NAN, sfc = NAN, wind = NAN, windDir = NAN, gust = NAN, elevation = NAN;
+  int code = -1;
+};
+
+struct NetStatus {
+  bool sta = false;            // joined a Wi-Fi network
+  bool internet = false;       // last internet request succeeded
+  bool ntp = false;            // clock set from NTP
+  // weather
+  uint32_t weatherAtMs = 0;
+  String weatherError;
+  float seaLevelAuto = NAN;    // hPa from the reference town (runtime only, never written to flash)
+  String seaLevelTown;
+  // cloud upload
+  bool recording = false;
+  uint32_t ramChunks = 0, backlogFiles = 0, backlogBytes = 0;
+  uint32_t sentRecords = 0, droppedRecords = 0, pendingRecords = 0;
+  uint32_t lastOkMs = 0, lastTryMs = 0;
+  String lastError;
+};
+
+extern std::vector<WeatherReading> gWeather;
+extern NetStatus gNet;
+float effectiveSeaLevelHpa();   // call with lock held
 
 extern Config gConfig;
 extern std::vector<SensorRuntime> gSensorRt;

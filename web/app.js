@@ -85,7 +85,7 @@ const CM = (() => {
 
   // ---- header
   const pages = [['index.html', 'Gauges'], ['charts.html', 'Charts'], ['settings.html', 'Sensors'],
-                 ['relays.html', 'Relays'], ['system.html', 'System']];
+                 ['relays.html', 'Relays'], ['weather.html', 'Weather'], ['system.html', 'System']];
   function header() {
     const here = location.pathname.split('/').pop() || 'index.html';
     const hd = h('header', {},

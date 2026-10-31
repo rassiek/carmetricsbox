@@ -136,6 +136,10 @@ void defaultRelays(std::vector<RelayConfig>& v) {
 
 void configDefaults(Config& c) {
   c.sys = SystemConfig();
+  c.weather = WeatherConfig();
+  WeatherTown nbo; nbo.name = "Nairobi"; nbo.lat = -1.2864f; nbo.lon = 36.8172f;
+  c.weather.towns.push_back(nbo);
+  c.cloud = CloudConfig();
   defaultSensors(c.sensors);
   defaultRelays(c.relays);
 }
@@ -228,6 +232,8 @@ void configToJson(const Config& c, JsonObject o, bool includeSecrets) {
   for (auto& s : c.sensors) sensorToJson(s, sa.add<JsonObject>());
   JsonArray ra = o["relays"].to<JsonArray>();
   for (auto& r : c.relays) relayToJson(r, ra.add<JsonObject>());
+  weatherToJson(c.weather, o["weather"].to<JsonObject>());
+  cloudToJson(c.cloud, o["cloud"].to<JsonObject>(), includeSecrets);
 }
 
 // ---------------------------------------------------------------- from JSON
@@ -351,11 +357,90 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   return true;
 }
 
+// ---------------------------------------------------------------- weather / cloud
+void weatherToJson(const WeatherConfig& w, JsonObject o) {
+  o["enabled"] = w.enabled; o["refTown"] = w.refTown; o["autoSeaLevel"] = w.autoSeaLevel;
+  o["refreshMinutes"] = w.refreshMinutes;
+  JsonArray a = o["towns"].to<JsonArray>();
+  for (auto& t : w.towns) { JsonObject x = a.add<JsonObject>(); x["name"] = t.name; x["lat"] = t.lat; x["lon"] = t.lon; }
+}
+
+bool weatherFromJson(JsonVariantConst v, WeatherConfig& w, String& err) {
+  if (!v.is<JsonObjectConst>()) { err = "Expected weather settings"; return false; }
+  JsonObjectConst o = v.as<JsonObjectConst>();
+  w.enabled = getB(o, "enabled", w.enabled);
+  w.refTown = getS(o, "refTown", w.refTown);
+  w.autoSeaLevel = getB(o, "autoSeaLevel", w.autoSeaLevel);
+  w.refreshMinutes = constrain(getI(o, "refreshMinutes", w.refreshMinutes), 10, 180);
+  if (!o["towns"].isNull()) {
+    if (!o["towns"].is<JsonArrayConst>()) { err = "towns must be a list"; return false; }
+    std::vector<WeatherTown> t;
+    for (JsonObjectConst x : o["towns"].as<JsonArrayConst>()) {
+      WeatherTown wt; wt.name = getS(x, "name", ""); wt.lat = getF(x, "lat", NAN); wt.lon = getF(x, "lon", NAN);
+      if (!wt.name.length() || isnan(wt.lat) || isnan(wt.lon) || fabsf(wt.lat) > 90 || fabsf(wt.lon) > 180) { err = "Bad town entry"; return false; }
+      t.push_back(wt);
+    }
+    if (t.size() > 12) { err = "At most 12 weather towns"; return false; }
+    w.towns = t;
+  }
+  return true;
+}
+
+void cloudToJson(const CloudConfig& c, JsonObject o, bool includeSecrets) {
+  o["enabled"] = c.enabled; o["protocol"] = c.protocol; o["intervalMs"] = c.intervalMs;
+  o["uploadEverySec"] = c.uploadEverySec; o["bufferKB"] = c.bufferKB; o["onlyEngineRunning"] = c.onlyEngineRunning;
+  o["zbxServer"] = c.zbxServer; o["zbxPort"] = c.zbxPort; o["zbxHost"] = c.zbxHost; o["zbxPacked"] = c.zbxPacked;
+  o["zbxPskIdentity"] = c.zbxPskIdentity; o["zbxPsk"] = includeSecrets ? c.zbxPsk : "";
+  o["zbxPskSet"] = c.zbxPsk.length() > 0;
+  o["influxUrl"] = c.influxUrl; o["influxAuth"] = includeSecrets ? c.influxAuth : "";
+  o["influxAuthSet"] = c.influxAuth.length() > 0; o["influxMeasurement"] = c.influxMeasurement;
+}
+
+bool cloudFromJson(JsonVariantConst v, CloudConfig& c, String& err) {
+  if (!v.is<JsonObjectConst>()) { err = "Expected cloud settings"; return false; }
+  JsonObjectConst o = v.as<JsonObjectConst>();
+  c.enabled = getB(o, "enabled", c.enabled);
+  c.protocol = getS(o, "protocol", c.protocol);
+  c.intervalMs = getI(o, "intervalMs", c.intervalMs);
+  c.uploadEverySec = constrain(getI(o, "uploadEverySec", c.uploadEverySec), 10, 3600);
+  c.bufferKB = constrain(getI(o, "bufferKB", c.bufferKB), 16, 400);
+  c.onlyEngineRunning = getB(o, "onlyEngineRunning", c.onlyEngineRunning);
+  c.zbxServer = getS(o, "zbxServer", c.zbxServer); c.zbxServer.trim();
+  c.zbxPort = constrain(getI(o, "zbxPort", c.zbxPort), 1, 65535);
+  c.zbxHost = getS(o, "zbxHost", c.zbxHost); c.zbxHost.trim();
+  c.zbxPacked = getB(o, "zbxPacked", c.zbxPacked);
+  c.zbxPskIdentity = getS(o, "zbxPskIdentity", c.zbxPskIdentity);
+  String p = getS(o, "zbxPsk", ""); if (p.length()) c.zbxPsk = p;
+  if (getB(o, "zbxPskClear", false)) { c.zbxPsk = ""; c.zbxPskIdentity = ""; }
+  c.influxUrl = getS(o, "influxUrl", c.influxUrl); c.influxUrl.trim();
+  p = getS(o, "influxAuth", ""); if (p.length()) c.influxAuth = p;
+  if (getB(o, "influxAuthClear", false)) c.influxAuth = "";
+  c.influxMeasurement = getS(o, "influxMeasurement", c.influxMeasurement);
+
+  static const uint32_t ok[] = {250, 1000, 5000, 10000, 30000, 60000, 300000};
+  bool valid = false; for (auto x : ok) if (c.intervalMs == x) valid = true;
+  if (!valid) { err = "Sample interval must be 250 ms, 1 s, 5 s, 10 s, 30 s, 1 min or 5 min"; return false; }
+  if (c.protocol != "zabbix" && c.protocol != "influx") { err = "Protocol must be zabbix or influx"; return false; }
+  if (c.zbxPsk.length()) {
+    if (c.zbxPsk.length() < 32 || c.zbxPsk.length() % 2) { err = "Zabbix PSK must be hex, at least 32 characters"; return false; }
+    for (char ch : c.zbxPsk) if (!isxdigit(ch)) { err = "Zabbix PSK must be hex"; return false; }
+    if (!c.zbxPskIdentity.length()) { err = "Zabbix PSK identity is required with a PSK"; return false; }
+  }
+  if (c.enabled && c.protocol == "zabbix" && (!c.zbxServer.length() || !c.zbxHost.length())) { err = "Set the Zabbix server and host name"; return false; }
+  if (c.enabled && c.protocol == "influx" && !(c.influxUrl.startsWith("http://") || c.influxUrl.startsWith("https://"))) {
+    err = "Influx URL must start with http:// or https://"; return false;
+  }
+  if (!c.influxMeasurement.length()) c.influxMeasurement = "carmetrics";
+  return true;
+}
+
 bool configFromJson(JsonVariantConst v, Config& out, String& err) {
   Config tmp = out;
   if (!v["system"].isNull() && !systemFromJson(v["system"], tmp.sys, err)) return false;
   if (!v["sensors"].isNull() && !sensorsFromJson(v["sensors"], tmp.sensors, err)) return false;
   if (!v["relays"].isNull() && !relaysFromJson(v["relays"], tmp.relays, err)) return false;
+  if (!v["weather"].isNull() && !weatherFromJson(v["weather"], tmp.weather, err)) return false;
+  if (!v["cloud"].isNull() && !cloudFromJson(v["cloud"], tmp.cloud, err)) return false;
   if (!validateConfig(tmp, err)) return false;
   out = tmp;
   return true;

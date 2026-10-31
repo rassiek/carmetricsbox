@@ -15,6 +15,7 @@
 
     <div class="panel">
       <h3>Firmware &amp; web app update</h3>
+      <p class="muted small" id="otaWarn" style="color:var(--warn)"></p>
       <p class="muted small">Upload <code>CarMetrics.ino.bin</code> (firmware) or <code>littlefs.bin</code> (web app) from your phone or laptop.
         The device reboots afterwards. Settings are kept – they live in NVS, not the filesystem.</p>
       <div class="fields">
@@ -70,6 +71,48 @@
     </form>
 
     <div class="panel">
+      <h3>Altitude calibration</h3>
+      <p class="muted small" id="altInfo">Loading…</p>
+      <div class="row"><div style="flex:1;max-width:220px"><label>I'm currently at (metres)</label><input id="altNow" type="number" placeholder="e.g. 1661"></div>
+        <button id="altCal" style="align-self:flex-end">Calibrate</button></div>
+      <p class="muted small">Use a known elevation (home, a signposted pass). This sets the sea-level reference from your BMP sensor and turns off the automatic weather calibration (turn it back on in the Weather tab).</p>
+    </div>
+
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">Cloud upload</h3><span class="spacer"></span><span id="cStatePill" class="pill">…</span></div>
+      <p class="muted small">Sends downsampled metrics (average, min, max per interval) when the ESP32 has internet via <b>Also join network</b>.
+        While offline they are kept in a ring buffer (RAM first, then flash) and uploaded later, oldest first.</p>
+      <form id="cloud" onsubmit="return false"><div class="fields">
+        <label class="check"><input type="checkbox" name="enabled"> Enable upload</label>
+        <div><label>Protocol</label><select name="protocol"><option value="zabbix">Zabbix trapper</option><option value="influx">InfluxDB line protocol (VictoriaMetrics, InfluxDB, Grafana Cloud)</option></select></div>
+        <div><label>One point every</label><select name="intervalMs">
+          <option value="250">Every reading (~4/s)</option><option value="1000">1 s</option><option value="5000">5 s</option>
+          <option value="10000">10 s</option><option value="30000">30 s</option><option value="60000">1 min</option><option value="300000">5 min</option></select></div>
+        <div><label>Send every (s, while online)</label><input name="uploadEverySec" type="number" min="10" max="3600"></div>
+        <div><label>Offline buffer (KB)</label><input name="bufferKB" type="number" min="16" max="400"></div>
+        <label class="check"><input type="checkbox" name="onlyEngineRunning"> Only record while the engine runs</label>
+      </div>
+      <fieldset data-proto="zabbix" style="margin-top:10px"><legend>Zabbix</legend><div class="fields">
+        <div><label>Server (host or IP)</label><input name="zbxServer" placeholder="zabbix.example.com"></div>
+        <div><label>Port</label><input name="zbxPort" type="number"></div>
+        <div><label>Host name in Zabbix</label><input name="zbxHost"></div>
+        <label class="check"><input type="checkbox" name="zbxPacked"> Packed: one item <code>carmetrics.json</code> per sample (cheapest)</label>
+        <div><label>TLS-PSK identity (optional)</label><input name="zbxPskIdentity"></div>
+        <div><label>TLS-PSK key, hex (blank = keep)</label><input name="zbxPsk" type="password" autocomplete="new-password"></div>
+      </div><p class="muted small" id="zbxHelp"></p></fieldset>
+      <fieldset data-proto="influx" style="margin-top:10px"><legend>InfluxDB line protocol</legend><div class="fields">
+        <div class="wide"><label>Write URL</label><input name="influxUrl" placeholder="http://victoria:8428/write   or   https://host/api/v2/write?org=me&bucket=car"></div>
+        <div><label>Authorization header (blank = keep)</label><input name="influxAuth" type="password" autocomplete="new-password" placeholder="Token xyz…"></div>
+        <div><label>Measurement</label><input name="influxMeasurement"></div>
+      </div><p class="muted small">Fields are the sensor IDs (plus <code>_min</code>/<code>_max</code>), tagged <code>device=&lt;hostname&gt;</code>, millisecond timestamps. HTTPS is encrypted but the certificate is not verified.</p></fieldset>
+      </form>
+      <p class="small" id="cEstimate"></p>
+      <table id="cStatus" style="margin-top:6px"></table>
+      <div class="row" style="margin-top:10px"><button id="cSave" class="primary">Save</button><button id="cFlush">Upload now</button>
+        <span class="spacer"></span><button id="cClear" class="danger small">Clear backlog</button></div>
+    </div>
+
+    <div class="panel">
       <h3>Backup &amp; maintenance</h3>
       <div class="row">
         <a class="btn" href="/api/config/export">Download config</a>
@@ -81,5 +124,6 @@
     </div>
   </main>
   <script src="system.js"></script>
+  <script src="cloud.js"></script>
 </body>
 </html>

@@ -3,6 +3,7 @@
 #include "Sensors.h"
 #include "Outputs.h"
 #include "History.h"
+#include "Cloud.h"
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <LittleFS.h>
@@ -173,6 +174,10 @@ void setupRoutes() {
       doc["timeSynced"] = gSys.timeSynced;
       doc["resetReason"] = (int)esp_reset_reason();
       doc["sseClients"] = events.count();
+      doc["internet"] = gNet.internet; doc["ntp"] = gNet.ntp;
+      if (!isnan(gSys.stationHpa)) doc["stationHpa"] = gSys.stationHpa;
+      doc["seaLevelHpa"] = effectiveSeaLevelHpa();
+      doc["seaLevelSource"] = !isnan(gNet.seaLevelAuto) && gConfig.weather.autoSeaLevel && gConfig.weather.enabled ? "weather: " + gNet.seaLevelTown : String("manual");
     }
     sendJson(req, 200, doc);
   });
@@ -269,6 +274,56 @@ void setupRoutes() {
   });
 
   // ---- maintenance
+  // ---- weather & cloud
+  server.on("/api/weather", HTTP_GET, [](AsyncWebServerRequest* req) {
+    JsonDocument doc;
+    { StateLock lk; Cloud::weatherToJson(doc.to<JsonObject>()); }
+    sendJson(req, 200, doc);
+  });
+  server.on("/api/weather/refresh", HTTP_POST, [](AsyncWebServerRequest* req) {
+    Cloud::requestWeather();
+    sendStatus(req, 202, "Refreshing");
+  });
+  server.on("/api/cloud", HTTP_GET, [](AsyncWebServerRequest* req) {
+    JsonDocument doc;
+    { StateLock lk; Cloud::statusToJson(doc.to<JsonObject>()); }
+    sendJson(req, 200, doc);
+  });
+  server.on("/api/cloud/flush", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireAuth(req)) return;
+    Cloud::requestFlush();
+    sendStatus(req, 202, "Upload requested");
+  });
+  server.on("/api/cloud/clear", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireAuth(req)) return;
+    Cloud::requestClearBacklog();
+    sendStatus(req, 200, "Backlog cleared");
+  });
+  addJsonPost("/api/config/weather", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    changeConfig(req, [&](Config& c, String& err) { return weatherFromJson(j, c.weather, err); }, "Weather settings saved");
+    Cloud::requestWeather();
+  });
+  addJsonPost("/api/config/cloud", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    changeConfig(req, [&](Config& c, String& err) { return cloudFromJson(j, c.cloud, err); }, "Cloud settings saved");
+  });
+  // Known-altitude calibration: derive the sea-level reference from the BMP reading.
+  addJsonPost("/api/altitude/calibrate", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    if (j["altitudeM"].isNull()) { sendStatus(req, 400, "Enter your current altitude in metres"); return; }
+    float alt = j["altitudeM"].as<float>();
+    float p; { StateLock lk; p = gSys.stationHpa; }
+    if (isnan(p)) { sendStatus(req, 400, "No BMP pressure reading available"); return; }
+    if (alt < -500 || alt > 6000) { sendStatus(req, 400, "Altitude out of range"); return; }
+    float sl = p / powf(1.0f - alt / 44330.0f, 5.255f);
+    changeConfig(req, [&](Config& c, String& err) {
+      c.sys.seaLevelHpa = sl;
+      c.weather.autoSeaLevel = false;   // a manual calibration wins over the weather value
+      return true;
+    }, ("Sea-level reference set to " + String(sl, 1) + " hPa (automatic weather calibration turned off)").c_str());
+  });
+
   server.on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireAuth(req)) return;
     sendStatus(req, 200, "Rebooting", true);

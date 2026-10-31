@@ -123,3 +123,9 @@ body.dash { overflow: hidden; height: 100vh; height: 100dvh; }
 .chip i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
 .chip.off { opacity: .4; text-decoration: line-through; }
 .chip:disabled { opacity: 1; cursor: default; }
+
+/* ---- weather ---- */
+.towns { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 4px 10px; }
+.wtemp { font-size: 30px; font-weight: 700; margin: 4px 0 6px; }
+.wrow { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; border-bottom: 1px solid var(--line); }
+.wrow:last-child { border-bottom: 0; }

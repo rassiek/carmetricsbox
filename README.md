@@ -32,6 +32,14 @@ Firmware and the web app can both be updated over Wi-Fi.
   - Settings live in NVS, so they survive both kinds of update and power cuts while saving.
 - **Admin password** protects settings, relays and updates (HTTP user `admin`).
 
+- **Weather tab** – public weather for chosen Kenyan towns (Open-Meteo, no API key). Only works while the ESP32 has internet.
+  - A reference town's sea-level pressure can calibrate the altimeter automatically.
+  - Offline, use **System → Altitude calibration**: enter a known elevation.
+- **Cloud upload** – downsampled metrics (average, min and max per 250 ms … 5 min) sent to **Zabbix** (trapper) or anything that speaks **InfluxDB line protocol** (VictoriaMetrics, InfluxDB, Grafana Cloud).
+  - It only sends while online.
+  - Offline data waits in a ring buffer: RAM first, then 4 KB blocks on flash, capped (default 256 KB), oldest dropped first.
+  - It uploads oldest-first when the connection returns.
+
 ## Wiring (ESP32 is 3.3 V – not 5 V tolerant)
 
 | Function | Default GPIO | Notes |
@@ -120,6 +128,41 @@ web/                   web app sources (plain HTML/JS/CSS, no build step besides
 tools/build_web.py     gzips web/ into firmware data/ and builds littlefs.bin
 legacy/                previous Arduino + ESP32 versions
 ```
+
+## Internet features
+
+The ESP32 needs to **join a Wi-Fi network that has internet**. Set **System → Settings → Also join network**, e.g. your phone's hotspot.
+
+- It keeps its own `CarMetrics` network at the same time.
+- The clock comes from NTP once online.
+
+### Weather
+
+- **Turn it on:** in the Weather tab, tick up to 12 towns and pick a reference town.
+- **Altitude:** with *"Use its sea-level pressure"* on, altitude is corrected for the day's weather. The weather value is kept in RAM only and never written to flash.
+
+### Cloud upload (System → Cloud upload)
+
+**How much the buffer holds.** A sample is ~130 bytes with 10 sensors. At 1 minute per point, 256 KB holds ~34 hours of driving; the page shows the estimate for your settings.
+
+**Flash wear.** Flash is only written while offline, in full 4 KB blocks, and only while the engine runs. At 1-minute sampling that is a few blocks per hour of driving: decades of life.
+
+**Zabbix.**
+1. Create a host (default name `carmetrics`).
+2. Add the items for the mode you chose:
+   - **Packed (default):** one trapper item `carmetrics.json`, type *Text*. Add dependent items with JSONPath preprocessing, e.g. `$.coolant_temp[0]` (avg), `$.coolant_temp[1]` (min), `$.coolant_temp[2]` (max).
+   - **Per metric:** trapper items `<sensor id>.avg`, `.min`, `.max` (Numeric float).
+3. Each value carries its own timestamp, so buffered data lands at the right time.
+4. Optional: TLS-PSK (identity + hex key).
+
+**Prometheus / Grafana.**
+- **Recommended route:** a Prometheus-compatible store that accepts timestamped pushes, e.g. VictoriaMetrics at `http://<vm>:8428/write`. Grafana can then query it with PromQL.
+- **Influx data model:** measurement `carmetrics`, tag `device=<hostname>`, fields `<sensor id>`, `<sensor id>_min`, `<sensor id>_max`, timestamps in milliseconds.
+- **Why not the Pushgateway:** it rejects timestamps, so buffered history would be lost.
+
+**HTTPS** is encrypted, but certificates are not verified.
+
+**Web app updates** erase any unsent backlog on flash. The System page warns you first.
 
 ### Emulator self-test
 

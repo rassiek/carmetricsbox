@@ -27,6 +27,7 @@
 #include "Display.h"
 #include "History.h"
 #include "Web.h"
+#include "Cloud.h"
 
 static uint32_t lastNetCheck = 0;
 
@@ -97,6 +98,7 @@ static void applyConfig(Config* next) {
   Alerts::begin();
   Relays::begin();
   History::begin();
+  Cloud::begin();
   Display::reconfigure();
   Web::notifyConfigChanged();
   if (reboot) { Serial.println("[cfg] network/I2C settings changed - rebooting"); requestReboot(2000); }
@@ -124,10 +126,12 @@ void setup() {
 
   Sensors::begin();
   History::begin();
+  Cloud::begin();
   startWifi();
   startOta();
   Web::begin();
   Display::start();
+  Cloud::startNetTask();
   Serial.println("[boot] ready");
 }
 
@@ -138,6 +142,7 @@ void loop() {
   Alerts::update();
   Relays::update();
   History::update();
+  Cloud::update();
   Web::update();
   ArduinoOTA.handle();
 

@@ -4,6 +4,8 @@
 #include "Display.h"
 #include "History.h"
 #include "Outputs.h"
+#include "Cloud.h"
+#include <LittleFS.h>
 
 static int passed = 0, failed = 0;
 static void check(bool ok, const char* what, const String& detail = "") {
@@ -144,6 +146,31 @@ void selftestLoop() {
     { StateLock lk; check(err.length() == 0 && gRelayRt[0].on && gRelayRt[0].outputHigh, "relay switched on", err); }
     err = Relays::control("relay2", 1, -1);
     check(err.length() > 0, "disabled relay refused", err);
+  }
+  if (step == 6 && now > 43000) {
+    step++;
+    String influx, zabbix; uint32_t recs;
+    Cloud::selftestEncode(influx, zabbix, recs);
+    Serial.println("[test] influx payload:\n" + influx);
+    Serial.println("[test] zabbix payload: " + zabbix.substring(0, 400));
+    check(recs == 2, "chunk round trip: 2 records decoded", String(recs));
+    check(influx.startsWith("carmetrics,device=carmetrics coolant_temp=90,coolant_temp_min=89,coolant_temp_max=91.5"), "influx line protocol");
+    check(influx.indexOf("\n") > 0 && influx.indexOf("coolant_temp=91,") > 0, "influx second record");
+    check(zabbix.startsWith("{\"request\":\"sender data\",\"data\":[{\"host\":\"my car\",\"key\":\"carmetrics.json\",\"value\":\"{\\\"coolant_temp\\\":[90,89,91.5]"), "zabbix packed payload");
+    JsonDocument zd;
+    check(!deserializeJson(zd, zabbix) && zd["data"].size() == 2, "zabbix payload is valid JSON with 2 items");
+    // offline buffering: enable cloud, no Wi-Fi in the emulator -> chunks must land on flash
+    Config* next; { StateLock lk; next = new Config(gConfig); }
+    next->cloud.enabled = true; next->cloud.protocol = "zabbix"; next->cloud.zbxServer = "zabbix.invalid";
+    next->cloud.intervalMs = 250; next->cloud.uploadEverySec = 10; next->cloud.onlyEngineRunning = false;
+    requestConfigApply(next);
+  }
+  if (step == 7 && now > 100000) {
+    step++;
+    StateLock lk;
+    Serial.printf("[test] cloud: recording=%d ram=%u backlogFiles=%u backlogBytes=%u pending=%u dropped=%u err=%s fsFree=%u\n", gNet.recording, gNet.ramChunks, gNet.backlogFiles, gNet.backlogBytes, gNet.pendingRecords, gNet.droppedRecords, gNet.lastError.c_str(), (unsigned)(LittleFS.totalBytes() - LittleFS.usedBytes()));
+    check(gNet.recording, "recorder active");
+    check(gNet.backlogFiles >= 1 && gNet.backlogBytes > 0, "offline data written to flash ring buffer");
     Serial.printf("[test] DONE: %d passed, %d failed\n", passed, failed);
   }
 }

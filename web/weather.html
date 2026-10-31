@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a10">
+  <title>CarMetrics - Weather</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js"></script>
+  <script src="towns.js"></script>
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <div class="row"><span id="wstatus" class="muted">Loading…</span><span class="spacer"></span>
+        <button id="refresh" class="small">Refresh</button></div>
+      <div id="sealevel" class="small" style="margin-top:6px"></div>
+    </div>
+    <div id="wcards" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))"></div>
+
+    <div class="panel" style="margin-top:12px">
+      <h3>Weather settings</h3>
+      <div class="fields">
+        <label class="check"><input type="checkbox" id="wEnabled"> Fetch weather when online</label>
+        <div><label>Reference town (calibrates altitude)</label><select id="wRef"></select></div>
+        <label class="check"><input type="checkbox" id="wAuto"> Use its sea-level pressure for the altimeter</label>
+        <div><label>Refresh every (minutes)</label><input id="wEvery" type="number" min="10" max="180"></div>
+      </div>
+      <label style="margin-top:10px">Towns to show (up to 12)</label>
+      <div id="wTowns" class="towns"></div>
+      <div class="row" style="margin-top:10px"><button id="wSave" class="primary">Save</button>
+        <span class="muted small">Data: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (free, non-commercial).</span></div>
+    </div>
+  </main>
+  <script src="weather.js"></script>
+</body>
+</html>

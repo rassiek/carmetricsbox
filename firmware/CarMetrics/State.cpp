@@ -6,6 +6,13 @@ Config gConfig;
 std::vector<SensorRuntime> gSensorRt;
 std::vector<RelayRuntime> gRelayRt;
 SystemRuntime gSys;
+std::vector<WeatherReading> gWeather;
+NetStatus gNet;
+
+float effectiveSeaLevelHpa() {
+  if (gConfig.weather.enabled && gConfig.weather.autoSeaLevel && !isnan(gNet.seaLevelAuto)) return gNet.seaLevelAuto;
+  return gConfig.sys.seaLevelHpa;
+}
 
 static SemaphoreHandle_t sMutex = nullptr;
 static portMUX_TYPE sPendingMux = portMUX_INITIALIZER_UNLOCKED;
