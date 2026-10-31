@@ -165,6 +165,8 @@ class H(BaseHTTPRequestHandler):
                 uptime=dict(s=up, boots=42, resetReason="power on", history=["power on", "restart", "power on", "low voltage (brown-out)"]),
                 safeMode=False, crashCount=0, memory=dict(free=182000, min=151000, largest=110592, psramFree=0, historyKB=10, historyIn="RAM", fsUsed=60000, fsTotal=589824),
                 cpu=[18, 9], loop=dict(avgUs=840, maxUs=6200), tasks=[dict(name="loop", stackFree=4920), dict(name="oled", stackFree=2810), dict(name="net", stackFree=7400)],
+                storage=dict(fsUsed=118784, fsTotal=589824, webApp=44544, blackBox=10240, uploadBuffer=0, settingsUsed=60, settingsTotal=504, ageS=20),
+                crash=dict(task="async_tcp", pc="0x400d5a1c", cause="read from a bad address (null pointer?)", causeCode=28, address="0x00000000", backtrace="0x400d5a19 0x400d6f2e 0x40089a3d", corrupted=False, thisFirmware=False),
                 wifi=dict(connected=True, ssid="Phone", rssi=-61, channel=6, apClients=1), flash=dict(configWrites=1, bufferWrites=0, bufferKB=0),
                 clients=dict(events=1, websocket=0)))
         if p == "/api/v2/wifi":
@@ -264,6 +266,9 @@ class H(BaseHTTPRequestHandler):
             if j.get("cmd") == "mute":
                 muted_until = time.time() + 60 * j.get("minutes", 5) if j.get("minutes", 5) > 0 else 0
                 return self.send_json(200, {"ok": True, "message": "ok"})
+        if p == "/api/v2/crash/clear":
+            if not self.authed(): return
+            return self.send_json(200, {"ok": True, "message": "Crash report cleared"})
         if p == "/api/v2/wifi/search":
             if not self.authed(): return
             return self.send_json(200, {"ok": True, "message": "Searching for networks"})

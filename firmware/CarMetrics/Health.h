@@ -37,5 +37,16 @@ extern const uint8_t kSysCount;
 float sysMetric(uint8_t i);
 
 void toJson(JsonObject o);       // full board metrics (takes the state lock itself)
+
+// Storage use. Walking the file system takes up to ~1 s on real flash, so it is
+// done here from the net task (no lock held) and cached; readers get the cache.
+void refreshStorage(bool force = false);   // at most once a minute unless forced
+uint32_t fsUsed();
+uint32_t fsTotal();
+
+// Last crash, from the core dump the ESP32 writes to flash when it crashes.
+bool crashStored();
+void clearCrash();
+bool crashDumpLocation(uint32_t& partOffset, uint32_t& size);   // raw dump, for download
 const char* resetReasonStr(int r);
 }

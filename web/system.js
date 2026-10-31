@@ -52,6 +52,20 @@
       ['Temperature', m.chip.tempC === null ? '–' : m.chip.tempC + ' °C', 'chip (rough)'],
       ['Firmware', m.firmware.version, `core ${m.firmware.core}, ${m.firmware.sketchKB} / ${m.firmware.slotKB} KB`],
     ];
+    const st = m.storage;
+    if (st) {
+      const pc = Math.round(100 * st.fsUsed / st.fsTotal);
+      tiles.push(['Storage', `${k(st.fsUsed)} / ${k(st.fsTotal)}`,
+        `${pc}% used: web app ${k(st.webApp)}, black box ${k(st.blackBox)}, upload buffer ${k(st.uploadBuffer)}` +
+        (st.settingsTotal ? `; settings ${Math.round(100 * st.settingsUsed / st.settingsTotal)}% of ${(st.settingsTotal * 32 / 1024).toFixed(0)} KB` : '')]);
+    }
+    const cr = m.crash;
+    $('#hCrash').classList.toggle('hidden', !cr);
+    if (cr) {
+      $('#hCrashText').textContent = `In task "${cr.task}": ${cr.cause} (code ${cr.causeCode}, address ${cr.address}). ` +
+        (cr.thisFirmware ? 'Happened with the firmware running now.' : 'Happened with an earlier firmware.') + (cr.corrupted ? ' Backtrace incomplete.' : '');
+      $('#hCrashBt').textContent = `PC ${cr.pc}  backtrace: ${cr.backtrace}`;
+    }
     if (m.chip.psramKB) tiles.splice(4, 0, ['PSRAM free', k(mem.psramFree), '']);
     $('#hKv').replaceChildren(...tiles.map(([a, b, c]) => h('div', {}, h('span', {}, a), h('b', {}, b), h('span', {}, c))));
     $('#hTasks').replaceChildren(h('tr', {}, h('th', {}, 'Task'), h('th', {}, 'Stack headroom')),
@@ -227,6 +241,9 @@
     loadBoard().catch(e => toast(e.message, true));
     $('#bSel').onchange = showBoard;
     $('#bSave').onclick = saveBoard;
+    $('#hCrashClear').onclick = async () => {
+      try { toast((await api('/api/v2/crash/clear', { method: 'POST' })).message); hl(); } catch (e) { toast(e.message, true); }
+    };
     $('#hLeave').onclick = async () => {
       if (!confirm('Leave safe mode and reboot with your normal settings?')) return;
       try { toast((await api('/api/v2/safemode/leave', { method: 'POST' })).message); } catch (e) { toast(e.message, true); }

@@ -17,6 +17,13 @@
       <div class="row"><h3 style="margin:0">Board health</h3><span class="spacer"></span><span id="hFw" class="pill">…</span></div>
       <p id="hSafe" class="hidden" style="color:var(--crit)"></p>
       <p id="hNote" class="small hidden" style="color:var(--warn)"></p>
+      <div id="hCrash" class="hidden" style="border:1px solid var(--warn);border-radius:10px;padding:10px 12px;margin:0 0 12px">
+        <b>Last crash</b> <span class="muted small">(stored in flash; kept until cleared)</span>
+        <p id="hCrashText" class="small" style="margin:6px 0"></p>
+        <code id="hCrashBt" class="small" style="display:block;word-break:break-all;user-select:all"></code>
+        <div class="row" style="margin-top:8px"><a class="small" href="/api/v2/crash/dump" download>Download crash dump</a>
+          <span class="spacer"></span><button id="hCrashClear" class="small" type="button">Clear</button></div>
+      </div>
       <div class="kv" id="hKv"></div>
       <table id="hTasks" style="margin-top:10px"></table>
       <p class="muted small" id="hResets"></p>

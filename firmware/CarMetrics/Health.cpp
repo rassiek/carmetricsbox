@@ -9,6 +9,12 @@
 #include <esp_ota_ops.h>
 #include <esp_freertos_hooks.h>
 #include <esp_heap_caps.h>
+#include <esp_core_dump.h>
+#if ESP_IDF_VERSION_MAJOR >= 5
+#include <esp_app_desc.h>
+#endif
+#include <esp_partition.h>
+#include <nvs.h>
 #include <esp_timer.h>
 #include <esp_arduino_version.h>
 
@@ -61,6 +67,67 @@ TaskInfo tasks[8]; uint8_t taskCount = 0;
 portMUX_TYPE taskMux = portMUX_INITIALIZER_UNLOCKED;
 
 uint32_t flashWrites = 0, flashBytes = 0, sseClients = 0, wsClients = 0;
+
+struct Storage {
+  bool valid = false;
+  uint32_t at = 0, fsUsed = 0, fsTotal = 0, www = 0, bb = 0, queue = 0, nvsUsed = 0, nvsTotal = 0;
+} storage;
+
+struct Crash {
+  bool have = false, corrupted = false, thisFirmware = false;
+  char task[16] = "";
+  uint32_t pc = 0, cause = 0, vaddr = 0, bt[16] = {0};
+  uint8_t depth = 0;
+} crash;
+
+const char* excCause(uint32_t c) {
+  switch (c) {
+    case 0: return "illegal instruction";
+    case 2: return "instruction fetch error";
+    case 3: return "load/store error";
+    case 6: return "divide by zero";
+    case 9: return "unaligned load/store";
+    case 20: return "jumped to a bad address";
+    case 28: return "read from a bad address (null pointer?)";
+    case 29: return "write to a bad address (null pointer?)";
+    default: return "other (abort, assert or watchdog)";
+  }
+}
+
+void readCrash() {
+  size_t addr = 0, size = 0;
+  if (esp_core_dump_image_get(&addr, &size) != ESP_OK || !size) return;
+  esp_core_dump_summary_t* s = (esp_core_dump_summary_t*)calloc(1, sizeof(esp_core_dump_summary_t));
+  if (!s) return;
+  if (esp_core_dump_get_summary(s) == ESP_OK) {
+    crash.have = true;
+    strlcpy(crash.task, s->exc_task, sizeof(crash.task));
+    crash.pc = s->exc_pc; crash.cause = s->ex_info.exc_cause; crash.vaddr = s->ex_info.exc_vaddr;
+    crash.depth = s->exc_bt_info.depth > 16 ? 16 : s->exc_bt_info.depth;
+    crash.corrupted = s->exc_bt_info.corrupted;
+    memcpy(crash.bt, s->exc_bt_info.bt, sizeof(crash.bt));
+    // Same firmware as now? (then the addresses can be looked up in this build)
+#if ESP_IDF_VERSION_MAJOR >= 5
+    const esp_app_desc_t* app = esp_app_get_description();
+#else
+    const esp_app_desc_t* app = esp_ota_get_app_description();
+#endif
+    char mine[17]; for (int i = 0; i < 8; i++) snprintf(mine + 2 * i, 3, "%02x", app->app_elf_sha256[i]);
+    size_t n = strnlen((const char*)s->app_elf_sha256, sizeof(s->app_elf_sha256));
+    if (n > 16) n = 16;
+    crash.thisFirmware = n >= 8 && !strncmp((const char*)s->app_elf_sha256, mine, n);
+    Serial.printf("[crash] stored crash: task %s, PC 0x%08lx, %s\n", crash.task, (unsigned long)crash.pc, excCause(crash.cause));
+  }
+  free(s);
+}
+
+uint32_t dirBytes(const char* path) {
+  uint32_t t = 0;
+  File d = LittleFS.open(path);
+  if (!d || !d.isDirectory()) return 0;
+  for (File f = d.openNextFile(); f; f = d.openNextFile()) if (!f.isDirectory()) t += f.size();
+  return t;
+}
 
 bool isCrash(int r) { return r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT; }
 }  // namespace
@@ -121,6 +188,8 @@ void Health::earlyBoot() {
     if (esp_ota_get_partition_description(bad, &d) == ESP_OK)
       otaNote = String("A firmware update (") + d.version + ", slot " + bad->label + ") did not start properly and was rolled back.";
   }
+
+  readCrash();
 
   esp_register_freertos_idle_hook_for_cpu(idleHook0, 0);
   esp_register_freertos_tick_hook_for_cpu(tickHook0, 0);
@@ -246,9 +315,25 @@ void Health::toJson(JsonObject o) {
   m["historyKB"] = (History::bytes() + 512) / 1024;
   m["historyIn"] = ESP.getPsramSize() > 0 ? "PSRAM" : "RAM";
   m["psramFree"] = ESP.getFreePsram();
-#ifndef CM_EMULATOR_TEST   // walking the filesystem with QEMU's slow flash trips the interrupt watchdog
-  m["fsUsed"] = LittleFS.usedBytes(); m["fsTotal"] = LittleFS.totalBytes();
-#endif
+  if (storage.valid) {   // cached: see refreshStorage()
+    m["fsUsed"] = storage.fsUsed; m["fsTotal"] = storage.fsTotal;
+    JsonObject st = o["storage"].to<JsonObject>();
+    st["fsUsed"] = storage.fsUsed; st["fsTotal"] = storage.fsTotal;
+    st["webApp"] = storage.www; st["blackBox"] = storage.bb; st["uploadBuffer"] = storage.queue;
+    st["settingsUsed"] = storage.nvsUsed; st["settingsTotal"] = storage.nvsTotal;   // NVS entries (32 bytes each)
+    st["ageS"] = (millis() - storage.at) / 1000;
+  }
+  if (crash.have) {
+    JsonObject cr = o["crash"].to<JsonObject>();
+    char b[12];
+    cr["task"] = crash.task;
+    snprintf(b, sizeof(b), "0x%08lx", (unsigned long)crash.pc); cr["pc"] = b;
+    cr["cause"] = excCause(crash.cause); cr["causeCode"] = crash.cause;
+    snprintf(b, sizeof(b), "0x%08lx", (unsigned long)crash.vaddr); cr["address"] = b;
+    String bt;
+    for (uint8_t i = 0; i < crash.depth; i++) { snprintf(b, sizeof(b), "0x%08lx", (unsigned long)crash.bt[i]); if (i) bt += ' '; bt += b; }
+    cr["backtrace"] = bt; cr["corrupted"] = crash.corrupted; cr["thisFirmware"] = crash.thisFirmware;
+  }
 
   JsonArray cpu = o["cpu"].to<JsonArray>();
   for (int c = 0; c < ESP.getChipCores() && c < 2; c++) { if (isnan(load[c])) cpu.add(nullptr); else cpu.add(serialized(String(load[c], 0))); }
@@ -270,4 +355,32 @@ void Health::toJson(JsonObject o) {
   fl["configWrites"] = configWriteCount(); fl["bufferWrites"] = flashWrites; fl["bufferKB"] = flashBytes / 1024;
   JsonObject cl = o["clients"].to<JsonObject>();
   cl["events"] = sseClients; cl["websocket"] = wsClients;
+}
+
+// ---------------------------------------------------------------- storage / crash
+void Health::refreshStorage(bool force) {
+#ifdef CM_EMULATOR_TEST
+  (void)force; return;  // QEMU's flash is far too slow to walk the file system (trips the watchdog)
+#endif
+  if (!force && storage.valid && millis() - storage.at < 60000) return;
+  Storage s;
+  s.fsTotal = LittleFS.totalBytes(); s.fsUsed = LittleFS.usedBytes();
+  s.www = dirBytes("/www"); s.bb = dirBytes("/bb"); s.queue = dirBytes("/q");
+  nvs_stats_t ns;
+  if (nvs_get_stats("cfg", &ns) == ESP_OK) { s.nvsUsed = ns.used_entries; s.nvsTotal = ns.total_entries; }
+  s.valid = true; s.at = millis();
+  StateLock lk;
+  storage = s;
+}
+uint32_t Health::fsUsed() { return storage.fsUsed; }
+uint32_t Health::fsTotal() { return storage.fsTotal; }
+
+bool Health::crashStored() { return crash.have; }
+void Health::clearCrash() { esp_core_dump_image_erase(); crash = Crash(); }
+bool Health::crashDumpLocation(uint32_t& off, uint32_t& size) {
+  size_t addr = 0, sz = 0;
+  const esp_partition_t* p = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, nullptr);
+  if (!p || esp_core_dump_image_get(&addr, &sz) != ESP_OK || addr < p->address) return false;
+  off = addr - p->address; size = sz;
+  return off + size <= p->size;
 }

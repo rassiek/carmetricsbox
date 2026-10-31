@@ -16,6 +16,7 @@
 #include <WiFi.h>
 #include <sys/time.h>
 #include <esp_system.h>
+#include <esp_partition.h>
 
 namespace {
 AsyncWebServer server(80);
@@ -24,6 +25,7 @@ AsyncWebSocket ws("/ws");                 // two-way live channel (v2): state ou
 std::set<uint32_t> wsAuthed;               // client ids that sent the admin password
 portMUX_TYPE wsMux = portMUX_INITIALIZER_UNLOCKED;
 #define WS_MAX_CLIENTS 6
+#define SSE_MAX_CLIENTS 3
 uint32_t lastPush = 0, eventId = 0;
 volatile bool configChanged = false;
 
@@ -269,6 +271,25 @@ void setupV2Routes() {
     { StateLock lk; Health::toJson(doc.to<JsonObject>()); }
     sendJson(req, 200, doc);
   });
+  // ---- last crash (core dump in flash)
+  server.on("/api/v2/crash/clear", HTTP_POST, [](AsyncWebServerRequest* req) {
+    if (!requireAuth(req)) return;
+    Health::clearCrash();
+    sendStatus(req, 200, "Crash report cleared");
+  });
+  server.on("/api/v2/crash/dump", HTTP_GET, [](AsyncWebServerRequest* req) {
+    uint32_t off = 0, size = 0;
+    if (!Health::crashDumpLocation(off, size)) { sendStatus(req, 404, "No crash dump stored"); return; }
+    const esp_partition_t* p = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, nullptr);
+    AsyncWebServerResponse* res = req->beginResponse("application/octet-stream", size,
+      [p, off, size](uint8_t* buf, size_t max, size_t index) -> size_t {
+        if (index >= size) return 0;
+        size_t n = std::min<size_t>(max, size - index);
+        return esp_partition_read(p, off + index, buf, n) == ESP_OK ? n : 0;
+      });
+    res->addHeader("Content-Disposition", "attachment; filename=carmetrics-crash.elf");
+    req->send(res);
+  });
   server.on("/api/v2/wifi", HTTP_GET, [](AsyncWebServerRequest* req) {
     JsonDocument doc;
     { StateLock lk; WifiMgr::toJson(doc.to<JsonObject>()); }
@@ -387,7 +408,7 @@ void setupRoutes() {
       doc["uptimeS"] = millis() / 1000;
       doc["heapFree"] = ESP.getFreeHeap();
       doc["heapMin"] = ESP.getMinFreeHeap();
-      doc["fsUsed"] = LittleFS.usedBytes();
+      doc["fsUsed"] = Health::fsUsed();   // cached: walking the file system here held the lock for up to ~1 s
       doc["fsTotal"] = LittleFS.totalBytes();
       doc["sketchSize"] = ESP.getSketchSize();
       doc["sketchFree"] = ESP.getFreeSketchSpace();
@@ -567,6 +588,10 @@ void setupRoutes() {
 
   // ---- live events
   events.onConnect([](AsyncEventSourceClient* client) {
+    // Live data normally goes over the WebSocket; this is only the fallback.
+    // Cap it: every client holds send buffers, and stale ones (a phone that
+    // left the access point) linger until TCP gives up.
+    if (events.count() > SSE_MAX_CLIENTS) { client->close(); return; }
     client->send(stateString().c_str(), "state", ++eventId, 3000);
   });
   server.addHandler(&events);

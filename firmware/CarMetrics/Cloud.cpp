@@ -410,12 +410,14 @@ void netTask(void*) {
   Health::registerTask("net");
   bool fsOk = LittleFS.begin();
   if (fsOk) scanBacklog();
+  if (fsOk) Health::refreshStorage(true);
   Serial.printf("[net] task started, fs=%d backlog=%u files\n", fsOk, (unsigned)backlog.size());
   std::deque<Chunk*> pending;
   uint32_t lastSend = 0;
   netRunning = true;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(sleepRequested ? 20 : 500));
+    if (fsOk && !sleepRequested) Health::refreshStorage();   // at most once a minute, no lock held while walking the files
     if (sleepRequested) {   // going to deep sleep: everything in RAM goes to the flash ring
       while (Chunk* c = dequeue()) pending.push_back(c);
       CloudConfig cc; { StateLock lk; cc = gConfig.cloud; }
@@ -636,5 +638,5 @@ void Cloud::statusToJson(JsonObject o) {
   o["lastTryAgeS"] = gNet.lastTryMs ? (int32_t)((millis() - gNet.lastTryMs) / 1000) : -1;
   o["lastError"] = gNet.lastError;
   o["recordBytes"] = 10 + recIdx.size() * 12;
-  o["fsFree"] = LittleFS.totalBytes() - LittleFS.usedBytes();
+  o["fsFree"] = Health::fsTotal() - Health::fsUsed();   // cached (walking the file system under the lock stalled the loop)
 }

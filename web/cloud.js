@@ -44,7 +44,7 @@
       s.lastError && s.lastOkAgeS < 0 ? ['error', 'crit'] : ['online', 'ok'];
     pill.textContent = state[0]; pill.className = 'pill ' + state[1];
     const rows = [
-      ['Recording', s.recording ? 'yes' : 'no (off, or engine not running)'],
+      ['Recording', s.recording ? 'yes' : !s.enabled ? 'no: upload is off' : 'no: engine not running (untick "Only record while the engine runs" to record on the bench)'],
       ['Waiting to send', `${s.pendingRecords} points · ${kb(s.backlogBytes)} on flash (${s.backlogFiles} files)`],
       ['Sent / dropped', `${s.sentRecords} / ${s.droppedRecords}`],
       ['Last upload', s.lastOkAgeS < 0 ? 'never' : `${dur(s.lastOkAgeS)} ago`],

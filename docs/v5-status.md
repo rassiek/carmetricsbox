@@ -111,6 +111,16 @@ Measured from the build map and the emulator; the classic ESP32 is the tight one
 
 Flash: firmware 1.36 MB of the 1.62 MB slot on core 2.0.17 (~260 KB free), 1.50–1.52 MB on core 3.x (~120 KB free). Keep the classic 4 MB board on **core 2.0.17**; the bigger partition layout comes with the 8/16 MB S3. Biggest flash users are the Wi-Fi/TLS/lwIP libraries (~500 KB, needed); our own largest is `Config.cpp` (54 KB, JSON handling). Options not taken yet: drop ArduinoOTA (IDE uploads over the network; ~6 KB flash, 1.7 KB RAM), since the web page does updates.
 
+## Bench test 1 Nov 2026: fixes
+
+Health panel showed a **crash reset**, **loop max ~1 s**, **lowest free 77 KB** with **9 live clients**, and no storage figures.
+
+- **Loop stalls (~1 s):** `/api/info`, the health panel and the cloud status walked the whole LittleFS (`usedBytes()`) while holding the state lock, every 5 s with the System page open; the main loop waited for the lock. Storage figures are now measured from the net task once a minute, without the lock, and cached.
+- **Storage tile:** file system used / total, split into web app, black box, upload buffer, plus settings (NVS) use.
+- **Crash report:** the ESP32 already writes a core dump to flash on a crash; the System page now shows it (task, cause, address, backtrace, whether it was this firmware), with **Download crash dump** and **Clear**. The 1 Nov crash happened with build `10cbe4c`; its ELF is kept to decode the backtrace.
+- **Live-data clients:** the event-stream fallback is capped at 3 clients (WebSocket stays at 6); stale ones from phones that left the access point no longer pile up.
+- **Cloud "Recording: no":** by design while the engine isn't running; the status now says so and which box to untick for bench tests.
+
 ## Next session
 
 1. Wi-Fi fix bench-tested OK by the user (31 Oct).
