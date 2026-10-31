@@ -29,6 +29,7 @@
   const pct = v => v === null || v === undefined ? '–' : v + '%';
   async function loadHealth() {
     const m = await api('/api/v2/system');
+    document.body.dataset.chip = m.chip.model;
     const fw = $('#hFw');
     fw.textContent = `${m.firmware.slot}: ${m.firmware.state}`;
     fw.className = 'pill ' + (m.firmware.state === 'confirmed' || m.firmware.state === 'factory' ? 'ok' : 'warn');
@@ -158,7 +159,18 @@
     if (!file) { toast('Choose a .bin file first', true); return; }
     const target = $('#otaTarget').value;
     if (target === 'firmware' && /littlefs/i.test(file.name)) { toast('That looks like a web app image – choose "Web app"', true); return; }
-    ensureAuth().then(() => {
+    // Check the file before sending it: a wrong image only fails after the whole upload.
+    file.slice(0, 16).arrayBuffer().then(buf => {
+      const b = new Uint8Array(buf), chip = b[12] | (b[13] << 8);
+      if (/\.zip$/i.test(file.name)) throw new Error('That is a .zip – unzip it and choose the .bin inside');
+      if (target === 'firmware') {
+        if (/full-flash/i.test(file.name) || b[0] === 0xFF) throw new Error('That is the full USB flash image. For Wi-Fi updates choose carmetrics-firmware.bin');
+        if (b[0] !== 0xE9) throw new Error('Not a firmware file (choose carmetrics-firmware.bin, or "Web app" for littlefs.bin)');
+        const s3 = /S3/i.test(document.body.dataset.chip || '');
+        if (chip === 9 && !s3) throw new Error('That firmware is for an ESP32-S3. This board needs carmetrics-firmware.bin');
+        if (chip === 0 && s3) throw new Error('That firmware is for a classic ESP32. This board needs carmetrics-s3-firmware.bin');
+      } else if (b[0] === 0xE9) throw new Error('That is a firmware file – choose "Firmware" above');
+    }).then(() => ensureAuth()).then(() => {
       const xhr = new XMLHttpRequest(), fd = new FormData();
       fd.append('update', file, file.name);
       xhr.open('POST', '/api/update?target=' + target);
