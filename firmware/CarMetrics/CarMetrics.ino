@@ -1,11 +1,19 @@
-// CarMetrics v4 - single-ESP32 engine monitor
+// CarMetrics v5 - ESP32 / ESP32-S3 engine monitor
 // https://github.com/rassiek/carmetricsbox
 //
-// Board: ESP32 Dev Module (4 MB). Partition scheme: uses partitions.csv in this
-// folder (two 1.6 MB OTA slots + 576 KB LittleFS for the web app).
+// Boards: "ESP32 Dev Module" (classic ESP32) or "ESP32S3 Dev Module" (set PSRAM
+// to "OPI PSRAM" on N8R8/N16R8). Builds on ESP32 Arduino core 2.0.17 and 3.x.
+// Partitions: partitions.csv in this folder (two 1.6 MB OTA slots + 576 KB
+// LittleFS for the web app + settings), fits every board with 4 MB flash or more.
 //
 // Module map:
 //   Config.*   settings model, JSON, validation, NVS persistence
+//   Board.*    board profiles: valid / output / analog pins, default pins
+//   Health.*   board metrics, firmware rollback, safe-mode boot
+//   WifiMgr.*  access point + best saved network
+//   Gps.*      optional GPS module (NMEA)
+//   Vehicle.*  ignition sense, deep sleep, turbo cool-down timer
+//   BlackBox.* 30 s before/after every alarm, saved to flash
 //   State.*    shared runtime state + lock (see threading notes in State.h)
 //   Sensors.*  DS18B20, MAX6675, BMP180/280, ESP32 ADC, ADS1115
 //   Outputs.*  alerts (buzzer/LED) and relays
@@ -28,26 +36,14 @@
 #include "History.h"
 #include "Web.h"
 #include "Cloud.h"
+#include "Health.h"
+#include "Board.h"
+#include "WifiMgr.h"
+#include "Gps.h"
+#include "Vehicle.h"
+#include "BlackBox.h"
 
 static uint32_t lastNetCheck = 0;
-
-static void startWifi() {
-#ifdef CM_EMULATOR_TEST  // QEMU has no Wi-Fi radio
-  esp_netif_init();  // the web server still needs the TCP/IP stack
-  Serial.println("[wifi] skipped (emulator build)");
-  return;
-#endif
-  const SystemConfig& s = gConfig.sys;
-  bool sta = s.staSsid.length() > 0;
-  WiFi.persistent(false);
-  WiFi.mode(sta ? WIFI_AP_STA : WIFI_AP);
-  WiFi.setHostname(s.hostname.c_str());
-  WiFi.softAP(s.apSsid.c_str(), s.apPass.c_str());
-  if (sta) WiFi.begin(s.staSsid.c_str(), s.staPass.c_str());
-  StateLock lk;
-  gSys.apIp = WiFi.softAPIP().toString();
-  Serial.printf("[wifi] AP '%s' at %s%s\n", s.apSsid.c_str(), gSys.apIp.c_str(), sta ? ", joining network too" : "");
-}
 
 static void startOta() {
   ArduinoOTA.setHostname(gConfig.sys.hostname.c_str());
@@ -82,8 +78,11 @@ static void resizeRuntime(const Config& oldCfg) {
 
 static void applyConfig(Config* next) {
   const SystemConfig &a = gConfig.sys, &b = next->sys;
-  bool reboot = a.apSsid != b.apSsid || a.apPass != b.apPass || a.staSsid != b.staSsid || a.staPass != b.staPass ||
-                a.hostname != b.hostname || a.i2cSda != b.i2cSda || a.i2cScl != b.i2cScl || a.i2cKhz != b.i2cKhz;
+  bool wifiChanged = a.networks.size() != b.networks.size();
+  for (size_t i = 0; !wifiChanged && i < a.networks.size(); i++)
+    wifiChanged = a.networks[i].ssid != b.networks[i].ssid || a.networks[i].pass != b.networks[i].pass || a.networks[i].priority != b.networks[i].priority;
+  bool reboot = a.apSsid != b.apSsid || a.apPass != b.apPass ||
+                a.hostname != b.hostname || a.board != b.board || a.i2cSda != b.i2cSda || a.i2cScl != b.i2cScl || a.i2cKhz != b.i2cKhz;
   {
     StateLock lk;
     Config old = gConfig;
@@ -93,12 +92,17 @@ static void applyConfig(Config* next) {
   }
   delete next;
   saveConfig(gConfig);
+  Health::configApplied();
   ArduinoOTA.setPassword(gConfig.sys.adminPass.c_str());
   Sensors::begin();
   Alerts::begin();
   Relays::begin();
   History::begin();
   Cloud::begin();
+  Gps::begin();
+  Vehicle::begin();
+  BlackBox::begin();
+  if (wifiChanged && !reboot) WifiMgr::reconfigure();
   Display::reconfigure();
   Web::notifyConfigChanged();
   if (reboot) { Serial.println("[cfg] network/I2C settings changed - rebooting"); requestReboot(2000); }
@@ -107,10 +111,14 @@ static void applyConfig(Config* next) {
 void setup() {
   Serial.begin(115200);
   delay(50);
-  Serial.printf("\n\nCarMetrics %s booting (reset reason %d)\n", FW_VERSION, (int)esp_reset_reason());
+  Serial.printf("\n\nCarMetrics %s booting on %s\n", FW_VERSION, ESP.getChipModel());
+  Health::earlyBoot();
+  Health::registerTask("loop");
   stateInit();
 
-  loadConfig(gConfig);
+  // Safe mode starts from the last configuration that ran well.
+  if (!(Health::safeMode() && hasConfigSlot(CfgSlot::GOOD) && loadConfig(gConfig, CfgSlot::GOOD))) loadConfig(gConfig);
+  Serial.printf("[board] %s\n", Board::current().name);
   gSensorRt.assign(gConfig.sensors.size(), SensorRuntime());
   gRelayRt.assign(gConfig.relays.size(), RelayRuntime());
 
@@ -127,15 +135,19 @@ void setup() {
   Sensors::begin();
   History::begin();
   Cloud::begin();
-  startWifi();
+  Gps::begin();
+  Vehicle::begin();
+  BlackBox::begin();
+  WifiMgr::begin();
   startOta();
   Web::begin();
   Display::start();
-  Cloud::startNetTask();
+  if (!Health::safeMode()) Cloud::startNetTask();   // no internet features in safe mode
   Serial.println("[boot] ready");
 }
 
 void loop() {
+  Health::loopStart();
   if (Config* next = takePendingConfig()) applyConfig(next);
 
   Sensors::update();
@@ -143,6 +155,10 @@ void loop() {
   Relays::update();
   History::update();
   Cloud::update();
+  Gps::update();
+  Vehicle::update();
+  BlackBox::update();
+  WifiMgr::update();
   Web::update();
   ArduinoOTA.handle();
 
@@ -161,6 +177,7 @@ void loop() {
 #ifdef CM_EMU_SELFTEST
   extern void selftestLoop(); selftestLoop();
 #endif
+  Health::loopEnd();
 #ifdef CM_EMULATOR_TEST
   static uint32_t hb = 0;
   if (millis() - hb > 2000) { hb = millis(); Serial.printf("[hb] %lus heap %u\n", millis() / 1000, ESP.getFreeHeap()); }

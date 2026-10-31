@@ -39,7 +39,29 @@ struct RelayRuntime {
   uint32_t lastToggleMs = 0;
 };
 
+struct GpsRuntime {
+  bool fitted = false;          // NMEA sentences arriving
+  bool fix = false;
+  uint8_t sats = 0;
+  double lat = NAN, lon = NAN;
+  float speedKmh = NAN, altM = NAN, heading = NAN, hdop = NAN;
+  uint32_t lastSentenceMs = 0, lastFixMs = 0;
+};
+
+enum TurboPhase : uint8_t { TURBO_OFF = 0, TURBO_COOLING, TURBO_OK };
+struct TurboRuntime {
+  uint8_t phase = TURBO_OFF;
+  int32_t leftS = 0;            // minimum idle time left
+  float egt = NAN;
+  uint32_t hotShutdowns = 0;    // since boot
+};
+
 struct SystemRuntime {
+  int8_t ignition = -1;         // -1 not fitted, 0 off, 1 on
+  String wifiSsid;              // joined network ("" = none)
+  String wifiState = "off";     // off | scanning | connecting | connected | no known network
+  GpsRuntime gps;
+  TurboRuntime turbo;
   bool engineRunning = true;
   uint8_t overallLevel = LVL_OK;
   bool muted = false;

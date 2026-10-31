@@ -6,12 +6,20 @@
 #include <ArduinoJson.h>
 #include <vector>
 
-#define FW_VERSION "4.0.0"
+#define FW_VERSION "5.0.0-dev"
+#define CONFIG_SCHEMA 2   // bumped when the stored layout changes; older configs are upgraded on load
 #define MAX_SENSORS 24
 #define MAX_RELAYS 12
 
-enum class SensorType : uint8_t { DS18B20, MAX6675, MCP9600, BMP, ADC, ADS1115, UNKNOWN };
-enum class BmpField : uint8_t { TEMPERATURE, PRESSURE, ALTITUDE };
+enum class SensorType : uint8_t { DS18B20, MAX6675, MCP9600, BMP, ADC, ADS1115,
+                                  RPM,       // pulses on a GPIO (alternator W terminal)
+                                  SWITCH,    // digital input (warning switch, handbrake...)
+                                  GPS,       // field of the optional GPS module
+                                  INA226,    // I2C current/voltage monitor
+                                  IMU,       // I2C accelerometer (MPU-6050 family): roll / pitch
+                                  COMPUTED,  // derived from other sensors
+                                  UNKNOWN };
+enum class BmpField : uint8_t { TEMPERATURE, PRESSURE, ALTITUDE, HUMIDITY };   // humidity: BME280 only
 enum class OledStyle : uint8_t { OFF, TEXT, BAR };
 
 struct SensorConfig {
@@ -30,6 +38,17 @@ struct SensorConfig {
   uint8_t adsChannel = 0;     // ADS1115 channel 0-3
   uint8_t mcpAddress = 0x67;  // MCP9600/MCP9601 thermocouple amp I2C address (0x60-0x67)
   BmpField bmpField = BmpField::TEMPERATURE;
+  uint8_t i2cAddr = 0;     // INA226 (0x40-0x4F) / IMU (0x68-0x69); 0 = type default
+  String field;            // GPS: speed|altitude|sats|heading|hdop  INA226: current|voltage|power  IMU: roll|pitch
+  float pulsesPerRev = 10; // RPM: pulses per engine revolution (calibrate at idle)
+  bool activeLow = true;   // SWITCH: input pulled to ground when active (value 1)
+  float shuntOhms = 0.001f;// INA226 shunt resistor
+  // COMPUTED: diff = a - b, sum = a + b, rate = change of a per minute,
+  // time_in_warn = minutes a has spent in warning or worse, curve_margin = a - curve(b)
+  String formula, srcA, srcB;
+  // Lookup curve "x:y,x:y,..." (sorted by x). Analog: sensor volts -> value (non-linear senders).
+  // curve_margin: b -> minimum allowed a (e.g. RPM -> minimum oil pressure).
+  String curve;
 
   // --- calibration (analog types: ADC, ADS1115) ---
   // sensorVolts = pinVolts * divider
@@ -68,7 +87,15 @@ struct RelayConfig {
   bool enabled = true;
 };
 
+struct BoardProfile;
+struct WifiNetwork { String ssid, pass; uint8_t priority = 5; };   // priority 1 (low) .. 9 (high)
+#define MAX_WIFI_NETWORKS 8
+
 struct SystemConfig {
+  String board = "auto";             // board profile id (see Board.cpp); "auto" = detect
+  std::vector<WifiNetwork> networks; // known networks to join (phone hotspot, home...)
+  bool scanWhileApInUse = true;      // false: don't search for networks while a phone uses the CarMetrics AP
+
   // Wi-Fi
   String apSsid = "CarMetrics";
   String apPass = "carmetrics";      // >= 8 chars
@@ -99,6 +126,15 @@ struct SystemConfig {
   float engineRunningAbove = 13.2f;        // alternator charging
   uint16_t engineDelaySeconds = 5;
 
+  // Ignition sense + sleep (optional, -1 = not fitted)
+  int ignitionPin = -1;
+  bool ignitionActiveLow = true;     // opto-coupler pulls the input low while the key is on
+  uint16_t sleepAfterMinutes = 0;    // deep sleep this long after key-off (0 = never); wakes on ignition
+
+  // GPS module (optional, UART; -1 = not fitted)
+  int gpsRxPin = -1, gpsTxPin = -1;  // ESP32 RX <- GPS TX
+  uint32_t gpsBaud = 9600;
+
   // Misc
   float seaLevelHpa = 1013.25f;
   uint16_t historyIntervalSeconds = 5;     // chart history: 360 samples
@@ -123,6 +159,7 @@ struct CloudConfig {
   uint16_t uploadEverySec = 60;      // how often to send while online
   uint16_t bufferKB = 256;           // flash backlog cap; oldest data dropped beyond this
   bool onlyEngineRunning = true;     // don't record while parked
+  bool sendSystem = false;           // also upload board metrics (sys_heap_free_kb, sys_cpu0, ...)
   // Zabbix trapper
   String zbxServer;
   uint16_t zbxPort = 10051;
@@ -135,8 +172,35 @@ struct CloudConfig {
   String influxMeasurement = "carmetrics";
 };
 
+// Turbo cool-down indicator: after a run, show EGT and a countdown until it's safe to switch off.
+struct TurboConfig {
+  bool enabled = false;
+  String egtId = "egt";
+  float safeEgt = 200;               // °C: OK to switch off below this
+  uint16_t minIdleSeconds = 60;      // and after at least this long stopped/idling
+  String rpmId;                      // optional: idle = RPM below idleRpm
+  float idleRpm = 1000;
+  String speedId;                    // optional: stopped = speed below 3 km/h
+  bool beep = true;                  // short beep when it's OK
+};
+
+// Display layout: one model for the web dashboard tiles and the OLED pages.
+struct LayoutTile { String id; uint8_t size = 1; String widget = "bar"; };   // size 1|2, widget bar|number|spark
+struct LayoutConfig {
+  std::vector<LayoutTile> tiles;     // empty = every enabled sensor, config order
+  std::vector<String> oled;          // sensor ids, "|" = page break; empty = automatic
+};
+
+struct BlackBoxConfig {
+  bool enabled = true;
+  uint8_t keepEvents = 10;           // oldest dropped
+};
+
 struct Config {
   SystemConfig sys;
+  TurboConfig turbo;
+  LayoutConfig layout;
+  BlackBoxConfig blackbox;
   std::vector<SensorConfig> sensors;
   std::vector<RelayConfig> relays;
   WeatherConfig weather;
@@ -151,9 +215,11 @@ BmpField bmpFieldFromStr(const String& s);
 const char* oledStyleToStr(OledStyle s);
 OledStyle oledStyleFromStr(const String& s);
 
-void configDefaults(Config& c);
-void defaultSensors(std::vector<SensorConfig>& v);
-void defaultRelays(std::vector<RelayConfig>& v);
+void configDefaults(Config& c);                          // for the detected board
+void configDefaults(Config& c, const BoardProfile& b);
+void applyBoardPins(Config& c, const BoardProfile& b);   // move bus/output/sensor pins to the board defaults
+void defaultSensors(std::vector<SensorConfig>& v, const BoardProfile& b);
+void defaultRelays(std::vector<RelayConfig>& v, const BoardProfile& b);
 
 // JSON (de)serialisation. includeSecrets=false blanks out passwords.
 void sensorToJson(const SensorConfig& s, JsonObject o);
@@ -170,11 +236,22 @@ bool configFromJson(JsonVariantConst v, Config& out, String& err);
 bool weatherFromJson(JsonVariantConst v, WeatherConfig& out, String& err);
 bool cloudFromJson(JsonVariantConst v, CloudConfig& out, String& err);
 void weatherToJson(const WeatherConfig& w, JsonObject o);
+void turboToJson(const TurboConfig& t, JsonObject o);
+bool turboFromJson(JsonVariantConst v, TurboConfig& out, String& err);
+void layoutToJson(const LayoutConfig& l, JsonObject o);
+bool layoutFromJson(JsonVariantConst v, LayoutConfig& out, String& err);
+bool parseCurve(const String& s, std::vector<std::pair<float, float>>& out);   // "x:y,x:y"
+float curveLookup(const std::vector<std::pair<float, float>>& c, float x);      // linear, clamped
 void cloudToJson(const CloudConfig& c, JsonObject o, bool includeSecrets);
 
 // Cross-checks pins, ids, references. Returns false with a human readable error.
 bool validateConfig(const Config& c, String& err);
 
-// Persistence (NVS)
-bool loadConfig(Config& c);   // false = defaults were used
+// Persistence (NVS). Every save keeps the previous config ("prev") for a one-step
+// undo; after a healthy run the current config is also kept as "good" (used by safe mode).
+enum class CfgSlot : uint8_t { CURRENT, PREVIOUS, GOOD };
+bool loadConfig(Config& c, CfgSlot slot = CfgSlot::CURRENT);   // false = defaults were used
 bool saveConfig(const Config& c);
+bool hasConfigSlot(CfgSlot slot);
+bool markConfigGood();          // copy current -> good (only writes if different)
+uint32_t configWriteCount();    // NVS writes this boot (board metrics)

@@ -1,12 +1,17 @@
 # CarMetrics
 
-An engine monitor that runs on a single ESP32. It reads temperature, pressure and voltage sensors,
-shows them on an OLED in the cab and on a phone over Wi-Fi, sounds alarms, and switches relays.
-Firmware and the web app can both be updated over Wi-Fi.
+An engine monitor for older vehicles without OBD-II (built for a Land Rover 300Tdi). It runs on one
+ESP32 or ESP32-S3, reads temperature, pressure, voltage, RPM and other sensors, shows them on a phone
+over Wi-Fi and on an optional OLED, sounds alarms, and switches relays. Firmware and the web app can
+both be updated over Wi-Fi.
 
-> **v4** replaces the Arduino Mega + ESP32 pair (kept in [`legacy/`](legacy)) with one ESP32.
-> It has been compiled and run in Espressif's ESP32 emulator (QEMU), where a self-test of config,
-> alerts, relays and OLED rendering passes. It has **not yet been tested on real hardware**.
+> **v5 (in progress)** – phases 0 and 1 of [`docs/v5-design-and-backlog.md`](docs/v5-design-and-backlog.md) are built:
+> board profiles (ESP32 and ESP32-S3), board health metrics, firmware rollback and safe mode, WebSocket
+> and `/api/v2`, saved Wi-Fi networks, RPM, GPS, ignition sense and sleep, turbo cool-down timer,
+> layout editor, computed sensors, the alarm black box and more optional sensors.
+> It builds on ESP32 Arduino core **2.0.17 and 3.3.x**, and passes the emulator self-test and the web UI
+> tests. It has **not yet been tested on real hardware**. Multi-board (phase 3) and the touch display
+> client (phase 2) are not started.
 
 ## What it does
 
@@ -14,7 +19,12 @@ Firmware and the web app can both be updated over Wi-Fi.
   - DS18B20 1-Wire temperatures (coolant, intake, gearbox, transfer case…). The bus scan shows each sensor's live temperature so you can tell them apart.
   - EGT thermocouple through an **MCP9600/MCP9601** (I2C, no extra pins – recommended) or a **MAX6675** (SPI, 3 pins)
   - Analog through an **ESP32 pin** (ADC1, GPIO 32–39) or an **ADS1115** channel (16-bit, I2C). Each sensor has its own calibration, with presets for 0.5–4.5 V pressure senders and B25 battery modules.
-  - BMP180 / BMP280 (auto-detected) for cabin temperature, pressure and altitude
+  - BMP180 / BMP280 / BME280 (auto-detected) for cabin temperature, pressure, altitude and humidity
+  - **RPM** from the alternator W terminal (pulse counting, calibrate once at idle)
+  - **Switch inputs** (coolant level, low oil, handbrake…), **INA226** current/power, **MPU-6050** roll/pitch, **GPS** speed/altitude/satellites
+  - **Computed** values: A − B (true boost), rate of change, minutes in warning, and a margin against a curve (oil pressure vs RPM)
+  - Non-linear analog senders (fuel level, NTC temperature) through a lookup curve
+- **Optional parts never break the basics** – a missing GPS, display, network or extra sensor shows "not found" and never stops monitoring or alarms.
 - **Alerts** – high/low warning and critical limits per sensor, with hysteresis.
   - A wiring fault (broken wire, missing sensor) is an alert too.
   - Oil pressure and similar sensors can be set to only alarm while the engine is running (detected from battery voltage).
@@ -31,6 +41,14 @@ Firmware and the web app can both be updated over Wi-Fi.
 - **Updates over Wi-Fi** – upload firmware or the web app from the System page, or use ArduinoOTA from the IDE.
   - Settings live in NVS, so they survive both kinds of update and power cuts while saving.
 - **Admin password** protects settings, relays and updates (HTTP user `admin`).
+- **Boards** – one firmware per chip (classic ESP32 or ESP32-S3) with a board profile per module, so the web app only offers pins that work on your board.
+- **Board health** (System page) – uptime and reset history, memory, CPU load per core, loop time, task stacks, Wi-Fi signal, flash writes. Can also be uploaded as `sys_*` metrics.
+- **Firmware rollback and safe mode** – a new firmware only becomes permanent after running 60 s; if it crashes first, the previous one comes back. After 3 crashes in a row the board starts in safe mode: last known-good settings, relays off, no internet features.
+- **Saved Wi-Fi networks** – up to 8 (phone hotspot, home…), best one in range joined automatically; the CarMetrics access point stays on.
+- **Ignition sense and deep sleep** – optional; sleeps after key-off and wakes with the ignition.
+- **Turbo cool-down timer** – shows EGT and a countdown until it's safe to switch off; logs hot shutdowns. Indicator only.
+- **Layout editor** – choose dashboard tiles (order, width, value/bar/trend) and OLED page order.
+- **Alarm black box** – every new alarm saves all sensors from 30 s before to 30 s after it; browse them on the Events page.
 
 - **Weather tab** – public weather for chosen Kenyan towns (Open-Meteo, no API key). Only works while the ESP32 has internet.
   - A reference town's sea-level pressure can calibrate the altimeter automatically.
@@ -83,12 +101,15 @@ The first flash must be over USB, because it installs the new partition layout. 
 ### Option A – no IDE: flash the full image
 
 1. Open https://espressif.github.io/esptool-js/ in Chrome or Edge and connect the ESP32 over USB.
-2. Flash `carmetrics-full-flash.bin` at address **0x0**. This one image holds the bootloader, partitions, firmware and web app.
+2. Flash `carmetrics-full-flash.bin` (classic ESP32) or `carmetrics-s3-full-flash.bin` (ESP32-S3) at address **0x0**. This one image holds the bootloader, partitions, firmware and web app.
 
 ### Option B – Arduino IDE 2
 
-1. **Board:** install *esp32 by Espressif* (tested with 2.0.17) and select **ESP32 Dev Module**.
+1. **Board:** install *esp32 by Espressif* (tested with **2.0.17** and **3.3.12**) and select:
+   - **ESP32 Dev Module** for a classic ESP32, or
+   - **ESP32S3 Dev Module** for an ESP32-S3; on N8R8 / N16R8 boards also set **PSRAM** to **OPI PSRAM**.
    - Set **Partition Scheme** to **Minimal SPIFFS**. This only sets the size limit; the real layout comes from `firmware/CarMetrics/partitions.csv`.
+   - v5 needs no new libraries.
 2. **Libraries:** install these from the Library Manager (versions tested):
    - ArduinoJson 7.2.1
    - ESP Async WebServer 3.12.1 *and* Async TCP 4.0.0 – the **ESP32Async** versions
@@ -111,6 +132,7 @@ The first flash must be over USB, because it installs the new partition layout. 
 
 1. **Connect:** join the Wi-Fi network **CarMetrics** (password `carmetrics`) and open http://192.168.4.1 or http://carmetrics.local.
 2. **Change passwords:** on the **System** page, change the Wi-Fi and admin passwords (the admin password is also `carmetrics`).
+   - Check **System → Board** shows your board, and add your phone hotspot under **Networks to join**.
 3. **Assign temperature sensors:** on the **Sensors** page, press **Scan**, assign each 1-Wire address, then **Save changes**.
 4. **Check the analog sensors:** the editor shows the live voltage at each sensor, which helps you confirm the calibration.
 
@@ -131,7 +153,7 @@ legacy/                previous Arduino + ESP32 versions
 
 ## Internet features
 
-The ESP32 needs to **join a Wi-Fi network that has internet**. Set **System → Settings → Also join network**, e.g. your phone's hotspot.
+The ESP32 needs to **join a Wi-Fi network that has internet**. Add it under **System → Settings → Networks to join**, e.g. your phone's hotspot.
 
 - It keeps its own `CarMetrics` network at the same time.
 - The clock comes from NTP once online.
@@ -207,3 +229,14 @@ Normal builds don't include any of it.
 | `POST /api/time` | | `{epochMs}` – set the clock |
 | `POST /api/update?target=firmware\|filesystem` | ✔ | Install an update |
 | `POST /api/reboot` | ✔ | Reboot |
+| `GET /ws` | | **v2** WebSocket: `hello`, then live state every second; send `{type:"auth",pass}` and `{type:"cmd",cmd:"mute"\|"relay",…}` |
+| `GET /api/v2/points` | | Every value as a point: `local.coolant_temp`, `local.relay1`, `local.sys_cpu0`… |
+| `GET /api/v2/system` | | Board health metrics |
+| `GET /api/v2/board`, `POST` | –/✔ | Board profiles; `{board, applyPins}` |
+| `POST /api/v2/command` | ✔ (mute: no) | `{cmd:"relay", addr:"local.relay1", on}` or `{cmd:"mute", minutes}` |
+| `POST /api/v2/config/restore` | ✔ | `{slot:"previous"\|"good"}` – undo or known-good settings |
+| `POST /api/v2/safemode/leave` | ✔ | Leave safe mode (reboots) |
+| `POST /api/config/turbo`, `/api/config/layout` | ✔ | Turbo timer, dashboard/OLED layout |
+| `POST /api/rpm/calibrate` | ✔ | `{id, rpm}` – pulses per revolution from the current engine speed |
+| `GET /api/blackbox`, `/api/blackbox/event?seq=` | | Alarm recordings |
+| `POST /api/blackbox/clear` | ✔ | Delete recordings |

@@ -12,7 +12,14 @@
     ads1115: { unit: 'psi', adsAddress: 0x48, adsChannel: 0, divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 100,
                faultLowV: 0.35, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 100, decimals: 0, smoothing: 0.3, oledStyle: 'bar', hysteresis: 1 },
     bmp: { unit: '°C', bmpField: 'temperature', gaugeMin: 0, gaugeMax: 50, decimals: 0, smoothing: 0.3, oledStyle: 'text', hysteresis: 1 },
+    rpm: { unit: 'rpm', pin: -1, pulsesPerRev: 10, gaugeMin: 0, gaugeMax: 4500, decimals: 0, smoothing: 0.5, oledStyle: 'text', oledLabel: 'RPM', hysteresis: 50, faultAlarm: false },
+    switch: { unit: '', pin: -1, activeLow: true, gaugeMin: 0, gaugeMax: 1, decimals: 0, smoothing: 1, oledStyle: 'text', warnHigh: 0.5, hysteresis: 0 },
+    gps: { unit: 'km/h', field: 'speed', gaugeMin: 0, gaugeMax: 140, decimals: 0, smoothing: 1, oledStyle: 'text', hysteresis: 1, faultAlarm: false },
+    ina226: { unit: 'A', field: 'current', i2cAddr: 0x40, shuntOhms: 0.001, gaugeMin: -20, gaugeMax: 50, decimals: 1, smoothing: 0.5, oledStyle: 'text', hysteresis: 0.5 },
+    imu: { unit: '°', field: 'roll', i2cAddr: 0x68, gaugeMin: -45, gaugeMax: 45, decimals: 0, smoothing: 0.5, oledStyle: 'text', warnHigh: 25, warnLow: -25, critHigh: 35, critLow: -35, hysteresis: 2 },
+    computed: { unit: '', formula: 'diff', srcA: '', srcB: '', curve: '', gaugeMin: 0, gaugeMax: 100, decimals: 1, smoothing: 1, oledStyle: 'off', hysteresis: 1, faultAlarm: false },
   };
+  const FIELD_UNITS = { speed: 'km/h', altitude: 'm', sats: '', heading: '°', hdop: '', current: 'A', voltage: 'V', power: 'W', roll: '°', pitch: '°' };
   // Analog presets: sensor volts -> value. divider = how much the resistors scale the signal down.
   const PRESETS = {
     '': null,
@@ -24,7 +31,8 @@
     'volts': { label: 'Plain voltage (no scaling)', unit: 'V', divider: 1, inMin: 0, inMax: 1, outMin: 0, outMax: 1, faultLowV: null, faultHighV: null, gaugeMin: 0, gaugeMax: 3.3, decimals: 2 },
   };
 
-  const typeName = { ds18b20: 'DS18B20', mcp9600: 'MCP9600', max6675: 'MAX6675', adc: 'ESP32 analog', ads1115: 'ADS1115', bmp: 'BMP' };
+  const typeName = { ds18b20: 'DS18B20', mcp9600: 'MCP9600', max6675: 'MAX6675', adc: 'ESP32 analog', ads1115: 'ADS1115', bmp: 'BMP',
+    rpm: 'RPM', switch: 'Switch', gps: 'GPS', ina226: 'INA226', imu: 'Tilt', computed: 'Computed' };
   function describe(s) {
     switch (s.type) {
       case 'ds18b20': return s.address ? `1-Wire ${s.address}` : '1-Wire, no address assigned';
@@ -33,6 +41,12 @@
       case 'adc': return `GPIO ${s.pin}`;
       case 'ads1115': return `ADS1115 0x${(+s.adsAddress).toString(16)} ch ${s.adsChannel}`;
       case 'bmp': return `BMP ${s.bmpField}`;
+      case 'rpm': return `GPIO ${s.pin}, ${s.pulsesPerRev} pulses/rev`;
+      case 'switch': return `GPIO ${s.pin}${s.activeLow ? ', active low' : ''}`;
+      case 'gps': return `GPS ${s.field}`;
+      case 'ina226': return `INA226 0x${(+s.i2cAddr).toString(16)} ${s.field}`;
+      case 'imu': return `MPU-6050 0x${(+s.i2cAddr).toString(16)} ${s.field}`;
+      case 'computed': return `${s.formula}(${s.srcA}${s.srcB && ['diff', 'sum', 'curve_margin'].includes(s.formula) ? ', ' + s.srcB : ''})`;
     }
     return s.type;
   }
@@ -73,7 +87,8 @@
     const s = Object.assign({ id: uniqueId(type), name: 'New ' + typeName[type], type, enabled: true, address: '', pin: -1, sckPin: -1, soPin: -1,
       adsAddress: 0x48, adsChannel: 0, mcpAddress: 0x67, bmpField: 'temperature', divider: 1, inMin: 0, inMax: 1, outMin: 0, outMax: 1,
       faultLowV: null, faultHighV: null, offset: 0, oledLabel: '', warnLow: null, critLow: null, warnHigh: null, critHigh: null,
-      engineRunningOnly: false, faultAlarm: true }, TEMPLATES[type]);
+      engineRunningOnly: false, faultAlarm: true, i2cAddr: 0, field: '', pulsesPerRev: 10, activeLow: true, shuntOhms: 0.001,
+      formula: '', srcA: '', srcB: '', curve: '' }, TEMPLATES[type]);
     sensors.push(s);
     renderList();
     edit(sensors.length - 1);
@@ -109,7 +124,17 @@
     return null;
   }
 
-  const ADC_PINS = [32, 33, 34, 35, 36, 39].map(p => [p, `GPIO ${p}` + (p === 36 ? ' (VP)' : p === 39 ? ' (VN)' : '')]);
+  let BOARD = null;
+  CM.board().then(b => { BOARD = b && b.current; });
+  async function calibrateRpm(s) {
+    const rpm = +$('#rpmNow').value;
+    try { toast((await api('/api/rpm/calibrate', { body: { id: s.id, rpm } })).message, false, 6000); setTimeout(load, 1500); }
+    catch (e) { toast(e.message, true, 6000); }
+  }
+  // Analog pins come from the board profile (ADC1 only: ADC2 stops working with Wi-Fi on)
+  let ADC_PINS = [32, 33, 34, 35, 36, 39].map(p => [p, `GPIO ${p}`]);
+  CM.board().then(b => { if (b && b.current) { ADC_PINS = b.current.adc1.map(p => [p, `GPIO ${p}`]); TEMPLATES.adc.pin = b.current.adc1[0];
+    const d = b.current.defaults; Object.assign(TEMPLATES.max6675, { sckPin: d.egtSck, pin: d.egtCs, soPin: d.egtSo }); } });
   function edit(i) {
     editing = i;
     const s = sensors[i], ed = $('#editor');
@@ -128,12 +153,46 @@
         options: [0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67].map(a => [a, '0x' + a.toString(16) + (a === 0x67 ? ' (Adafruit default)' : a === 0x60 ? ' (ADDR→GND)' : '')]) }),
         h('p', { class: 'muted small wide', style: 'margin:0' }, 'K-type. Mount it in the cab box and run K-type extension cable to the probe. The MCP9601 also reports open/short probes. If readings drop out, set I2C speed to 100 kHz on the System page.'));
     } else if (s.type === 'bmp') {
-      hw.push(field('Measurement', 'bmpField', s, { type: 'select', options: [['temperature', 'Temperature'], ['pressure', 'Pressure (hPa)'], ['altitude', 'Altitude (m)']] }));
+      hw.push(field('Measurement', 'bmpField', s, { type: 'select', options: [['temperature', 'Temperature'], ['pressure', 'Pressure (hPa)'], ['altitude', 'Altitude (m)'], ['humidity', 'Humidity (%, BME280 only)']] }));
     } else if (s.type === 'adc') {
       hw.push(field('Analog pin (ADC1)', 'pin', s, { type: 'select', options: ADC_PINS, numeric: true }));
     } else if (s.type === 'ads1115') {
       hw.push(field('ADS1115 address', 'adsAddress', s, { type: 'select', numeric: true, options: [[72, '0x48 (ADDR→GND)'], [73, '0x49 (ADDR→VDD)'], [74, '0x4A (ADDR→SDA)'], [75, '0x4B (ADDR→SCL)']] }),
               field('Channel', 'adsChannel', s, { type: 'select', numeric: true, options: [[0, 'A0'], [1, 'A1'], [2, 'A2'], [3, 'A3']] }));
+    }
+    const pinOpts = () => [[-1, '— choose —'], ...(BOARD ? BOARD.valid : []).map(p => [p, `GPIO ${p}`])];
+    const setField = (sel) => { sel.addEventListener('change', () => { if (FIELD_UNITS[s.field] !== undefined) s.unit = FIELD_UNITS[s.field]; edit(editing); renderList(); }); return sel; };
+    if (s.type === 'rpm') {
+      hw.push(field('Signal GPIO', 'pin', s, { type: 'select', options: pinOpts(), numeric: true }),
+        field('Pulses per engine revolution', 'pulsesPerRev', s, { nullable: false, step: '0.01' }),
+        h('div', { class: 'wide' }, h('label', {}, 'Calibrate: engine speed right now (e.g. idle on a tachometer)'),
+          h('div', { class: 'row' }, h('input', { id: 'rpmNow', type: 'number', placeholder: 'e.g. 800', style: 'max-width:140px' }),
+            h('button', { class: 'small', onclick: () => calibrateRpm(s) }, 'Calibrate'))),
+        h('p', { class: 'small wide', style: 'margin:0' }, 'Live: ', h('b', { id: 'edLive' }, '—')),
+        h('p', { class: 'muted small wide', style: 'margin:0' }, 'Wire the alternator W terminal through an opto-coupler or comparator board: never straight to the ESP32. Save the sensor first, then calibrate with the engine running.'));
+    } else if (s.type === 'switch') {
+      hw.push(field('Input GPIO', 'pin', s, { type: 'select', options: pinOpts(), numeric: true }),
+        field('Active when pulled to ground (internal pull-up)', 'activeLow', s, { type: 'checkbox', wide: true }),
+        h('p', { class: 'muted small wide', style: 'margin:0' }, 'Value is 1 when active. Set "Warning high" to 0.5 to alarm when it switches. 12 V switches need a divider or opto-coupler.'));
+    } else if (s.type === 'gps') {
+      hw.push(setField(field('Value', 'field', s, { type: 'select', options: [['speed', 'Speed (km/h)'], ['altitude', 'Altitude (m)'], ['sats', 'Satellites'], ['heading', 'Heading (°)'], ['hdop', 'Accuracy (HDOP)']] })),
+        h('p', { class: 'muted small wide', style: 'margin:0' }, 'Set the GPS UART pins on the System page. Without a module this shows "not found" and never alarms (unless you tick "alarm if missing").'));
+    } else if (s.type === 'ina226') {
+      hw.push(field('I2C address', 'i2cAddr', s, { type: 'select', numeric: true, options: Array.from({ length: 16 }, (_, k) => [0x40 + k, '0x' + (0x40 + k).toString(16)]) }),
+        setField(field('Value', 'field', s, { type: 'select', options: [['current', 'Current (A)'], ['voltage', 'Voltage (V)'], ['power', 'Power (W)']] })),
+        field('Shunt resistor (Ω)', 'shuntOhms', s, { nullable: false, step: '0.0001' }));
+    } else if (s.type === 'imu') {
+      hw.push(field('I2C address', 'i2cAddr', s, { type: 'select', numeric: true, options: [[0x68, '0x68 (AD0→GND)'], [0x69, '0x69 (AD0→VCC)']] }),
+        setField(field('Value', 'field', s, { type: 'select', options: [['roll', 'Roll (side tilt)'], ['pitch', 'Pitch (nose up/down)']] })),
+        h('p', { class: 'muted small wide', style: 'margin:0' }, 'Mount it flat and use "Offset" to zero it on level ground.'));
+    } else if (s.type === 'computed') {
+      const srcOpts = [['', '— choose —'], ...sensors.filter(x => x.id !== s.id).map(x => [x.id, x.name])];
+      const f = s.formula;
+      hw.push(field('Formula', 'formula', s, { type: 'select', rerender: true, options: [['diff', 'A − B (e.g. boost = MAP − baro)'], ['sum', 'A + B'], ['rate', 'Rate of change of A, per minute'], ['time_in_warn', 'Minutes A has been in warning'], ['curve_margin', 'A − curve(B) (e.g. oil pressure above its RPM minimum)']] }),
+        field('A', 'srcA', s, { type: 'select', options: srcOpts }));
+      if (['diff', 'sum', 'curve_margin'].includes(f)) hw.push(field('B', 'srcB', s, { type: 'select', options: srcOpts }));
+      if (f === 'curve_margin') hw.push(field('Curve: B → minimum A', 'curve', s, { type: 'text', wide: true, placeholder: '800:10,2000:25,3500:40' }),
+        h('p', { class: 'muted small wide', style: 'margin:0' }, 'Set "Critical low" to 0 to alarm when A drops below the curve.'));
     }
     const analog = s.type === 'adc' || s.type === 'ads1115';
     let calib = null;
@@ -149,7 +208,8 @@
           field('Divider (×)', 'divider', s, { nullable: false }),
           field('Input min (V)', 'inMin', s, { nullable: false }), field('Input max (V)', 'inMax', s, { nullable: false }),
           field('Output at min', 'outMin', s, { nullable: false }), field('Output at max', 'outMax', s, { nullable: false }),
-          field('Fault below (V)', 'faultLowV', s), field('Fault above (V)', 'faultHighV', s)),
+          field('Fault below (V)', 'faultLowV', s), field('Fault above (V)', 'faultHighV', s),
+          field('Non-linear curve: sensor volts → value (optional, replaces the ranges)', 'curve', s, { type: 'text', wide: true, placeholder: 'fuel sender: 0.4:0,1.2:25,2.0:50,2.7:75,3.2:100' })),
         h('p', { class: 'small', style: 'margin-bottom:0' }, 'Live: ', h('b', { id: 'edLive' }, '—')));
     }
 
@@ -190,7 +250,8 @@
     }
     if (editing >= 0) {
       const s = sensors[editing], r = st.sensors[s.id], el = $('#edLive');
-      if (el && r) el.textContent = r.volts != null ? `${(+r.volts).toFixed(3)} V at sensor → ${r.v === null ? statusText[r.st] : fmt(+r.v, s.decimals) + ' ' + s.unit}` : statusText[r.st] || '—';
+      if (el && r && s.type === 'rpm') el.textContent = `${r.volts != null ? (+r.volts).toFixed(1) : '–'} Hz`;
+      else if (el && r) el.textContent = r.volts != null ? `${(+r.volts).toFixed(3)} V at sensor → ${r.v === null ? statusText[r.st] : fmt(+r.v, s.decimals) + ' ' + s.unit}` : statusText[r.st] || '—';
     }
   }
 

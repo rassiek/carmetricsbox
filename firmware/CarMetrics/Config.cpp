@@ -1,4 +1,5 @@
 #include "Config.h"
+#include "Board.h"
 #include <Preferences.h>
 #include <nvs_flash.h>
 #include <map>
@@ -13,6 +14,12 @@ const char* sensorTypeToStr(SensorType t) {
     case SensorType::BMP:     return "bmp";
     case SensorType::ADC:     return "adc";
     case SensorType::ADS1115: return "ads1115";
+    case SensorType::RPM:     return "rpm";
+    case SensorType::SWITCH:  return "switch";
+    case SensorType::GPS:     return "gps";
+    case SensorType::INA226:  return "ina226";
+    case SensorType::IMU:     return "imu";
+    case SensorType::COMPUTED: return "computed";
     default:                  return "unknown";
   }
 }
@@ -23,18 +30,26 @@ SensorType sensorTypeFromStr(const String& s) {
   if (s == "bmp")     return SensorType::BMP;
   if (s == "adc")     return SensorType::ADC;
   if (s == "ads1115") return SensorType::ADS1115;
+  if (s == "rpm")     return SensorType::RPM;
+  if (s == "switch")  return SensorType::SWITCH;
+  if (s == "gps")     return SensorType::GPS;
+  if (s == "ina226")  return SensorType::INA226;
+  if (s == "imu")     return SensorType::IMU;
+  if (s == "computed") return SensorType::COMPUTED;
   return SensorType::UNKNOWN;
 }
 const char* bmpFieldToStr(BmpField f) {
   switch (f) {
     case BmpField::PRESSURE: return "pressure";
     case BmpField::ALTITUDE: return "altitude";
+    case BmpField::HUMIDITY: return "humidity";
     default:                 return "temperature";
   }
 }
 BmpField bmpFieldFromStr(const String& s) {
   if (s == "pressure") return BmpField::PRESSURE;
   if (s == "altitude") return BmpField::ALTITUDE;
+  if (s == "humidity") return BmpField::HUMIDITY;
   return BmpField::TEMPERATURE;
 }
 const char* oledStyleToStr(OledStyle s) {
@@ -68,7 +83,8 @@ static SensorConfig analog(const char* id, const char* name, const char* unit, i
   return s;
 }
 
-void defaultSensors(std::vector<SensorConfig>& v) {
+void defaultSensors(std::vector<SensorConfig>& v, const BoardProfile& b) {
+  const BoardPins& P = b.pins;
   v.clear();
   // 1-Wire temperatures - addresses are assigned from the Settings page after a bus scan
   v.push_back(ds("coolant_temp", "Coolant", "CT", OledStyle::BAR, 15, 120, 100, 105));
@@ -76,10 +92,10 @@ void defaultSensors(std::vector<SensorConfig>& v) {
   v.push_back(ds("gearbox_temp", "Gearbox", "G", OledStyle::TEXT, 0, 120, 90, 105));
   v.push_back(ds("transfer_case_temp", "Transfer case", "T", OledStyle::TEXT, 0, 120, 90, 105));
 
-  // EGT thermocouple (MAX6675: SCK=5, CS=17, SO=16)
+  // EGT thermocouple (MAX6675; classic ESP32 DevKit: SCK=5, CS=17, SO=16)
   SensorConfig egt;
   egt.id = "egt"; egt.name = "EGT"; egt.unit = "°C"; egt.type = SensorType::MAX6675;
-  egt.sckPin = 5; egt.pin = 17; egt.soPin = 16; egt.offset = 0;
+  egt.sckPin = P.egtSck; egt.pin = P.egtCs; egt.soPin = P.egtSo; egt.offset = 0;
   egt.faultAlarm = false;  // unplugged probe shows NOT FOUND without sounding the alarm
   egt.smoothing = 0.5f;
   egt.gaugeMin = 0; egt.gaugeMax = 800; egt.warnHigh = 600; egt.critHigh = 700; egt.hysteresis = 10;
@@ -87,26 +103,26 @@ void defaultSensors(std::vector<SensorConfig>& v) {
   v.push_back(egt);
 
   // Pressure senders: 5 V, 0.5-4.5 V out, through a 10k/20k divider (x1.5)
-  SensorConfig boost = analog("boost_pressure", "Boost", "psi", 32, 1.5f, 0.5f, 4.5f, 0, 30);
+  SensorConfig boost = analog("boost_pressure", "Boost", "psi", P.analog[0], 1.5f, 0.5f, 4.5f, 0, 30);
   boost.decimals = 1; boost.gaugeMin = 0; boost.gaugeMax = 25; boost.warnHigh = 17; boost.critHigh = 20;
   boost.hysteresis = 0.5f; boost.faultLowV = 0.35f; boost.faultHighV = 4.8f;
   boost.oledStyle = OledStyle::BAR; boost.oledLabel = "BST";
   v.push_back(boost);
 
-  SensorConfig oil = analog("oil_pressure", "Oil pressure", "psi", 34, 1.5f, 0.5f, 4.5f, 0, 100);
+  SensorConfig oil = analog("oil_pressure", "Oil pressure", "psi", P.analog[1], 1.5f, 0.5f, 4.5f, 0, 100);
   oil.gaugeMin = 0; oil.gaugeMax = 100; oil.warnLow = 15; oil.critLow = 7; oil.warnHigh = 85;
   oil.hysteresis = 2; oil.faultLowV = 0.35f; oil.faultHighV = 4.8f; oil.engineRunningOnly = true;
   oil.oledStyle = OledStyle::BAR; oil.oledLabel = "OIL";
   v.push_back(oil);
 
   // Battery voltage via B25 module (30k/7.5k = x5)
-  SensorConfig bat = analog("bat_voltage", "Starter battery", "V", 35, 5.0f, 0, 1, 0, 1);
+  SensorConfig bat = analog("bat_voltage", "Starter battery", "V", P.analog[2], 5.0f, 0, 1, 0, 1);
   bat.decimals = 1; bat.gaugeMin = 8; bat.gaugeMax = 16;
   bat.warnLow = 11.8f; bat.critLow = 11.2f; bat.warnHigh = 14.8f; bat.critHigh = 15.2f; bat.hysteresis = 0.2f;
   bat.oledStyle = OledStyle::TEXT; bat.oledLabel = "B";
   v.push_back(bat);
 
-  SensorConfig aux = analog("aux_voltage", "Aux battery", "V", 33, 5.0f, 0, 1, 0, 1);
+  SensorConfig aux = analog("aux_voltage", "Aux battery", "V", P.analog[3], 5.0f, 0, 1, 0, 1);
   aux.enabled = false; aux.decimals = 1; aux.gaugeMin = 8; aux.gaugeMax = 16;
   aux.warnLow = 11.8f; aux.critLow = 11.2f; aux.hysteresis = 0.2f;
   aux.oledStyle = OledStyle::TEXT; aux.oledLabel = "A";
@@ -126,22 +142,42 @@ void defaultSensors(std::vector<SensorConfig>& v) {
   v.push_back(alt);
 }
 
-void defaultRelays(std::vector<RelayConfig>& v) {
+void defaultRelays(std::vector<RelayConfig>& v, const BoardProfile& b) {
   v.clear();
   // Disabled until you confirm wiring and whether your relay board is active-low.
-  RelayConfig r1; r1.id = "relay1"; r1.name = "Relay 1"; r1.pin = 26; r1.enabled = false; r1.activeLow = true;
-  RelayConfig r2; r2.id = "relay2"; r2.name = "Relay 2"; r2.pin = 27; r2.enabled = false; r2.activeLow = true;
+  RelayConfig r1; r1.id = "relay1"; r1.name = "Relay 1"; r1.pin = b.pins.relay[0]; r1.enabled = false; r1.activeLow = true;
+  RelayConfig r2; r2.id = "relay2"; r2.name = "Relay 2"; r2.pin = b.pins.relay[1]; r2.enabled = false; r2.activeLow = true;
   v.push_back(r1); v.push_back(r2);
 }
 
-void configDefaults(Config& c) {
+void configDefaults(Config& c) { configDefaults(c, Board::detected()); }
+
+static void sysPins(SystemConfig& s, const BoardProfile& b) {
+  s.i2cSda = b.pins.sda; s.i2cScl = b.pins.scl; s.oneWirePin = b.pins.oneWire;
+  s.buzzerPin = b.pins.buzzer; s.ledPin = b.pins.led;
+}
+
+void configDefaults(Config& c, const BoardProfile& b) {
   c.sys = SystemConfig();
+  sysPins(c.sys, b);
   c.weather = WeatherConfig();
   WeatherTown nbo; nbo.name = "Nairobi"; nbo.lat = -1.2864f; nbo.lon = 36.8172f;
   c.weather.towns.push_back(nbo);
   c.cloud = CloudConfig();
-  defaultSensors(c.sensors);
-  defaultRelays(c.relays);
+  defaultSensors(c.sensors, b);
+  defaultRelays(c.relays, b);
+}
+
+// Re-map pins after switching board: system pins and the default sensors/relays
+// (matched by id) move to the new board's defaults; user-added items keep theirs.
+void applyBoardPins(Config& c, const BoardProfile& b) {
+  sysPins(c.sys, b);
+  std::vector<SensorConfig> ds; defaultSensors(ds, b);
+  for (auto& s : c.sensors)
+    for (auto& d : ds)
+      if (d.id == s.id && d.type == s.type) { s.pin = d.pin; s.sckPin = d.sckPin; s.soPin = d.soPin; }
+  std::vector<RelayConfig> dr; defaultRelays(dr, b);
+  for (auto& r : c.relays) for (auto& d : dr) if (d.id == r.id) r.pin = d.pin;
 }
 
 // ---------------------------------------------------------------- JSON helpers
@@ -191,6 +227,9 @@ void sensorToJson(const SensorConfig& s, JsonObject o) {
   o["address"] = s.address; o["pin"] = s.pin; o["sckPin"] = s.sckPin; o["soPin"] = s.soPin;
   o["adsAddress"] = s.adsAddress; o["adsChannel"] = s.adsChannel; o["mcpAddress"] = s.mcpAddress;
   o["bmpField"] = bmpFieldToStr(s.bmpField);
+  o["i2cAddr"] = s.i2cAddr; o["field"] = s.field; putF(o, "pulsesPerRev", s.pulsesPerRev);
+  o["activeLow"] = s.activeLow; putF(o, "shuntOhms", s.shuntOhms);
+  o["formula"] = s.formula; o["srcA"] = s.srcA; o["srcB"] = s.srcB; o["curve"] = s.curve;
   putF(o, "divider", s.divider); putF(o, "inMin", s.inMin); putF(o, "inMax", s.inMax);
   putF(o, "outMin", s.outMin); putF(o, "outMax", s.outMax);
   putF(o, "faultLowV", s.faultLowV); putF(o, "faultHighV", s.faultHighV);
@@ -210,8 +249,16 @@ void relayToJson(const RelayConfig& r, JsonObject o) {
 }
 
 void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
+  o["board"] = s.board;
   o["apSsid"] = s.apSsid; o["apPass"] = includeSecrets ? s.apPass : "";
-  o["staSsid"] = s.staSsid; o["staPass"] = includeSecrets ? s.staPass : "";
+  JsonArray nets = o["networks"].to<JsonArray>();
+  for (auto& n : s.networks) {
+    JsonObject x = nets.add<JsonObject>();
+    x["ssid"] = n.ssid; x["pass"] = includeSecrets ? n.pass : ""; x["passSet"] = n.pass.length() > 0; x["priority"] = n.priority;
+  }
+  o["scanWhileApInUse"] = s.scanWhileApInUse;
+  o["ignitionPin"] = s.ignitionPin; o["ignitionActiveLow"] = s.ignitionActiveLow; o["sleepAfterMinutes"] = s.sleepAfterMinutes;
+  o["gpsRxPin"] = s.gpsRxPin; o["gpsTxPin"] = s.gpsTxPin; o["gpsBaud"] = s.gpsBaud;
   o["hostname"] = s.hostname; o["adminPass"] = includeSecrets ? s.adminPass : "";
   o["i2cSda"] = s.i2cSda; o["i2cScl"] = s.i2cScl; o["i2cKhz"] = s.i2cKhz;
   o["oneWirePin"] = s.oneWirePin; o["oneWireResolution"] = s.oneWireResolution;
@@ -227,12 +274,16 @@ void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
 
 void configToJson(const Config& c, JsonObject o, bool includeSecrets) {
   o["version"] = FW_VERSION;
+  o["schema"] = CONFIG_SCHEMA;
   systemToJson(c.sys, o["system"].to<JsonObject>(), includeSecrets);
   JsonArray sa = o["sensors"].to<JsonArray>();
   for (auto& s : c.sensors) sensorToJson(s, sa.add<JsonObject>());
   JsonArray ra = o["relays"].to<JsonArray>();
   for (auto& r : c.relays) relayToJson(r, ra.add<JsonObject>());
   weatherToJson(c.weather, o["weather"].to<JsonObject>());
+  turboToJson(c.turbo, o["turbo"].to<JsonObject>());
+  layoutToJson(c.layout, o["layout"].to<JsonObject>());
+  JsonObject bb = o["blackbox"].to<JsonObject>(); bb["enabled"] = c.blackbox.enabled; bb["keepEvents"] = c.blackbox.keepEvents;
   cloudToJson(c.cloud, o["cloud"].to<JsonObject>(), includeSecrets);
 }
 
@@ -250,6 +301,11 @@ static bool sensorFromJson(JsonObjectConst o, SensorConfig& s, String& err) {
   s.adsAddress = getI(o, "adsAddress", 0x48); s.adsChannel = getI(o, "adsChannel", 0);
   s.mcpAddress = getI(o, "mcpAddress", 0x67);
   s.bmpField = bmpFieldFromStr(getS(o, "bmpField", "temperature"));
+  s.i2cAddr = getI(o, "i2cAddr", 0); s.field = getS(o, "field", "");
+  s.pulsesPerRev = getF(o, "pulsesPerRev", 10); s.activeLow = getB(o, "activeLow", true);
+  s.shuntOhms = getF(o, "shuntOhms", 0.001f);
+  s.formula = getS(o, "formula", ""); s.srcA = getS(o, "srcA", ""); s.srcB = getS(o, "srcB", "");
+  s.curve = getS(o, "curve", ""); s.curve.trim();
   s.divider = getF(o, "divider", 1); s.inMin = getF(o, "inMin", 0); s.inMax = getF(o, "inMax", 1);
   s.outMin = getF(o, "outMin", 0); s.outMax = getF(o, "outMax", 1);
   s.faultLowV = getF(o, "faultLowV", NAN); s.faultHighV = getF(o, "faultHighV", NAN);
@@ -279,6 +335,33 @@ static bool sensorFromJson(JsonObjectConst o, SensorConfig& s, String& err) {
   if (s.type == SensorType::ADS1115) {
     if (s.adsAddress < 0x48 || s.adsAddress > 0x4B) { err = "Sensor '" + s.id + "': ADS1115 address must be 0x48-0x4B"; return false; }
     if (s.adsChannel > 3) { err = "Sensor '" + s.id + "': ADS1115 channel must be 0-3"; return false; }
+  }
+  auto oneOf = [&](const char* const* list, size_t n) { for (size_t k = 0; k < n; k++) if (s.field == list[k]) return true; return false; };
+  if (s.type == SensorType::GPS) {
+    static const char* const f[] = {"speed", "altitude", "sats", "heading", "hdop"};
+    if (!oneOf(f, 5)) { err = "Sensor '" + s.id + "': GPS field must be speed, altitude, sats, heading or hdop"; return false; }
+  }
+  if (s.type == SensorType::INA226) {
+    static const char* const f[] = {"current", "voltage", "power"};
+    if (!oneOf(f, 3)) { err = "Sensor '" + s.id + "': INA226 field must be current, voltage or power"; return false; }
+    if (!s.i2cAddr) s.i2cAddr = 0x40;
+    if (s.i2cAddr < 0x40 || s.i2cAddr > 0x4F) { err = "Sensor '" + s.id + "': INA226 address must be 0x40-0x4F"; return false; }
+    if (isnan(s.shuntOhms) || s.shuntOhms <= 0) { err = "Sensor '" + s.id + "': shunt resistance must be > 0"; return false; }
+  }
+  if (s.type == SensorType::IMU) {
+    if (s.field != "roll" && s.field != "pitch") { err = "Sensor '" + s.id + "': IMU field must be roll or pitch"; return false; }
+    if (!s.i2cAddr) s.i2cAddr = 0x68;
+    if (s.i2cAddr != 0x68 && s.i2cAddr != 0x69) { err = "Sensor '" + s.id + "': IMU address must be 0x68 or 0x69"; return false; }
+  }
+  if (s.type == SensorType::RPM && (isnan(s.pulsesPerRev) || s.pulsesPerRev <= 0)) { err = "Sensor '" + s.id + "': pulses per revolution must be > 0"; return false; }
+  if (s.type == SensorType::COMPUTED) {
+    static const char* const f[] = {"diff", "sum", "rate", "time_in_warn", "curve_margin"};
+    bool ok = false; for (auto x : f) if (s.formula == x) ok = true;
+    if (!ok) { err = "Sensor '" + s.id + "': formula must be diff, sum, rate, time_in_warn or curve_margin"; return false; }
+  }
+  if (s.curve.length()) {
+    std::vector<std::pair<float, float>> c;
+    if (!parseCurve(s.curve, c)) { err = "Sensor '" + s.id + "': curve must be 2-16 'x:y' pairs with rising x, e.g. 0.5:0,2.5:40,4.5:100"; return false; }
   }
   if (isnan(s.gaugeMin) || isnan(s.gaugeMax) || s.gaugeMax <= s.gaugeMin) { err = "Sensor '" + s.id + "': gauge max must be above gauge min"; return false; }
   if (isnan(s.smoothing) || s.smoothing <= 0 || s.smoothing > 1) s.smoothing = 1;
@@ -323,11 +406,37 @@ bool relaysFromJson(JsonVariantConst v, std::vector<RelayConfig>& out, String& e
 bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   if (!v.is<JsonObjectConst>()) { err = "Expected a system settings object"; return false; }
   JsonObjectConst o = v.as<JsonObjectConst>();
+  s.board = getS(o, "board", s.board); s.board.trim();
+  if (s.board != "auto" && !Board::find(s.board)) { err = "Unknown board '" + s.board + "' for this firmware (" + Board::chip() + ")"; return false; }
   s.apSsid = getS(o, "apSsid", s.apSsid);
   String p = getS(o, "apPass", ""); if (p.length()) s.apPass = p;
-  s.staSsid = getS(o, "staSsid", s.staSsid);
-  p = getS(o, "staPass", ""); if (p.length()) s.staPass = p;
-  if (s.staSsid.length() == 0) s.staPass = "";
+  if (o["networks"].is<JsonArrayConst>()) {
+    std::vector<WifiNetwork> nets;
+    for (JsonObjectConst x : o["networks"].as<JsonArrayConst>()) {
+      WifiNetwork n; n.ssid = getS(x, "ssid", ""); n.pass = getS(x, "pass", "");
+      n.priority = constrain(getI(x, "priority", 5), 1, 9);
+      if (!n.ssid.length()) continue;
+      if (n.ssid.length() > 32) { err = "Wi-Fi name '" + n.ssid + "' is longer than 32 characters"; return false; }
+      if (!n.pass.length()) for (auto& old : s.networks) if (old.ssid == n.ssid) n.pass = old.pass;   // blank = keep
+      if (n.pass.length() && n.pass.length() < 8) { err = "Password for '" + n.ssid + "' must be at least 8 characters (or empty for an open network)"; return false; }
+      nets.push_back(n);
+    }
+    if (nets.size() > MAX_WIFI_NETWORKS) { err = "At most " + String(MAX_WIFI_NETWORKS) + " Wi-Fi networks"; return false; }
+    s.networks = nets;
+  }
+  // v4 single network ("Also join network") becomes the first saved network
+  String legacy = getS(o, "staSsid", "");
+  if (legacy.length()) {
+    bool have = false; for (auto& n : s.networks) if (n.ssid == legacy) have = true;
+    if (!have && s.networks.size() < MAX_WIFI_NETWORKS) { WifiNetwork n; n.ssid = legacy; n.pass = getS(o, "staPass", ""); s.networks.push_back(n); }
+  }
+  s.staSsid = ""; s.staPass = "";
+  s.scanWhileApInUse = getB(o, "scanWhileApInUse", s.scanWhileApInUse);
+  s.ignitionPin = getI(o, "ignitionPin", s.ignitionPin); s.ignitionActiveLow = getB(o, "ignitionActiveLow", s.ignitionActiveLow);
+  s.sleepAfterMinutes = constrain(getI(o, "sleepAfterMinutes", s.sleepAfterMinutes), 0, 1440);
+  s.gpsRxPin = getI(o, "gpsRxPin", s.gpsRxPin); s.gpsTxPin = getI(o, "gpsTxPin", s.gpsTxPin);
+  s.gpsBaud = getI(o, "gpsBaud", s.gpsBaud);
+  if (s.gpsBaud != 4800 && s.gpsBaud != 9600 && s.gpsBaud != 19200 && s.gpsBaud != 38400 && s.gpsBaud != 57600 && s.gpsBaud != 115200) s.gpsBaud = 9600;
   s.hostname = getS(o, "hostname", s.hostname);
   p = getS(o, "adminPass", ""); if (p.length()) s.adminPass = p;
   s.i2cSda = getI(o, "i2cSda", s.i2cSda); s.i2cScl = getI(o, "i2cScl", s.i2cScl);
@@ -354,6 +463,72 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   static const char* oleds[] = {"none", "ssd1306_128x64", "sh1106_128x64", "ssd1327_128x128", "ssd1327_ws_128x128"};
   bool ok = false; for (auto t : oleds) if (s.oledType == t) ok = true;
   if (!ok) { err = "Unknown OLED type"; return false; }
+  return true;
+}
+
+// ---------------------------------------------------------------- curves
+bool parseCurve(const String& str, std::vector<std::pair<float, float>>& out) {
+  out.clear();
+  int start = 0;
+  while (start < (int)str.length()) {
+    int comma = str.indexOf(',', start);
+    String part = str.substring(start, comma < 0 ? str.length() : comma);
+    part.trim();
+    int colon = part.indexOf(':');
+    if (colon <= 0) return false;
+    char* e1; char* e2;
+    String xs = part.substring(0, colon), ys = part.substring(colon + 1);
+    float x = strtof(xs.c_str(), &e1), y = strtof(ys.c_str(), &e2);
+    if (*e1 || *e2 || isnan(x) || isnan(y)) return false;
+    if (!out.empty() && x <= out.back().first) return false;
+    out.push_back({x, y});
+    if (comma < 0) break;
+    start = comma + 1;
+  }
+  return out.size() >= 2 && out.size() <= 16;
+}
+
+float curveLookup(const std::vector<std::pair<float, float>>& c, float x) {
+  if (c.empty() || isnan(x)) return NAN;
+  if (x <= c.front().first) return c.front().second;
+  for (size_t i = 1; i < c.size(); i++)
+    if (x <= c[i].first) return c[i - 1].second + (x - c[i - 1].first) * (c[i].second - c[i - 1].second) / (c[i].first - c[i - 1].first);
+  return c.back().second;
+}
+
+// ---------------------------------------------------------------- turbo / layout
+void turboToJson(const TurboConfig& t, JsonObject o) {
+  o["enabled"] = t.enabled; o["egtId"] = t.egtId; putF(o, "safeEgt", t.safeEgt); o["minIdleSeconds"] = t.minIdleSeconds;
+  o["rpmId"] = t.rpmId; putF(o, "idleRpm", t.idleRpm); o["speedId"] = t.speedId; o["beep"] = t.beep;
+}
+bool turboFromJson(JsonVariantConst v, TurboConfig& t, String& err) {
+  if (!v.is<JsonObjectConst>()) { err = "Expected turbo timer settings"; return false; }
+  JsonObjectConst o = v.as<JsonObjectConst>();
+  t.enabled = getB(o, "enabled", t.enabled); t.egtId = getS(o, "egtId", t.egtId);
+  t.safeEgt = getF(o, "safeEgt", t.safeEgt); t.minIdleSeconds = constrain(getI(o, "minIdleSeconds", t.minIdleSeconds), 0, 900);
+  t.rpmId = getS(o, "rpmId", t.rpmId); t.idleRpm = getF(o, "idleRpm", t.idleRpm);
+  t.speedId = getS(o, "speedId", t.speedId); t.beep = getB(o, "beep", t.beep);
+  if (isnan(t.safeEgt) || t.safeEgt < 50 || t.safeEgt > 600) { err = "Safe EGT must be 50-600 °C"; return false; }
+  if (isnan(t.idleRpm)) t.idleRpm = 1000;
+  return true;
+}
+void layoutToJson(const LayoutConfig& l, JsonObject o) {
+  JsonArray t = o["tiles"].to<JsonArray>();
+  for (auto& x : l.tiles) { JsonObject j = t.add<JsonObject>(); j["id"] = x.id; j["size"] = x.size; j["widget"] = x.widget; }
+  JsonArray d = o["oled"].to<JsonArray>();
+  for (auto& x : l.oled) d.add(x);
+}
+bool layoutFromJson(JsonVariantConst v, LayoutConfig& l, String& err) {
+  if (!v.is<JsonObjectConst>()) { err = "Expected a layout"; return false; }
+  LayoutConfig n;
+  for (JsonObjectConst x : v["tiles"].as<JsonArrayConst>()) {
+    LayoutTile t; t.id = getS(x, "id", ""); t.size = constrain(getI(x, "size", 1), 1, 2); t.widget = getS(x, "widget", "bar");
+    if (t.widget != "number" && t.widget != "bar" && t.widget != "spark") t.widget = "bar";
+    if (t.id.length()) n.tiles.push_back(t);
+  }
+  for (JsonVariantConst x : v["oled"].as<JsonArrayConst>()) { String id = x.as<const char*>() ? x.as<const char*>() : ""; if (id.length()) n.oled.push_back(id); }
+  if (n.tiles.size() > 64 || n.oled.size() > 64) { err = "Layout too long"; return false; }
+  l = n;
   return true;
 }
 
@@ -389,6 +564,7 @@ bool weatherFromJson(JsonVariantConst v, WeatherConfig& w, String& err) {
 void cloudToJson(const CloudConfig& c, JsonObject o, bool includeSecrets) {
   o["enabled"] = c.enabled; o["protocol"] = c.protocol; o["intervalMs"] = c.intervalMs;
   o["uploadEverySec"] = c.uploadEverySec; o["bufferKB"] = c.bufferKB; o["onlyEngineRunning"] = c.onlyEngineRunning;
+  o["sendSystem"] = c.sendSystem;
   o["zbxServer"] = c.zbxServer; o["zbxPort"] = c.zbxPort; o["zbxHost"] = c.zbxHost; o["zbxPacked"] = c.zbxPacked;
   o["zbxPskIdentity"] = c.zbxPskIdentity; o["zbxPsk"] = includeSecrets ? c.zbxPsk : "";
   o["zbxPskSet"] = c.zbxPsk.length() > 0;
@@ -405,6 +581,7 @@ bool cloudFromJson(JsonVariantConst v, CloudConfig& c, String& err) {
   c.uploadEverySec = constrain(getI(o, "uploadEverySec", c.uploadEverySec), 10, 3600);
   c.bufferKB = constrain(getI(o, "bufferKB", c.bufferKB), 16, 400);
   c.onlyEngineRunning = getB(o, "onlyEngineRunning", c.onlyEngineRunning);
+  c.sendSystem = getB(o, "sendSystem", c.sendSystem);
   c.zbxServer = getS(o, "zbxServer", c.zbxServer); c.zbxServer.trim();
   c.zbxPort = constrain(getI(o, "zbxPort", c.zbxPort), 1, 65535);
   c.zbxHost = getS(o, "zbxHost", c.zbxHost); c.zbxHost.trim();
@@ -441,19 +618,20 @@ bool configFromJson(JsonVariantConst v, Config& out, String& err) {
   if (!v["relays"].isNull() && !relaysFromJson(v["relays"], tmp.relays, err)) return false;
   if (!v["weather"].isNull() && !weatherFromJson(v["weather"], tmp.weather, err)) return false;
   if (!v["cloud"].isNull() && !cloudFromJson(v["cloud"], tmp.cloud, err)) return false;
+  if (!v["turbo"].isNull() && !turboFromJson(v["turbo"], tmp.turbo, err)) return false;
+  if (!v["layout"].isNull() && !layoutFromJson(v["layout"], tmp.layout, err)) return false;
+  if (v["blackbox"].is<JsonObjectConst>()) {
+    tmp.blackbox.enabled = v["blackbox"]["enabled"] | tmp.blackbox.enabled;
+    tmp.blackbox.keepEvents = constrain((int)(v["blackbox"]["keepEvents"] | (int)tmp.blackbox.keepEvents), 1, 30);
+  }
   if (!validateConfig(tmp, err)) return false;
   out = tmp;
   return true;
 }
 
 // ---------------------------------------------------------------- validation
-// ESP32 (WROOM/WROVER) GPIO facts:
-//  6-11 = flash, 20/24/28-31 don't exist, 34-39 are input only,
-//  0 and 12 are boot straps that break booting if driven wrong.
-//  Only ADC1 (32-39) works while Wi-Fi is on.
-static bool pinExists(int p) { return p >= 0 && p <= 39 && !(p >= 6 && p <= 11) && p != 20 && p != 24 && !(p >= 28 && p <= 31); }
-static bool pinCanOutput(int p) { return pinExists(p) && p < 34 && p != 0 && p != 12; }
-static bool pinIsAdc1(int p) { return p >= 32 && p <= 39; }
+// Pin rules come from the board profile (Board.cpp): which GPIOs exist on the
+// module, which may drive outputs, and which are ADC1 (works with Wi-Fi on).
 
 namespace {
 struct PinBook {
@@ -474,11 +652,15 @@ struct PinBook {
 }
 
 bool validateConfig(const Config& c, String& err) {
+  const BoardProfile& board = Board::resolve(c.sys.board);
+  auto pinExists = [&](int p) { return Board::has(board.valid, p); };
+  auto pinCanOutput = [&](int p) { return Board::has(board.output, p); };
+  auto pinIsAdc1 = [&](int p) { return Board::has(board.adc1, p); };
   PinBook pb;
   const SystemConfig& s = c.sys;
   auto needOut = [&](int pin, const String& what) -> bool {
     if (pin < 0) return true;
-    if (!pinCanOutput(pin)) { err = what + ": GPIO " + String(pin) + " can't be used as an output (use 2-5, 13-19, 21-23, 25-27, 32-33)"; return false; }
+    if (!pinCanOutput(pin)) { err = what + ": GPIO " + String(pin) + " can't be used as an output on " + String(board.name) + " (use " + Board::pinList(board.output) + ")"; return false; }
     return true;
   };
   if (!needOut(s.i2cSda, "I2C SDA") || !needOut(s.i2cScl, "I2C SCL") || !needOut(s.oneWirePin, "1-Wire") ||
@@ -495,15 +677,47 @@ bool validateConfig(const Config& c, String& err) {
     String who = "sensor '" + x.id + "'";
     switch (x.type) {
       case SensorType::ADC:
-        if (!pinIsAdc1(x.pin)) { err = "Sensor '" + x.id + "': analog pin must be GPIO 32-39 (ADC1; ADC2 stops working with Wi-Fi)"; return false; }
+        if (!pinIsAdc1(x.pin)) { err = "Sensor '" + x.id + "': analog pin must be an ADC1 pin on this board (GPIO " + Board::pinList(board.adc1) + "; ADC2 stops working with Wi-Fi)"; return false; }
         if (!pb.add(x.pin, who)) { err = pb.err; return false; }
         break;
       case SensorType::MAX6675:
         if (!pinCanOutput(x.pin) || !pinCanOutput(x.sckPin) || !pinExists(x.soPin)) { err = "Sensor '" + x.id + "': set valid SCK, CS and SO pins"; return false; }
         if (!pb.add(x.pin, who + " CS") || !pb.add(x.sckPin, who + " SCK", "max6675_sck") || !pb.add(x.soPin, who + " SO", "max6675_so")) { err = pb.err; return false; }
         break;
+      case SensorType::RPM:
+        if (!pinExists(x.pin)) { err = "Sensor '" + x.id + "': choose the GPIO the RPM signal is wired to"; return false; }
+        if (!pb.add(x.pin, who)) { err = pb.err; return false; }
+        break;
+      case SensorType::SWITCH:
+        if (!pinExists(x.pin)) { err = "Sensor '" + x.id + "': choose the switch input GPIO"; return false; }
+        if (!pb.add(x.pin, who)) { err = pb.err; return false; }
+        break;
       default: break;  // 1-Wire / I2C devices share the buses
     }
+  }
+  // computed sensors must reference existing sensors (and not themselves)
+  for (auto& x : c.sensors) {
+    if (x.type != SensorType::COMPUTED || !x.enabled) continue;
+    auto exists = [&](const String& id) { if (id == x.id) return false; for (auto& y : c.sensors) if (y.id == id) return true; return false; };
+    bool needB = x.formula == "diff" || x.formula == "sum" || x.formula == "curve_margin";
+    if (!exists(x.srcA) || (needB && !exists(x.srcB))) { err = "Sensor '" + x.id + "': pick the sensor(s) it is computed from"; return false; }
+    if (x.formula == "curve_margin" && !x.curve.length()) { err = "Sensor '" + x.id + "': enter the curve (e.g. 800:10,2000:25,3500:40)"; return false; }
+  }
+  if (s.ignitionPin >= 0) {
+    if (!pinExists(s.ignitionPin)) { err = "Ignition sense: GPIO " + String(s.ignitionPin) + " doesn't exist on this board"; return false; }
+    if (s.sleepAfterMinutes && !Board::has(board.rtc, s.ignitionPin)) { err = "Ignition sense: to wake from sleep, use an RTC GPIO (" + Board::pinList(board.rtc) + ")"; return false; }
+    if (!pb.add(s.ignitionPin, "ignition sense")) { err = pb.err; return false; }
+  }
+  if (s.gpsRxPin >= 0 || s.gpsTxPin >= 0) {
+    if (!pinExists(s.gpsRxPin)) { err = "GPS: set the RX pin (wired to the GPS TX)"; return false; }
+    if (s.gpsTxPin >= 0 && !pinCanOutput(s.gpsTxPin)) { err = "GPS: TX pin can't be an output"; return false; }
+    if (!pb.add(s.gpsRxPin, "GPS RX") || !pb.add(s.gpsTxPin, "GPS TX")) { err = pb.err; return false; }
+  }
+  if (c.turbo.enabled) {
+    auto exists = [&](const String& id) { for (auto& y : c.sensors) if (y.id == id) return true; return false; };
+    if (!exists(c.turbo.egtId)) { err = "Turbo timer: EGT sensor '" + c.turbo.egtId + "' does not exist"; return false; }
+    if (c.turbo.rpmId.length() && !exists(c.turbo.rpmId)) { err = "Turbo timer: RPM sensor does not exist"; return false; }
+    if (c.turbo.speedId.length() && !exists(c.turbo.speedId)) { err = "Turbo timer: speed sensor does not exist"; return false; }
   }
   for (auto& r : c.relays) {
     if (ids.count(r.id)) { err = "Duplicate id '" + r.id + "'"; return false; }
@@ -539,19 +753,38 @@ static bool initCfgPartition() {
   return true;
 }
 
-bool loadConfig(Config& c) {
+static uint32_t sWrites = 0;
+uint32_t configWriteCount() { return sWrites; }
+static const char* slotKey(CfgSlot s) { return s == CfgSlot::PREVIOUS ? "prev" : s == CfgSlot::GOOD ? "good" : "cfg"; }
+
+static String readSlot(Preferences& prefs, const char* key) {
+  size_t len = prefs.getBytesLength(key);
+  if (!len) return String();
+  std::unique_ptr<char[]> buf(new char[len + 1]);
+  prefs.getBytes(key, buf.get(), len);
+  buf[len] = 0;
+  return String(buf.get());
+}
+
+bool hasConfigSlot(CfgSlot slot) {
+  Preferences prefs;
+  if (!initCfgPartition() || !prefs.begin(NVS_NS, true, NVS_PART)) return false;
+  bool has = prefs.getBytesLength(slotKey(slot)) > 0;
+  prefs.end();
+  return has;
+}
+
+bool loadConfig(Config& c, CfgSlot slot) {
   configDefaults(c);
   Preferences prefs;
   if (!initCfgPartition() || !prefs.begin(NVS_NS, true, NVS_PART)) { Serial.println("[cfg] no saved config, using defaults"); return false; }
-  size_t len = prefs.getBytesLength("cfg");
-  if (len == 0) { prefs.end(); Serial.println("[cfg] no saved config, using defaults"); return false; }
-  std::unique_ptr<char[]> buf(new char[len + 1]);
-  prefs.getBytes("cfg", buf.get(), len);
-  buf[len] = 0;
+  String json = readSlot(prefs, slotKey(slot));
   prefs.end();
+  if (!json.length()) { Serial.printf("[cfg] no saved '%s' config, using defaults\n", slotKey(slot)); return false; }
 
   JsonDocument doc;
-  if (deserializeJson(doc, buf.get(), len)) { Serial.println("[cfg] saved config corrupt, using defaults"); return false; }
+  if (deserializeJson(doc, json)) { Serial.println("[cfg] saved config corrupt, using defaults"); return false; }
+  int schema = doc["schema"] | 1;   // v4 configs have no schema field: upgraded by filling new settings with defaults
   // Start from defaults for the system block so new settings get sane values,
   // but take sensor/relay lists exactly as saved.
   Config tmp; configDefaults(tmp);
@@ -562,20 +795,39 @@ bool loadConfig(Config& c) {
     return false;
   }
   c = tmp;
-  Serial.printf("[cfg] loaded: %u sensors, %u relays\n", (unsigned)c.sensors.size(), (unsigned)c.relays.size());
+  Serial.printf("[cfg] loaded '%s' (schema %d): %u sensors, %u relays\n", slotKey(slot), schema, (unsigned)c.sensors.size(), (unsigned)c.relays.size());
   return true;
 }
 
-bool saveConfig(const Config& c) {
+static String configString(const Config& c) {
   JsonDocument doc;
   configToJson(c, doc.to<JsonObject>(), true);
   String out;
   serializeJson(doc, out);
+  return out;
+}
+
+bool saveConfig(const Config& c) {
+  String out = configString(c);
   Preferences prefs;
   if (!initCfgPartition() || !prefs.begin(NVS_NS, false, NVS_PART)) { Serial.println("[cfg] NVS open failed"); return false; }
+  String old = readSlot(prefs, "cfg");
+  if (old == out) { prefs.end(); return true; }          // unchanged: no flash write
+  if (old.length()) { prefs.putBytes("prev", old.c_str(), old.length()); sWrites++; }
   size_t n = prefs.putBytes("cfg", out.c_str(), out.length());
+  sWrites++;
   prefs.end();
   bool ok = n == out.length();
   Serial.printf("[cfg] save %s (%u bytes)\n", ok ? "ok" : "FAILED", (unsigned)out.length());
   return ok;
+}
+
+bool markConfigGood() {
+  Preferences prefs;
+  if (!initCfgPartition() || !prefs.begin(NVS_NS, false, NVS_PART)) return false;
+  String cur = readSlot(prefs, "cfg");
+  bool changed = cur.length() && cur != readSlot(prefs, "good");
+  if (changed) { prefs.putBytes("good", cur.c_str(), cur.length()); sWrites++; Serial.println("[cfg] current config marked good"); }
+  prefs.end();
+  return changed;
 }

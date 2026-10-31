@@ -113,7 +113,11 @@ All the P0/P1 items in `v3-architecture-review.md` were addressed:
 
 ---
 
-## 3. v5 – designed, not started
+## 3. v5 – phases 0 and 1 built (31 Oct 2026)
+
+Commit `c7c6287` on the `v4` branch builds backlog items 1–14. See `v5-status.md` for the per-item status, test results, and a bench test checklist. Decisions: support core 2.0.17 **and** 3.x; test on the current ESP32 now and an ESP32-S3 later; do **multi-board (phase 3) before the touch display (phase 2)**. Phases 2 and 3 are not started.
+
+### Original v5 design
 
 See `v5-design-and-backlog.md`. The headline decisions:
 
@@ -156,7 +160,7 @@ See `v5-design-and-backlog.md`. The headline decisions:
    ```
    The bundle now also contains this `docs/` folder (commit 6).
 2. **Test v4 on the real board**, using the "not yet tested" list above.
-3. **Answer the v5 open questions**, then start phase 0.
+3. **Bench-test v5** with the checklist in `v5-status.md`, then start phase 3 (multi-board).
 
 ---
 
@@ -165,5 +169,5 @@ See `v5-design-and-backlog.md`. The headline decisions:
 1. **Push v4** (step 1 above) so the code and these docs are on GitHub. If that isn't possible, keep `carmetrics-handoff.zip`.
 2. **Start a new chat or project** and attach `docs/HANDOFF.md` and `docs/v5-design-and-backlog.md` (or the whole zip).
 3. **Use a starting prompt like:**
-   > This is my CarMetrics ESP32 project (repo github.com/rassiek/carmetricsbox, branch v4). Read HANDOFF.md and v5-design-and-backlog.md. My answers to the open questions are: … Let's start v5 phase 0. Discuss before building.
+   > This is my CarMetrics ESP32 project (repo github.com/rassiek/carmetricsbox, branch v4). Read HANDOFF.md, v5-design-and-backlog.md and v5-status.md. Phases 0 and 1 are built; my bench-test results are: … Let's plan phase 3 (multi-board). Discuss before building.
 4. **For builds and tests**, the new session needs the source. Either connect GitHub so it can clone the repo, or attach `carmetrics-v4-source.zip`. The dev toolchain is reproduced by `devenv/setup-toolchain.sh` or the Dockerfile.

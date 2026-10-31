@@ -22,7 +22,9 @@ def an(i, n, u, pin, div, i0, i1, o0, o1, **kw):
 
 cfg = {
     "version": "4.0.0",
-    "system": dict(apSsid="CarMetrics", apPass="", staSsid="", staPass="", hostname="carmetrics", adminPass="",
+    "system": dict(board="auto", apSsid="CarMetrics", apPass="", hostname="carmetrics", adminPass="",
+                   networks=[dict(ssid="Phone", **{"pass": ""}, passSet=True, priority=8)], scanWhileApInUse=True,
+                   ignitionPin=-1, ignitionActiveLow=True, sleepAfterMinutes=0, gpsRxPin=-1, gpsTxPin=-1, gpsBaud=9600,
                    i2cSda=21, i2cScl=22, oneWirePin=4, oneWireResolution=11, oledType="ssd1327_128x128", oledFlip=False,
                    oledClock=True, oledPageSeconds=4, oledContrast=255, buzzerPin=18, buzzerActiveLow=False, ledPin=19,
                    ledActiveLow=False, engineSensorId="bat_voltage", engineRunningAbove=13.2, engineDelaySeconds=5,
@@ -45,6 +47,9 @@ cfg = {
     "cloud": dict(enabled=False, protocol="zabbix", intervalMs=60000, uploadEverySec=60, bufferKB=256, onlyEngineRunning=True,
                   zbxServer="", zbxPort=10051, zbxHost="carmetrics", zbxPacked=True, zbxPskIdentity="", zbxPsk="", zbxPskSet=False,
                   influxUrl="", influxAuth="", influxAuthSet=False, influxMeasurement="carmetrics"),
+    "turbo": dict(enabled=True, egtId="egt", safeEgt=200, minIdleSeconds=60, rpmId="", idleRpm=1000, speedId="", beep=True),
+    "layout": dict(tiles=[], oled=[]),
+    "blackbox": dict(enabled=True, keepEvents=10),
     "relays": [dict(id="relay1", name="Relay 1", pin=26, mode="on_off", activeLow=True, defaultOn=False, blinkMs=500, enabled=True),
                dict(id="relay2", name="Fog lights", pin=27, mode="blink", activeLow=True, defaultOn=False, blinkMs=500, enabled=True)],
 }
@@ -87,6 +92,9 @@ def state():
             e["volts"] = round(s["inMin"] + (v - s["outMin"]) * (s["inMax"] - s["inMin"]) / (s["outMax"] - s["outMin"]), 3)
         out["sensors"][s["id"]] = e
     out["level"] = worst
+    egt = out["sensors"].get("egt", {}).get("v")
+    if cfg["turbo"]["enabled"] and egt is not None:
+        out["turbo"] = {"phase": "cooling" if egt > cfg["turbo"]["safeEgt"] else "ok", "leftS": 25, "safe": cfg["turbo"]["safeEgt"], "egt": round(egt)}
     out["muted"] = time.time() < muted_until
     if out["muted"]: out["muteLeftS"] = int(muted_until - time.time())
     return out
@@ -119,6 +127,8 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         global rev
         p = self.path.split("?")[0]
+        if p == "/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
+            return self.websocket()
         if p == "/events":
             self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.send_header("Cache-Control", "no-cache")
             self.end_headers()
@@ -135,6 +145,36 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/info": return self.send_json(200, dict(version="4.0.0", build="Oct 30 2026", uptimeS=int(time.time() - T0) + 3700, heapFree=180000, heapMin=150000,
                 fsUsed=60000, fsTotal=589824, sketchSize=1037125, sketchFree=1703936, apSsid="CarMetrics", apIp="192.168.4.1", staSsid="", ip="",
                 rssi=0, hostname="carmetrics", stationHpa=834.2, seaLevelHpa=1016.4, seaLevelSource="weather: Nairobi", internet=True, ntp=True, bmp="BMP180", oled="ok", timeSynced=True, resetReason=1, sseClients=1))
+        if p == "/api/v2/board":
+            r = lambda a, b: list(range(a, b + 1))
+            valid = [x for x in r(0, 39) if x not in r(6, 11) + [20, 24] + r(28, 31)]
+            dev = dict(id="esp32_devkit", name="ESP32 DevKit (WROOM-32, 4 MB)", chip="esp32", flashMB=4, psramMB=0, valid=valid,
+                       output=[x for x in valid if x < 34 and x not in (0, 12)], adc1=r(32, 39), caution=[1, 2, 3, 5, 15],
+                       defaults=dict(i2cSda=21, i2cScl=22, oneWirePin=4, buzzerPin=18, ledPin=19, egtSck=5, egtCs=17, egtSo=16),
+                       notes="Your current board. GPIO34-39 are input only. Analog inputs: GPIO32-39.")
+            wro = dict(dev, id="esp32_wrover", name="ESP32 WROVER (4-8 MB flash, PSRAM)", psramMB=8, notes="GPIO16/17 are used by the PSRAM.")
+            return self.send_json(200, dict(chip="esp32", setting=cfg["system"].get("board", "auto"), detected="esp32_devkit", current=dev, profiles=[dev, wro]))
+        if p == "/api/v2/system":
+            up = int(time.time() - T0) + 3700
+            return self.send_json(200, dict(chip=dict(model="ESP32-D0WD-V3", revision=3, cores=2, mhz=240, flashMB=4, psramKB=0, target="esp32", tempC=48.5),
+                board=dict(id="esp32_devkit", name="ESP32 DevKit (WROOM-32, 4 MB)", setting="auto"),
+                firmware=dict(version="5.0.0-dev", build="Oct 31 2026", core="2.0.17", idf="v4.4.7", slot="app0", state="confirmed", rollbackAvailable=True, sketchKB=1255, slotKB=1664),
+                uptime=dict(s=up, boots=42, resetReason="power on", history=["power on", "restart", "power on", "low voltage (brown-out)"]),
+                safeMode=False, crashCount=0, memory=dict(free=182000, min=151000, largest=110592, psramFree=0, fsUsed=60000, fsTotal=589824),
+                cpu=[18, 9], loop=dict(avgUs=840, maxUs=6200), tasks=[dict(name="loop", stackFree=4920), dict(name="oled", stackFree=2810), dict(name="net", stackFree=7400)],
+                wifi=dict(connected=True, ssid="Phone", rssi=-61, channel=6, apClients=1), flash=dict(configWrites=1, bufferWrites=0, bufferKB=0),
+                clients=dict(events=1, websocket=0)))
+        if p == "/api/blackbox":
+            return self.send_json(200, dict(enabled=True, keep=10, events=[dict(seq=3, bytes=5200, epoch=int(time.time()) - 3600, uptimeS=1820, reason="coolant_temp warn"),
+                                                                        dict(seq=2, bytes=5100, epoch=0, uptimeS=640, reason="hot shutdown: EGT 412 C")]))
+        if p == "/api/blackbox/event":
+            ids = [x["id"] for x in cfg["sensors"] if x["enabled"]]
+            rows = [[round(95 + 0.25 * k + (0.5 if i == 0 else i), 2) if i < 8 else None for i in range(len(ids))] for k in range(61)]
+            return self.send_json(200, dict(seq=3, epoch=int(time.time()) - 3600, uptimeS=1820, reason="coolant_temp warn", interval=1, before=30, ids=ids, rows=rows))
+        if p == "/api/v2/points":
+            st = state()
+            pts = [dict(a="local." + s["id"], k="sensor", n=s["name"], u=s["unit"], v=st["sensors"][s["id"]]["v"]) for s in cfg["sensors"]]
+            return self.send_json(200, dict(board="local", rev=rev, points=pts))
         if p == "/api/weather":
             mk = lambda n, t, msl, sfc, el: dict(name=n, time="2026-10-31T11:45", code=2, temp=t, feels=t-1, rh=55, precip=0.0, cloud=40, msl=msl, sfc=sfc, wind=14, windDir=60, gust=28, elevation=el)
             return self.send_json(200, dict(enabled=True, sta=True, ageS=240, error="", seaLevel=dict(hpa=1016.4, source="weather", town="Nairobi"),
@@ -156,6 +196,46 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", ct + ("; charset=utf-8" if "text" in ct or "javascript" in ct else "")); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
         else:
             self.send_json(404, {"ok": False, "message": "Not found"})
+    # Minimal WebSocket (RFC 6455) like the ESP32's /ws: state every second, commands answered with an ack.
+    def websocket(self):
+        global muted_until
+        import hashlib, struct
+        key = self.headers["Sec-WebSocket-Key"]
+        acc = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        self.send_response(101); self.send_header("Upgrade", "websocket"); self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", acc); self.end_headers()
+        wlock = threading.Lock(); alive = [True]
+        def send(obj):
+            b = json.dumps(obj).encode()
+            hdr = bytes([0x81, len(b)]) if len(b) < 126 else bytes([0x81, 126]) + struct.pack(">H", len(b)) if len(b) < 65536 else bytes([0x81, 127]) + struct.pack(">Q", len(b))
+            with wlock: self.wfile.write(hdr + b); self.wfile.flush()
+        def reader():
+            try:
+                while alive[0]:
+                    h = self.rfile.read(2)
+                    if len(h) < 2: break
+                    op, n = h[0] & 15, h[1] & 127
+                    if n == 126: n = struct.unpack(">H", self.rfile.read(2))[0]
+                    elif n == 127: n = struct.unpack(">Q", self.rfile.read(8))[0]
+                    mask = self.rfile.read(4); data = bytes(c ^ mask[i % 4] for i, c in enumerate(self.rfile.read(n)))
+                    if op == 8: break
+                    if op != 1: continue
+                    m = json.loads(data)
+                    if m.get("type") == "cmd" and m.get("cmd") == "mute":
+                        mins = m.get("minutes", 5); muted_until = time.time() + 60 * mins if mins > 0 else 0
+                        send({"type": "ack", "id": m.get("id", 0), "ok": True})
+                    else: send({"type": "ack", "id": m.get("id", 0), "ok": False, "message": "Password required"})
+            except Exception: pass
+            alive[0] = False
+        threading.Thread(target=reader, daemon=True).start()
+        try:
+            send({"type": "hello", "board": "local", "fw": "5.0.0-dev", "rev": rev})
+            while alive[0]:
+                send(state()); time.sleep(1)
+        except Exception: pass
+        alive[0] = False
+        self.close_connection = True
+
     def do_POST(self):
         global rev, muted_until
         p = self.path.split("?")[0]
@@ -165,6 +245,11 @@ class H(BaseHTTPRequestHandler):
             muted_until = time.time() + j.get("minutes", 5) * 60 if j.get("minutes", 5) > 0 else 0
             return self.send_json(200, {"ok": True, "message": "Muted"})
         if p == "/api/time": return self.send_json(200, {"ok": True, "message": "Time set"})
+        if p == "/api/v2/command":
+            j = (j or {})
+            if j.get("cmd") == "mute":
+                muted_until = time.time() + 60 * j.get("minutes", 5) if j.get("minutes", 5) > 0 else 0
+                return self.send_json(200, {"ok": True, "message": "ok"})
         if p == "/api/onewire/scan": return self.send_json(202, {"ok": True, "message": "Scanning"})
         if not self.authed(): return
         with lock:
@@ -184,6 +269,11 @@ class H(BaseHTTPRequestHandler):
                     cfg["system"][k] = v
                 rev += 1
                 return self.send_json(200, {"ok": True, "message": "System settings saved"})
+            if p in ("/api/config/turbo", "/api/config/layout"):
+                k = p.rsplit("/", 1)[1]; cfg[k] = j; rev += 1
+                return self.send_json(200, {"ok": True, "message": ("Turbo timer" if k == "turbo" else "Layout") + " saved"})
+            if p == "/api/blackbox/clear":
+                return self.send_json(200, {"ok": True, "message": "Recordings deleted"})
             if p in ("/api/config/weather", "/api/config/cloud"):
                 k = p.rsplit("/", 1)[1]
                 for kk, v in j.items():
@@ -191,6 +281,13 @@ class H(BaseHTTPRequestHandler):
                     cfg[k][kk] = v
                 rev += 1
                 return self.send_json(200, {"ok": True, "message": k.title() + " settings saved"})
+            if p == "/api/v2/board":
+                cfg["system"]["board"] = (j or {}).get("board", "auto"); rev += 1
+                return self.send_json(200, {"ok": True, "message": "Board saved"})
+            if p == "/api/v2/config/restore":
+                return self.send_json(200, {"ok": True, "message": "Restored the previous configuration"})
+            if p == "/api/v2/safemode/leave":
+                return self.send_json(200, {"ok": True, "message": "Leaving safe mode. Rebooting...", "reboot": True})
             if p == "/api/altitude/calibrate":
                 return self.send_json(200, {"ok": True, "message": "Sea-level reference set to 1014.9 hPa"})
             if p in ("/api/cloud/flush", "/api/cloud/clear"):

@@ -1,8 +1,10 @@
 #include "Display.h"
+#include "Health.h"
 #include "State.h"
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <time.h>
+#include <algorithm>
 
 namespace {
 
@@ -14,6 +16,7 @@ struct Item {
   float frac;          // bar fill 0..1, NAN = no value
   float ticks[4];      // threshold positions 0..1, NAN = none
   uint8_t level;
+  bool pageBreak = false;   // layout: start a new page here
 };
 
 struct Snapshot {
@@ -24,6 +27,9 @@ struct Snapshot {
   uint16_t pageSeconds = 4;
   bool timeSynced = false;
   int tzOffset = 0;
+  uint8_t turboPhase = TURBO_OFF, overall = LVL_OK;
+  int32_t turboLeft = 0;
+  float turboEgt = NAN, turboSafe = 0;
 };
 
 volatile bool reconfigureRequested = true;
@@ -47,11 +53,30 @@ void takeSnapshot(Snapshot& s) {
   s.pageSeconds = gConfig.sys.oledPageSeconds;
   s.timeSynced = gSys.timeSynced;
   s.tzOffset = gConfig.sys.tzOffsetMinutes;
-  for (size_t i = 0; i < gConfig.sensors.size() && i < gSensorRt.size(); i++) {
+  s.turboPhase = gSys.turbo.phase; s.turboLeft = gSys.turbo.leftS; s.turboEgt = gSys.turbo.egt;
+  s.turboSafe = gConfig.turbo.safeEgt; s.overall = gSys.overallLevel;
+  // Order: the OLED layout if one is set ("|" = page break), otherwise the sensor list.
+  std::vector<int> order;
+  std::vector<bool> breakBefore;
+  if (gConfig.layout.oled.empty()) {
+    for (size_t i = 0; i < gConfig.sensors.size(); i++) { order.push_back(i); breakBefore.push_back(false); }
+  } else {
+    bool brk = false;
+    for (auto& id : gConfig.layout.oled) {
+      if (id == "|") { brk = true; continue; }
+      int i = findSensorIndex(id);
+      if (i < 0) continue;
+      order.push_back(i); breakBefore.push_back(brk); brk = false;
+    }
+  }
+  for (size_t k = 0; k < order.size(); k++) {
+    size_t i = order[k];
+    if (i >= gSensorRt.size()) continue;
     const SensorConfig& c = gConfig.sensors[i];
     const SensorRuntime& r = gSensorRt[i];
     if (!c.enabled || c.oledStyle == OledStyle::OFF) continue;
     Item it;
+    it.pageBreak = breakBefore[k];
     String lbl = c.oledLabel.length() ? c.oledLabel : c.name.substring(0, 3);
     strlcpy(it.label, lbl.c_str(), sizeof(it.label));
     it.unit[0] = 0; it.unit[1] = 0;
@@ -200,27 +225,57 @@ void render(const Snapshot& s, uint32_t now) {
     return;
   }
 
-  // Build the list of cells: optional clock + text items, then bars.
+  // Turbo cool-down screen (unless an alarm needs the normal pages)
+  if (s.turboPhase != TURBO_OFF && s.overall < LVL_WARN) {
+    bool ok = s.turboPhase == TURBO_OK;
+    oled->setCursor(0, large ? 14 : 11); oled->print(ok ? "TURBO: OK to stop" : "TURBO cooling");
+    oled->setFont(large ? u8g2_font_logisoso32_tn : u8g2_font_logisoso22_tn);
+    char b[12];
+    if (isnan(s.turboEgt)) strcpy(b, "--"); else snprintf(b, sizeof(b), "%d", (int)s.turboEgt);
+    oled->setCursor(0, large ? 60 : 42); oled->print(b);
+    oled->setFont(large ? u8g2_font_7x13_tr : u8g2_font_6x10_tr);
+    oled->print(" C");
+    oled->setCursor(0, large ? 82 : 60);
+    if (!ok && s.turboLeft > 0) { oled->print("wait "); oled->print(s.turboLeft); oled->print(" s"); }
+    else if (!ok) { oled->print("until < "); oled->print((int)s.turboSafe); oled->print(" C"); }
+    else oled->print("switch off now");
+    oled->sendBuffer();
+    return;
+  }
+
+  // Segments (layout page breaks), each: optional clock + text items, then bars.
+  int textH = large ? 14 : 10, barH = large ? 17 : 11;
+  size_t cols = large ? 2 : 3;  // 128 px wide: 2 roomy columns on the tall screen, 3 on 128x64
   std::vector<Item> texts, bars;
+  std::vector<Row> rows;
+  std::vector<size_t> forcedBreaks;   // row index where a new page must start
+  auto flushSegment = [&](std::vector<Item>& t, std::vector<Item>& b) {
+    if (!rows.empty()) forcedBreaks.push_back(rows.size());
+    size_t t0 = texts.size(), b0 = bars.size();
+    texts.insert(texts.end(), t.begin(), t.end()); bars.insert(bars.end(), b.begin(), b.end());
+    for (size_t i = t0; i < texts.size(); i += cols) rows.push_back({false, (int)i, (int)min(texts.size(), i + cols), textH});
+    for (size_t i = b0; i < bars.size(); i++) rows.push_back({true, (int)i, (int)i + 1, barH});
+    t.clear(); b.clear();
+  };
+  std::vector<Item> segT, segB;
   if (s.clock && s.timeSynced) {
     Item c{}; time_t t = time(nullptr) + s.tzOffset * 60; struct tm tm; gmtime_r(&t, &tm);
     snprintf(c.value, sizeof(c.value), "%02d:%02d", tm.tm_hour, tm.tm_min);
     c.label[0] = 0; c.style = OledStyle::TEXT; c.level = LVL_OK; c.frac = NAN;
-    texts.push_back(c);
+    segT.push_back(c);
   }
-  for (auto& it : s.items) (it.style == OledStyle::BAR ? bars : texts).push_back(it);
-
-  int textH = large ? 14 : 10, barH = large ? 17 : 11;
-  std::vector<Row> rows;
-  size_t cols = large ? 2 : 3;  // 128 px wide: 2 roomy columns on the tall screen, 3 on 128x64
-  for (size_t i = 0; i < texts.size(); i += cols) rows.push_back({false, (int)i, (int)min(texts.size(), i + cols), textH});
-  for (size_t i = 0; i < bars.size(); i++) rows.push_back({true, (int)i, (int)i + 1, barH});
+  for (auto& it : s.items) {
+    if (it.pageBreak && (!segT.empty() || !segB.empty())) flushSegment(segT, segB);
+    (it.style == OledStyle::BAR ? segB : segT).push_back(it);
+  }
+  flushSegment(segT, segB);
 
   // Paginate
   std::vector<std::pair<size_t, size_t>> pages;
   size_t start = 0; int used = 0;
   for (size_t r = 0; r < rows.size(); r++) {
-    if (used + rows[r].h > H && r > start) { pages.push_back({start, r}); start = r; used = 0; }
+    bool forced = std::find(forcedBreaks.begin(), forcedBreaks.end(), r) != forcedBreaks.end();
+    if ((forced || used + rows[r].h > H) && r > start) { pages.push_back({start, r}); start = r; used = 0; }
     used += rows[r].h;
   }
   pages.push_back({start, rows.size()});
@@ -254,6 +309,7 @@ void render(const Snapshot& s, uint32_t now) {
 }
 
 void task(void*) {
+  Health::registerTask("oled");
   Snapshot snap;
   for (;;) {
     if (reconfigureRequested) { reconfigureRequested = false; doReconfigure(); }

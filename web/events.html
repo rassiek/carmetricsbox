@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a10">
+  <title>CarMetrics - Events</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">Alarm recordings</h3><span class="spacer"></span>
+        <button id="clear" class="small danger">Delete all</button></div>
+      <p class="muted small">Every new warning or critical alarm, and every hot turbo shutdown, saves all sensors from 30 s before to 30 s after it. The newest recordings are kept.</p>
+      <table id="list"></table>
+    </div>
+    <div class="panel hidden" id="detail">
+      <h3 id="dTitle" style="margin-top:0"></h3>
+      <p class="muted small">The red line marks the moment of the alarm. Each trend is scaled to its own minimum and maximum.</p>
+      <table id="dTable"></table>
+    </div>
+  </main>
+  <script src="events.js"></script>
+</body>
+</html>

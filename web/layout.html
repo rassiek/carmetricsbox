@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a10">
+  <title>CarMetrics - Layout</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">Dashboard tiles</h3><span class="spacer"></span>
+        <button id="tAuto" class="small">Automatic</button></div>
+      <p class="muted small">Choose which sensors show on the Gauges screen, their order, width and style. "Automatic" shows every enabled sensor in the Sensors-page order.</p>
+      <div id="tList"></div>
+      <div class="row" style="margin-top:8px"><select id="tAdd" style="width:auto"></select><button id="tAddBtn" class="small">Add tile</button></div>
+    </div>
+
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">OLED pages</h3><span class="spacer"></span>
+        <button id="oAuto" class="small">Automatic</button></div>
+      <p class="muted small">Order of the values on the OLED and where each page starts. Text or bar style is set per sensor (Sensors page). Pages that don't fit split automatically; they rotate every few seconds.</p>
+      <div id="oList"></div>
+      <div class="row" style="margin-top:8px"><select id="oAdd" style="width:auto"></select><button id="oAddBtn" class="small">Add</button>
+        <button id="oBreak" class="small">Add page break</button></div>
+    </div>
+
+    <div class="row"><button id="save" class="primary">Save layout</button><a class="btn" href="index.html">Back to gauges</a>
+      <span id="dirty" class="pill warn hidden">unsaved changes</span></div>
+  </main>
+  <script src="layout.js"></script>
+</body>
+</html>

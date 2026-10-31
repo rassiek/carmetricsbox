@@ -1,4 +1,5 @@
 #include "Cloud.h"
+#include "Health.h"
 #include "State.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -52,7 +53,7 @@ size_t queueSize() { portENTER_CRITICAL(&qMux); size_t n = ramQueue.size(); port
 
 // ============================================================== recorder (loop task)
 struct Acc { double sum = 0; float mn = INFINITY, mx = -INFINITY; uint32_t n = 0; };
-std::vector<int> recIdx;          // sensor indexes recorded
+std::vector<int> recIdx;          // sensor indexes recorded; -1-k = board metric Health::kSysIds[k]
 std::vector<Acc> acc;
 String idsCsv;
 Chunk* cur = nullptr;
@@ -100,6 +101,7 @@ void emitRecord() {
 
 // ============================================================== net task state
 volatile bool weatherRequested = true, flushRequested = false, clearRequested = false;
+volatile bool sleepRequested = false, sleepReady = false, netRunning = false;
 std::deque<std::pair<uint32_t, uint32_t>> backlog;   // (seq, bytes), oldest first
 uint32_t nextSeq = 1;
 bool ntpStarted = false;
@@ -137,6 +139,7 @@ void writeBacklog(Chunk* c, uint32_t capKB) {
   File f = LittleFS.open(fn, "w");
   if (!f) { StateLock lk; gNet.droppedRecords += c->records; gNet.lastError = "flash write failed"; return; }
   f.write(c->buf.data(), c->buf.size());
+  Health::addFlashWrite(c->buf.size());
   f.close();
   backlog.push_back({nextSeq++, (uint32_t)c->buf.size()});
   // ring: drop oldest beyond the cap (and keep 64 KB of filesystem free)
@@ -396,13 +399,23 @@ bool fetchWeather(const WeatherConfig& wc, String& err) {
 
 // ============================================================== net task
 void netTask(void*) {
+  Health::registerTask("net");
   bool fsOk = LittleFS.begin();
   if (fsOk) scanBacklog();
   Serial.printf("[net] task started, fs=%d backlog=%u files\n", fsOk, (unsigned)backlog.size());
   std::deque<Chunk*> pending;
   uint32_t lastSend = 0;
+  netRunning = true;
   for (;;) {
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(sleepRequested ? 20 : 500));
+    if (sleepRequested) {   // going to deep sleep: everything in RAM goes to the flash ring
+      while (Chunk* c = dequeue()) pending.push_back(c);
+      CloudConfig cc; { StateLock lk; cc = gConfig.cloud; }
+      for (auto* c : pending) { if (cc.enabled) writeBacklog(c, cc.bufferKB); delete c; }
+      pending.clear();
+      sleepReady = true;
+      continue;
+    }
     uint32_t now = millis();
     WeatherConfig wc; CloudConfig cc; String device; bool ota;
     { StateLock lk; wc = gConfig.weather; cc = gConfig.cloud; device = gConfig.sys.hostname; ota = gSys.otaProgress >= 0; }
@@ -500,6 +513,8 @@ void Cloud::begin() {
     if (idsCsv.length()) idsCsv += ',';
     idsCsv += gConfig.sensors[i].id;
   }
+  if (gConfig.cloud.sendSystem)
+    for (uint8_t k = 0; k < Health::kSysCount; k++) { recIdx.push_back(-1 - k); idsCsv += ','; idsCsv += Health::kSysIds[k]; }
   acc.assign(recIdx.size(), Acc());
   periodStart = lastTick = millis();
   recEnabled = gConfig.cloud.enabled && !recIdx.empty();
@@ -522,12 +537,18 @@ void Cloud::update() {
     lastTick = now;
     StateLock lk;
     for (size_t k = 0; k < recIdx.size(); k++) {
-      const SensorRuntime& r = gSensorRt[recIdx[k]];
-      if (r.status != ST_OK || isnan(r.value)) continue;
+      float v;
+      if (recIdx[k] < 0) v = Health::sysMetric(-1 - recIdx[k]);
+      else {
+        const SensorRuntime& r = gSensorRt[recIdx[k]];
+        if (r.status != ST_OK) continue;
+        v = r.value;
+      }
+      if (isnan(v)) continue;
       Acc& a = acc[k];
-      a.sum += r.value; a.n++;
-      if (r.value < a.mn) a.mn = r.value;
-      if (r.value > a.mx) a.mx = r.value;
+      a.sum += v; a.n++;
+      if (v < a.mn) a.mn = v;
+      if (v > a.mx) a.mx = v;
     }
   }
   if (now - periodStart >= cc.intervalMs) {
@@ -565,6 +586,14 @@ void Cloud::startNetTask() {
 }
 
 void Cloud::requestWeather() { weatherRequested = true; }
+
+void Cloud::prepareSleep(uint32_t timeoutMs) {
+  closeChunk();
+  if (!netRunning) return;
+  sleepReady = false; sleepRequested = true;
+  uint32_t t0 = millis();
+  while (!sleepReady && millis() - t0 < timeoutMs) delay(20);
+}
 void Cloud::requestFlush() { flushRequested = true; }
 void Cloud::requestClearBacklog() { clearRequested = true; }
 

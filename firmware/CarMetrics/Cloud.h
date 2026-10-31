@@ -17,6 +17,7 @@ void startNetTask();      // once from setup
 void requestWeather();    // fetch weather now
 void requestFlush();      // try uploading now
 void requestClearBacklog();
+void prepareSleep(uint32_t timeoutMs);   // before deep sleep: save buffered data to flash
 void weatherToJson(JsonObject o);  // lock held
 void statusToJson(JsonObject o);   // lock held
 #ifdef CM_EMU_SELFTEST

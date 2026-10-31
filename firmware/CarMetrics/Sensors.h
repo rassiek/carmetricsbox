@@ -11,4 +11,5 @@ void update();
 // 1-Wire bus scan (runs inside update(); results readable under StateLock)
 void requestScan();
 void scanToJson(JsonObject o);  // call with StateLock held
+float rpmHz(const String& id);  // current pulse frequency of an RPM sensor (for calibration)
 }  // namespace Sensors

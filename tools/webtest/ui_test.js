@@ -28,6 +28,28 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
     await p.screenshot({ path: `${OUT}/tiles-${name}.png` });
   }
   check(['live', 'polling'].includes((await p.locator('#conn').textContent()).trim()), 'live data connection');
+  check(await p.locator('#turbo').isVisible(), 'turbo cool-down banner', await p.locator('#turbo').textContent());
+
+  // Layout editor: make EGT a wide trend tile, then check the dashboard
+  await p.goto(BASE + 'layout.html'); await p.waitForTimeout(1500);
+  await p.selectOption('#tAdd', 'egt'); await p.click('#tAddBtn'); await p.waitForTimeout(200);
+  const rows = p.locator('#tList .lay-row');
+  const n = await rows.count();
+  await rows.nth(n - 1).locator('select').nth(0).selectOption('2');
+  await rows.nth(n - 1).locator('select').nth(1).selectOption('spark');
+  await p.click('#oBreak'); await p.click('#save'); await p.waitForTimeout(600);
+  check((await toast()).includes('Layout saved'), 'layout saved', await toast());
+  await p.screenshot({ path: `${OUT}/layout.png`, fullPage: true });
+  await p.goto(BASE + 'index.html'); await p.waitForTimeout(3500);
+  check((await p.locator('.tile.wide svg.spark polyline').count()) === 1, 'wide sparkline tile on dashboard');
+  await p.screenshot({ path: `${OUT}/tiles-layout.png` });
+
+  // Events (alarm black box)
+  await p.goto(BASE + 'events.html'); await p.waitForTimeout(1500);
+  check((await p.locator('#list .evt').count()) === 2, 'events listed');
+  await p.locator('#list .evt').first().click(); await p.waitForTimeout(800);
+  check((await p.locator('#dTable svg.mini').count()) >= 8, 'event trends drawn');
+  await p.screenshot({ path: `${OUT}/events.png`, fullPage: true });
 
   // Charts grouped
   await p.setViewportSize({ width: 1366, height: 900 });
@@ -42,6 +64,11 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   const before = await p.locator('#list .list-item').count();
   await p.selectOption('#newType', 'mcp9600'); await p.click('#add'); await p.waitForTimeout(300);
   check((await p.locator('#list .list-item').count()) === before + 1, 'sensor added');
+  await p.selectOption('#newType', 'computed'); await p.click('#add'); await p.waitForTimeout(300);
+  await p.locator('#editor select').first().selectOption('curve_margin'); await p.waitForTimeout(200);
+  check((await p.locator('#editor input[placeholder^="800:10"]').count()) === 1, 'computed sensor editor (curve)');
+  await p.selectOption('#newType', 'rpm'); await p.click('#add'); await p.waitForTimeout(300);
+  check((await p.locator('#editor button', { hasText: 'Calibrate' }).count()) === 1, 'RPM sensor editor');
   await p.click('#save'); await p.waitForTimeout(700);
   check((await toast()).includes('saved'), 'sensors saved', await toast());
   await p.screenshot({ path: `${OUT}/sensors.png`, fullPage: true });
@@ -68,6 +95,20 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await toast()).includes('saved'), 'cloud settings saved', await toast());
   await p.fill('#altNow', '1661'); await p.click('#altCal'); await p.waitForTimeout(600);
   check((await toast()).includes('Sea-level'), 'altitude calibration');
+  check((await p.locator('#hKv > div').count()) >= 10, 'board health tiles');
+  check((await p.locator('#hTasks tr').count()) === 4, 'task stack table');
+  check((await p.locator('#bSel option').count()) === 3, 'board profiles listed');
+  await p.selectOption('#bSel', 'esp32_wrover'); await p.click('#bSave'); await p.waitForTimeout(700);
+  check((await toast()).includes('Board saved'), 'board saved', await toast());
+  check((await p.locator('#safeBanner').count()) === 0, 'no safe-mode banner');
+  check((await p.locator('#nets .netrow').count()) === 1, 'saved Wi-Fi networks listed');
+  await p.click('#netAdd'); const nr = p.locator('#nets .netrow').nth(1);
+  await nr.locator('input').nth(0).fill('Home'); await nr.locator('input').nth(1).fill('homepass1');
+  await p.click('#sysSave'); await p.waitForTimeout(700);
+  check((await toast()).includes('saved'), 'Wi-Fi networks saved', await toast());
+  await p.click('#turboSave'); await p.waitForTimeout(600);
+  check((await toast()).includes('Turbo timer saved'), 'turbo timer saved', await toast());
+  check((await p.getAttribute('#conn', 'title')) === 'WebSocket' && (await p.textContent('#conn')) === 'live', 'live data over WebSocket', await p.getAttribute('#conn', 'title'));
   await p.screenshot({ path: `${OUT}/system.png`, fullPage: true });
 
   check(errors.length === 0, 'no browser errors', errors.join(' | '));

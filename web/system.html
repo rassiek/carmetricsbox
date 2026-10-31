@@ -13,6 +13,26 @@
   <main>
     <div class="panel"><h3>Status</h3><table id="info"></table></div>
 
+    <div class="panel" id="health">
+      <div class="row"><h3 style="margin:0">Board health</h3><span class="spacer"></span><span id="hFw" class="pill">…</span></div>
+      <p id="hSafe" class="hidden" style="color:var(--crit)"></p>
+      <p id="hNote" class="small hidden" style="color:var(--warn)"></p>
+      <div class="kv" id="hKv"></div>
+      <table id="hTasks" style="margin-top:10px"></table>
+      <p class="muted small" id="hResets"></p>
+      <div class="row"><button id="hLeave" class="danger hidden">Leave safe mode (reboot)</button></div>
+    </div>
+
+    <div class="panel">
+      <h3>Board</h3>
+      <div class="fields">
+        <div class="wide"><label>Board type</label><select id="bSel"></select></div>
+        <label class="check"><input type="checkbox" id="bPins"> Also move pins to this board's defaults</label>
+      </div>
+      <p class="muted small" id="bInfo"></p>
+      <div class="row"><button id="bSave" class="primary">Save board</button></div>
+    </div>
+
     <div class="panel">
       <h3>Firmware &amp; web app update</h3>
       <p class="muted small" id="otaWarn" style="color:var(--warn)"></p>
@@ -31,11 +51,15 @@
       <fieldset><legend>Wi-Fi (changes reboot the device)</legend><div class="fields">
         <div><label>Access point name</label><input name="apSsid"></div>
         <div><label>Access point password (blank = keep)</label><input name="apPass" type="password" autocomplete="new-password"></div>
-        <div><label>Also join network (optional)</label><input name="staSsid" placeholder="e.g. phone hotspot"></div>
-        <div><label>Network password (blank = keep)</label><input name="staPass" type="password" autocomplete="new-password"></div>
         <div><label>Hostname (.local)</label><input name="hostname"></div>
         <div><label>Admin password (blank = keep)</label><input name="adminPass" type="password" autocomplete="new-password"></div>
       </div></fieldset>
+      <fieldset><legend>Networks to join (internet for weather, upload, time)</legend>
+        <p class="muted small" style="margin-top:0">The CarMetrics access point always stays on. The board also joins the best of these that's in range: highest priority first, then strongest signal. <span id="wifiNow"></span></p>
+        <div id="nets"></div>
+        <div class="row"><button id="netAdd" class="small" type="button">Add network</button></div>
+        <label class="check"><input type="checkbox" name="scanWhileApInUse"> Search for networks even while a phone is connected to CarMetrics (the access point pauses ~2 s per search)</label>
+      </fieldset>
       <fieldset><legend>OLED</legend><div class="fields">
         <div><label>Display</label><select name="oledType">
           <option value="none">None</option>
@@ -57,6 +81,16 @@
         <div><label>…is above</label><input name="engineRunningAbove" type="number" step="any"></div>
         <div><label>for (seconds)</label><input name="engineDelaySeconds" type="number" min="0"></div>
       </div></fieldset>
+      <fieldset><legend>Ignition sense &amp; sleep (optional)</legend><div class="fields">
+        <div><label>Ignition input GPIO (-1 = not fitted)</label><input name="ignitionPin" type="number"></div>
+        <label class="check"><input type="checkbox" name="ignitionActiveLow"> Input pulled low while the key is on (opto-coupler)</label>
+        <div><label>Deep sleep after key-off (min, 0 = never)</label><input name="sleepAfterMinutes" type="number" min="0" max="1440"></div>
+      </div><p class="muted small">Feed the 12 V ignition through a divider or opto-coupler, never directly. With sleep on, the board draws well under 1 mA and wakes when the key turns on (needs an RTC-capable GPIO).</p></fieldset>
+      <fieldset><legend>GPS module (optional)</legend><div class="fields">
+        <div><label>ESP32 RX pin (from GPS TX, -1 = none)</label><input name="gpsRxPin" type="number"></div>
+        <div><label>ESP32 TX pin (to GPS RX, optional)</label><input name="gpsTxPin" type="number"></div>
+        <div><label>Baud rate</label><select name="gpsBaud"><option>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></div>
+      </div><p class="muted small" id="gpsNow">Add GPS sensors (speed, altitude…) on the Sensors page. Without a module nothing else is affected.</p></fieldset>
       <fieldset><legend>Buses &amp; misc</legend><div class="fields">
         <div><label>I2C SDA (reboot)</label><input name="i2cSda" type="number"></div>
         <div><label>I2C SCL (reboot)</label><input name="i2cScl" type="number"></div>
@@ -68,6 +102,23 @@
         <div><label>Time zone offset (min)</label><input name="tzOffsetMinutes" type="number"></div>
       </div></fieldset>
       <div class="row"><button id="sysSave" class="primary">Save settings</button></div>
+    </form>
+
+    <form id="turbo" class="panel" onsubmit="return false">
+      <h3>Turbo cool-down timer</h3>
+      <p class="muted small">After a run, the dashboard and OLED show the EGT and a countdown until it's safe to switch off, with a short beep. Indicator only: it never keeps the engine running by itself.</p>
+      <div class="fields">
+        <label class="check"><input type="checkbox" name="enabled"> Enable</label>
+        <div><label>EGT sensor</label><select name="egtId"></select></div>
+        <div><label>Safe to switch off below (°C)</label><input name="safeEgt" type="number"></div>
+        <div><label>Minimum idle (s)</label><input name="minIdleSeconds" type="number" min="0" max="900"></div>
+        <div><label>RPM sensor (optional)</label><select name="rpmId"></select></div>
+        <div><label>Idle below (RPM)</label><input name="idleRpm" type="number"></div>
+        <div><label>Speed sensor (optional, e.g. GPS)</label><select name="speedId"></select></div>
+        <label class="check"><input type="checkbox" name="beep"> Beep when it's OK</label>
+      </div>
+      <p class="muted small">Without RPM or speed it can't tell idling from driving, so it only shows while the EGT is above the safe level.</p>
+      <div class="row"><button id="turboSave" class="primary">Save</button></div>
     </form>
 
     <div class="panel">
@@ -91,6 +142,7 @@
         <div><label>Send every (s, while online)</label><input name="uploadEverySec" type="number" min="10" max="3600"></div>
         <div><label>Offline buffer (KB)</label><input name="bufferKB" type="number" min="16" max="400"></div>
         <label class="check"><input type="checkbox" name="onlyEngineRunning"> Only record while the engine runs</label>
+        <label class="check"><input type="checkbox" name="sendSystem"> Also send board metrics (memory, CPU, Wi-Fi signal)</label>
       </div>
       <fieldset data-proto="zabbix" style="margin-top:10px"><legend>Zabbix</legend><div class="fields">
         <div><label>Server (host or IP)</label><input name="zbxServer" placeholder="zabbix.example.com"></div>
@@ -117,10 +169,12 @@
       <div class="row">
         <a class="btn" href="/api/config/export">Download config</a>
         <label class="btn" style="margin:0;color:var(--text);font-size:15px">Restore config…<input type="file" id="import" accept=".json" class="hidden"></label>
+        <button id="undoCfg">Undo last settings change</button>
+        <button id="goodCfg">Restore last known-good settings</button>
         <span class="spacer"></span>
         <button id="reboot" class="danger">Reboot</button>
       </div>
-      <p class="muted small">Backups never include passwords.</p>
+      <p class="muted small">Backups never include passwords. "Known good" is the last configuration that ran for 5 minutes without trouble.</p>
     </div>
   </main>
   <script src="system.js"></script>

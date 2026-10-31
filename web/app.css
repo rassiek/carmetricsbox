@@ -129,3 +129,23 @@ body.dash { overflow: hidden; height: 100vh; height: 100dvh; }
 .wtemp { font-size: 30px; font-weight: 700; margin: 4px 0 6px; }
 .wrow { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; border-bottom: 1px solid var(--line); }
 .wrow:last-child { border-bottom: 0; }
+
+.banner { background: var(--crit, #c0392b); color: #fff; padding: 8px 14px; font-weight: 600; }
+.banner a { color: #fff; text-decoration: underline; }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.kv > div { background: var(--panel2, rgba(255,255,255,.04)); border-radius: 8px; padding: 8px 10px; }
+.kv b { display: block; font-size: 20px; }
+.kv span { font-size: 12px; color: var(--muted, #8a93a6); }
+.turbo { margin: 6px 6px 0; padding: 10px 14px; border-radius: 10px; font-weight: 600; font-size: 18px; background: var(--warn); color: #111; }
+.turbo.ok { background: var(--ok); }
+.tile .spark { width: 100%; height: 22%; color: var(--accent); display: block; }
+.tile.warn .spark { color: #111; }
+.lay-row { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.lay-row .name { flex: 1; min-width: 120px; }
+.lay-row select { width: auto; }
+.lay-row.brk { color: var(--muted); font-style: italic; }
+.evt { cursor: pointer; }
+.evt.sel { background: var(--panel2); }
+.mini { width: 160px; height: 36px; color: var(--accent); }
+.netrow { display: grid; grid-template-columns: 2fr 2fr 90px auto; gap: 6px; margin-bottom: 6px; }
+@media (max-width: 560px) { .netrow { grid-template-columns: 1fr 1fr; } }

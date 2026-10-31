@@ -1,4 +1,6 @@
 #include "Outputs.h"
+#include "Health.h"
+#include "BlackBox.h"
 #include "State.h"
 #include <set>
 
@@ -87,6 +89,7 @@ void Alerts::mute(uint32_t ms) {
   for (size_t i = 0; i < gSensorRt.size(); i++) mutedLevels[i] = gSensorRt[i].level;
 }
 void Alerts::unmute() { StateLock lk; gSys.muted = false; }
+void Alerts::chirp(uint32_t ms) { chirpUntil = millis() + ms; }
 
 void Alerts::update() {
   uint32_t now = millis();
@@ -100,7 +103,10 @@ void Alerts::update() {
     mutedLevels.resize(gSensorRt.size(), LVL_OK);
     for (size_t i = 0; i < gConfig.sensors.size(); i++) {
       SensorRuntime& r = gSensorRt[i];
+      uint8_t before = r.level;
       r.level = evalLevel(gConfig.sensors[i], r, r.level, running);
+      if ((r.level == LVL_WARN || r.level == LVL_CRIT) && r.level > before)
+        BlackBox::trigger(gConfig.sensors[i].id + " " + alertLevelStr(r.level));   // records 30 s before and after
       if (r.level > overall) overall = r.level;
       if (r.level > mutedLevels[i]) worse = true;
     }
@@ -127,6 +133,14 @@ void Alerts::update() {
 }
 
 // ============================================================== Relays
+void Relays::allOff() {
+  StateLock lk;
+  for (size_t i = 0; i < gConfig.relays.size() && i < gRelayRt.size(); i++) {
+    gRelayRt[i].on = false; gRelayRt[i].outputHigh = false;
+    if (gConfig.relays[i].enabled) writeOut(gConfig.relays[i].pin, false, gConfig.relays[i].activeLow);
+  }
+}
+
 namespace {
 std::vector<int> rPins;   // pins currently driven
 }
@@ -147,14 +161,14 @@ void Relays::begin() {
   for (size_t i = 0; i < gConfig.relays.size(); i++) {
     const RelayConfig& c = gConfig.relays[i];
     RelayRuntime& rt = next[i];
-    rt.on = c.defaultOn;
+    rt.on = c.defaultOn && !Health::safeMode();   // safe mode: every relay starts and stays off
     rt.blinkMs = c.blinkMs;
     for (size_t j = 0; j < prevCfg.size() && j < prevRt.size(); j++)
       if (prevCfg[j].id == c.id && prevCfg[j].pin == c.pin && prevCfg[j].activeLow == c.activeLow) {
         rt.on = prevRt[j].on;
         if (c.mode == prevCfg[j].mode) rt.blinkMs = prevRt[j].blinkMs;
       }
-    if (!c.enabled) rt.on = false;
+    if (!c.enabled || Health::safeMode()) rt.on = false;
     rt.outputHigh = rt.on;
     rt.lastToggleMs = now;
     if (c.enabled) initOut(c.pin, rt.outputHigh, c.activeLow);
@@ -184,6 +198,7 @@ void Relays::update() {
 }
 
 String Relays::control(const String& id, int on, long blinkMs) {
+  if (Health::safeMode()) return "Safe mode: relays are switched off until you leave safe mode";
   StateLock lk;
   int i = findRelayIndex(id);
   if (i < 0) return "Unknown relay '" + id + "'";
