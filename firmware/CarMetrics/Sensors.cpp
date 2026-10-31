@@ -117,7 +117,12 @@ void handleAnalog(size_t i, float pinVolts) {
     setFail(i, ST_FAULT, sv);
     return;
   }
-  setOk(i, toCalibrated(c, sv), sv);
+  // Clamp to the sensor's output range: a sender a little under 0.5 V is 0 psi, not -6 psi.
+  float v = toCalibrated(c, sv);
+  float lo = min(c.outMin, c.outMax), hi = max(c.outMin, c.outMax);
+  bool ranged = !(c.inMin == 0 && c.inMax == 1 && c.outMin == 0 && c.outMax == 1);  // identity map = plain volts
+  if (ranged) v = constrain(v, lo, hi);
+  setOk(i, v, sv);
 }
 
 // ---------------------------------------------------------------- per-family update
@@ -180,7 +185,8 @@ void updateMax6675(uint32_t now) {
   for (size_t i = 0; i < gConfig.sensors.size(); i++) {
     if (!tc[i]) continue;
     float t = tc[i]->readCelsius();
-    if (isnan(t)) setFail(i, ST_FAULT, NAN, 2);  // NAN = thermocouple open circuit
+    if (isnan(t)) setFail(i, ST_FAULT, NAN, 2);         // NAN = thermocouple open circuit
+    else if (t == 0.0f) setFail(i, ST_NOT_FOUND, NAN, 3);  // all-zero read = no MAX6675 answering
     else setOk(i, t);
   }
 }

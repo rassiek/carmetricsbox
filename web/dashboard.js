@@ -1,89 +1,96 @@
 'use strict';
+// Digital tiles: every enabled sensor on one screen, no scrolling, any orientation.
 (() => {
-  const { $, h, api, live, onConfig, fmt, statusText } = CM;
-  let cards = {};
+  const { $, h, api, live, onConfig, fmt } = CM;
+  let tiles = {}, sensors = [];
 
-  function niceTicks(min, max, n = 5) {
-    const raw = (max - min) / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
-    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || raw;
-    const ticks = [];
-    for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) ticks.push(+v.toFixed(6));
-    if (ticks[0] !== min) ticks.unshift(min);
-    if (ticks[ticks.length - 1] !== max) ticks.push(max);
-    return ticks.map(String);
-  }
+  const STATUS = { waiting: 'WAITING', unassigned: 'NOT SET UP', not_found: 'NOT FOUND', fault: 'FAULT', disabled: 'OFF' };
+  const pct = (s, v) => Math.max(0, Math.min(100, (v - s.gaugeMin) / (s.gaugeMax - s.gaugeMin) * 100));
 
-  function zones(s) {
-    const lo = s.gaugeMin, hi = s.gaugeMax, z = [];
-    const C = { crit: 'rgba(255,77,79,.85)', warn: 'rgba(244,196,48,.85)', ok: 'rgba(52,199,123,.55)' };
-    const cl = s.critLow ?? lo, wl = s.warnLow ?? cl, ch = s.critHigh ?? hi, wh = s.warnHigh ?? ch;
-    const add = (a, b, c) => { a = Math.max(lo, a); b = Math.min(hi, b); if (b > a) z.push({ from: a, to: b, color: c }); };
-    add(lo, cl, C.crit); add(cl, wl, C.warn); add(wl, wh, C.ok); add(wh, ch, C.warn); add(ch, hi, C.crit);
-    return z;
-  }
-
-  function makeGauge(s, canvas) {
-    const common = {
-      renderTo: canvas, units: s.unit, minValue: s.gaugeMin, maxValue: s.gaugeMax,
-      majorTicks: niceTicks(s.gaugeMin, s.gaugeMax), minorTicks: 2, highlights: zones(s),
-      value: s.gaugeMin, valueBox: false, animationDuration: 400, animationRule: 'linear',
-      colorPlate: 'transparent', colorMajorTicks: '#8b9ab0', colorMinorTicks: '#5b6a80',
-      colorNumbers: '#c7d2e0', colorUnits: '#8b9ab0', colorTitle: '#8b9ab0',
-      colorNeedle: '#3fa7ff', colorNeedleEnd: '#3fa7ff', borders: false, borderShadowWidth: 0,
-      fontNumbersSize: 22, fontUnitsSize: 22,
-    };
-    const isTemp = /°?C$/.test(s.unit) && s.type !== 'bmp';
-    if (isTemp) {
-      return new LinearGauge(Object.assign(common, {
-        width: 100, height: 190, barWidth: 8, colorBar: '#263247', colorBarProgress: '#3fa7ff',
-        needleType: 'arrow', needleWidth: 3, tickSide: 'left', numberSide: 'left', needleSide: 'left',
-        highlightsWidth: 8, barBeginCircle: false,
-      })).draw();
+  // Pick the column count that gives the biggest readable tiles for this screen.
+  function layout() {
+    const box = $('#tiles'), n = sensors.length;
+    if (!n) return;
+    const hd = document.querySelector('header');
+    const gap = 6, pad = 6;
+    const W = window.innerWidth - pad * 2, H = window.innerHeight - (hd ? hd.offsetHeight : 0) - pad * 2;
+    let best = { score: -1 };
+    for (let c = 1; c <= n; c++) {
+      const r = Math.ceil(n / c);
+      const cw = (W - gap * (c - 1)) / c, ch = (H - gap * (r - 1)) / r;
+      if (cw < 70 || ch < 50) continue;
+      const score = Math.min(cw / 1.7, ch) - (c * r - n) * 0.5;   // favour ~1.7:1 tiles, few empty cells
+      if (score > best.score) best = { score, c, cw, ch };
     }
-    return new RadialGauge(Object.assign(common, {
-      width: 160, height: 160, needleType: 'line', needleWidth: 3, needleCircleSize: 6,
-      needleCircleOuter: false, colorNeedleCircleInner: '#3fa7ff', highlightsWidth: 10,
-      startAngle: 45, ticksAngle: 270,
-    })).draw();
+    if (best.score < 0) best = { c: Math.ceil(Math.sqrt(n)), cw: 120, ch: 70 };   // tiny screen: allow scroll
+    box.style.gridTemplateColumns = `repeat(${best.c}, 1fr)`;
+    box.style.gridAutoRows = `${Math.floor(best.ch)}px`;
+    box.style.padding = pad + 'px';
+    box.style.gap = gap + 'px';
+    const valueSize = Math.max(18, Math.min(best.ch * 0.42, best.cw * 0.2));
+    box.style.setProperty('--v', valueSize + 'px');
+    box.style.setProperty('--t', Math.max(11, Math.min(best.ch * 0.14, 18)) + 'px');
+  }
+
+  function tick(s, v, cls) {
+    return v == null || v <= s.gaugeMin || v >= s.gaugeMax ? null : h('i', { class: 'tick ' + cls, style: `left:${pct(s, v)}%` });
   }
 
   async function build() {
     const cfg = await api('/api/config');
-    const grid = $('#cards');
-    grid.innerHTML = '';
-    cards = {};
-    const sensors = cfg.sensors.filter(s => s.enabled);
+    sensors = cfg.sensors.filter(s => s.enabled);
+    const box = $('#tiles');
+    box.innerHTML = '';
+    tiles = {};
     $('#empty').classList.toggle('hidden', sensors.length > 0);
     for (const s of sensors) {
-      const canvas = h('canvas');
-      const val = h('div', { class: 'value' }, '--');
-      const badge = h('span', { class: 'badge pill hidden' });
-      const card = h('div', { class: 'card', id: 'card-' + s.id }, h('div', { class: 'title' }, s.name), canvas, val, badge);
-      grid.append(card);
-      let gauge = null;
-      try { gauge = makeGauge(s, canvas); } catch (e) { console.warn('gauge', s.id, e); canvas.remove(); }
-      cards[s.id] = { s, card, val, badge, gauge };
+      const val = h('span', { class: 'num' }, '--');
+      const unit = h('span', { class: 'unit' }, s.unit);
+      const state = h('span', { class: 'state' });
+      const fill = h('div', { class: 'fill' });
+      const bar = h('div', { class: 'bar' }, fill,
+        tick(s, s.warnLow, 'w'), tick(s, s.critLow, 'c'), tick(s, s.warnHigh, 'w'), tick(s, s.critHigh, 'c'));
+      const tile = h('div', { class: 'tile' },
+        h('div', { class: 'top' }, h('span', { class: 'name' }, s.name), state),
+        h('div', { class: 'val' }, h('div', { class: 'vin' }, val, unit)), bar);
+      box.append(tile);
+      tiles[s.id] = { s, tile, val, unit, state, fill };
     }
+    layout();
     if (CM.state) update(CM.state);
   }
 
   function update(st) {
-    for (const [id, c] of Object.entries(cards)) {
+    for (const [id, t] of Object.entries(tiles)) {
       const r = st.sensors[id];
       if (!r) continue;
-      const v = r.v === null ? null : parseFloat(r.v);
-      c.val.innerHTML = '';
-      c.val.append(fmt(v, c.s.decimals), ' ', h('small', {}, c.s.unit));
-      if (c.gauge && v !== null) c.gauge.value = Math.min(Math.max(v, c.s.gaugeMin), c.s.gaugeMax);
-      c.card.className = 'card ' + (r.lvl !== 'ok' ? r.lvl : '');
-      const txt = statusText[r.st] || '';
-      c.badge.textContent = txt;
-      c.badge.className = 'badge pill ' + (r.st === 'fault' || r.st === 'not_found' ? 'fault' : '') + (txt ? '' : ' hidden');
+      const ok = r.st === 'ok' && r.v !== null;
+      const v = ok ? parseFloat(r.v) : null;
+      t.val.textContent = ok ? fmt(v, t.s.decimals) : (STATUS[r.st] || '--');
+      t.unit.style.display = ok ? '' : 'none';
+      t.fill.style.width = ok ? pct(t.s, v) + '%' : '0%';
+      const lvl = r.lvl !== 'ok' ? r.lvl : (ok ? '' : 'idle');   // fault colour only when it alarms
+      t.tile.className = 'tile ' + lvl + (ok ? '' : ' nodata');
+      t.state.textContent = r.lvl === 'crit' ? 'CRIT' : r.lvl === 'warn' ? 'WARN' : '';
     }
   }
 
+  function fullscreenButton() {
+    const conn = $('#conn');
+    if (!conn || !document.documentElement.requestFullscreen) return;
+    const b = h('button', { class: 'small', title: 'Full screen' }, '⛶');
+    b.onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
+    conn.before(b);
+    document.addEventListener('fullscreenchange', () => setTimeout(layout, 100));
+  }
+
+  let rt;
+  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(layout, 80); });
   onConfig(() => build().catch(e => CM.toast(e.message, true)));
   document.addEventListener('DOMContentLoaded', () => {
+    fullscreenButton();
+    const hd = document.querySelector('header');   // header height changes (alerts, wrapping) -> re-fit
+    if (hd && window.ResizeObserver) new ResizeObserver(() => layout()).observe(hd);
     build().catch(e => CM.toast(e.message, true));
     live(update);
   });

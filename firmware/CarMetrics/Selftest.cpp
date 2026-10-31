@@ -59,6 +59,12 @@ void selftestLoop() {
     check(gSensorRt[findSensorIndex("gearbox_temp")].level == LVL_FAULT, "missing sensor -> fault");
     check(gSensorRt[findSensorIndex("transfer_case_temp")].level == LVL_OK, "unassigned sensor -> no alert");
     check(gSys.overallLevel == LVL_FAULT, "overall = fault");
+    {  // EGT unplugged: NOT FOUND shown, but no alarm (faultAlarm = false by default)
+      int e = findSensorIndex("egt");
+      gSensorRt[e].status = ST_NOT_FOUND;
+      bool silent = !gConfig.sensors[e].faultAlarm;
+      check(silent && gConfig.sensors[e].offset == 0, "EGT defaults: no fault alarm, no offset");
+    }
   }
   if (step == 1 && now > 25000) {
     step++;

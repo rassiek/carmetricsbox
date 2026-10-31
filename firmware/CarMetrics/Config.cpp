@@ -79,7 +79,9 @@ void defaultSensors(std::vector<SensorConfig>& v) {
   // EGT thermocouple (MAX6675: SCK=5, CS=17, SO=16)
   SensorConfig egt;
   egt.id = "egt"; egt.name = "EGT"; egt.unit = "°C"; egt.type = SensorType::MAX6675;
-  egt.sckPin = 5; egt.pin = 17; egt.soPin = 16; egt.offset = -8.0f; egt.smoothing = 0.5f;
+  egt.sckPin = 5; egt.pin = 17; egt.soPin = 16; egt.offset = 0;
+  egt.faultAlarm = false;  // unplugged probe shows NOT FOUND without sounding the alarm
+  egt.smoothing = 0.5f;
   egt.gaugeMin = 0; egt.gaugeMax = 800; egt.warnHigh = 600; egt.critHigh = 700; egt.hysteresis = 10;
   egt.oledStyle = OledStyle::BAR; egt.oledLabel = "EGT";
   v.push_back(egt);
@@ -87,13 +89,13 @@ void defaultSensors(std::vector<SensorConfig>& v) {
   // Pressure senders: 5 V, 0.5-4.5 V out, through a 10k/20k divider (x1.5)
   SensorConfig boost = analog("boost_pressure", "Boost", "psi", 32, 1.5f, 0.5f, 4.5f, 0, 30);
   boost.decimals = 1; boost.gaugeMin = 0; boost.gaugeMax = 25; boost.warnHigh = 17; boost.critHigh = 20;
-  boost.hysteresis = 0.5f; boost.faultLowV = 0.2f; boost.faultHighV = 4.8f;
+  boost.hysteresis = 0.5f; boost.faultLowV = 0.35f; boost.faultHighV = 4.8f;
   boost.oledStyle = OledStyle::BAR; boost.oledLabel = "BST";
   v.push_back(boost);
 
   SensorConfig oil = analog("oil_pressure", "Oil pressure", "psi", 34, 1.5f, 0.5f, 4.5f, 0, 100);
   oil.gaugeMin = 0; oil.gaugeMax = 100; oil.warnLow = 15; oil.critLow = 7; oil.warnHigh = 85;
-  oil.hysteresis = 2; oil.faultLowV = 0.2f; oil.faultHighV = 4.8f; oil.engineRunningOnly = true;
+  oil.hysteresis = 2; oil.faultLowV = 0.35f; oil.faultHighV = 4.8f; oil.engineRunningOnly = true;
   oil.oledStyle = OledStyle::BAR; oil.oledLabel = "OIL";
   v.push_back(oil);
 
@@ -193,7 +195,7 @@ void sensorToJson(const SensorConfig& s, JsonObject o) {
   o["oledStyle"] = oledStyleToStr(s.oledStyle); o["oledLabel"] = s.oledLabel;
   putF(o, "warnHigh", s.warnHigh); putF(o, "critHigh", s.critHigh);
   putF(o, "warnLow", s.warnLow); putF(o, "critLow", s.critLow);
-  putF(o, "hysteresis", s.hysteresis); o["engineRunningOnly"] = s.engineRunningOnly;
+  putF(o, "hysteresis", s.hysteresis); o["engineRunningOnly"] = s.engineRunningOnly; o["faultAlarm"] = s.faultAlarm;
 }
 
 void relayToJson(const RelayConfig& r, JsonObject o) {
@@ -254,6 +256,7 @@ static bool sensorFromJson(JsonObjectConst o, SensorConfig& s, String& err) {
   s.warnLow = getF(o, "warnLow", NAN); s.critLow = getF(o, "critLow", NAN);
   s.hysteresis = getF(o, "hysteresis", 1); if (isnan(s.hysteresis) || s.hysteresis < 0) s.hysteresis = 0;
   s.engineRunningOnly = getB(o, "engineRunningOnly", false);
+  s.faultAlarm = getB(o, "faultAlarm", true);
 
   // per-type checks
   if (s.type == SensorType::DS18B20 && s.address.length() && s.address.length() != 16) {

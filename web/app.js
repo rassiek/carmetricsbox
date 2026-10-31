@@ -39,32 +39,49 @@ const CM = (() => {
     toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
   }
 
-  // ---- live state over Server-Sent Events
+  // ---- live state: Server-Sent Events, with polling fallback when the stream stalls
   const listeners = [];
-  let lastState = null, es = null, lastMsg = 0, rev = null;
+  let lastState = null, es = null, lastSse = 0, lastAny = 0, rev = null, polling = false;
   function live(fn) { listeners.push(fn); if (lastState) fn(lastState); }
+  function handleState(s) {
+    lastAny = Date.now();
+    if (rev !== null && s.rev !== rev) onConfigChanged();
+    rev = s.rev;
+    lastState = s;
+    listeners.forEach(fn => fn(s));
+    updateHeader(s);
+  }
   function connect() {
+    if (es) es.close();
     es = new EventSource('/events');
-    es.addEventListener('state', ev => {
-      lastMsg = Date.now();
-      const s = JSON.parse(ev.data);
-      if (rev !== null && s.rev !== rev) onConfigChanged();
-      rev = s.rev;
-      lastState = s;
-      listeners.forEach(fn => fn(s));
-      updateHeader(s);
-    });
+    es.addEventListener('state', ev => { lastSse = Date.now(); handleState(JSON.parse(ev.data)); });
     es.addEventListener('config', () => onConfigChanged());
+  }
+  async function poll() {
+    if (polling) return;
+    polling = true;
+    try { handleState(await api('/api/state')); } catch (e) { /* offline */ }
+    polling = false;
   }
   let configCb = null;
   function onConfig(fn) { configCb = fn; }
   function onConfigChanged() { if (configCb) configCb(); }
+  let sseDeadSince = 0;
   setInterval(() => {
-    const stale = Date.now() - lastMsg > 4000;
+    const now = Date.now(), sseOk = now - lastSse < 3500;
+    if (!sseOk) {
+      poll();
+      if (!sseDeadSince) sseDeadSince = now;
+      if (now - sseDeadSince > 15000) { sseDeadSince = now; connect(); }  // retry the stream
+    } else sseDeadSince = 0;
+    const online = now - lastAny < 5000;
     const c = $('#conn');
-    if (c) { c.textContent = stale ? 'offline' : 'live'; c.className = 'pill ' + (stale ? 'fault' : 'ok'); }
-    document.body.classList.toggle('stale', stale);
-  }, 1000);
+    if (c) {
+      c.textContent = !online ? 'offline' : sseOk ? 'live' : 'polling';
+      c.className = 'pill ' + (!online ? 'fault' : sseOk ? 'ok' : '');
+    }
+    document.body.classList.toggle('stale', !online);
+  }, 1500);
 
   // ---- header
   const pages = [['index.html', 'Gauges'], ['charts.html', 'Charts'], ['settings.html', 'Sensors'],

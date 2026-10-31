@@ -53,6 +53,7 @@ struct SensorConfig {
   float warnHigh = NAN, critHigh = NAN, warnLow = NAN, critLow = NAN;
   float hysteresis = 1.0f;
   bool engineRunningOnly = false;  // only alarm on value while the engine runs (oil pressure, battery)
+  bool faultAlarm = true;          // alarm when the sensor is missing/faulty (off = just show NOT FOUND)
 };
 
 enum class RelayMode : uint8_t { ON_OFF, BLINK };

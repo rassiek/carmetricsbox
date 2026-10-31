@@ -7,19 +7,19 @@
     ds18b20: { unit: '°C', gaugeMin: 0, gaugeMax: 120, decimals: 0, smoothing: 1, oledStyle: 'text', hysteresis: 1 },
     mcp9600: { unit: '°C', gaugeMin: 0, gaugeMax: 800, decimals: 0, smoothing: 0.5, oledStyle: 'bar', mcpAddress: 0x67, hysteresis: 10 },
     max6675: { unit: '°C', gaugeMin: 0, gaugeMax: 800, decimals: 0, smoothing: 0.5, oledStyle: 'bar', sckPin: 5, pin: 17, soPin: 16, hysteresis: 10 },
-    adc: { unit: 'psi', pin: 32, divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 100, faultLowV: 0.2, faultHighV: 4.8,
+    adc: { unit: 'psi', pin: 32, divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 100, faultLowV: 0.35, faultHighV: 4.8,
            gaugeMin: 0, gaugeMax: 100, decimals: 0, smoothing: 0.3, oledStyle: 'bar', hysteresis: 1 },
     ads1115: { unit: 'psi', adsAddress: 0x48, adsChannel: 0, divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 100,
-               faultLowV: 0.2, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 100, decimals: 0, smoothing: 0.3, oledStyle: 'bar', hysteresis: 1 },
+               faultLowV: 0.35, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 100, decimals: 0, smoothing: 0.3, oledStyle: 'bar', hysteresis: 1 },
     bmp: { unit: '°C', bmpField: 'temperature', gaugeMin: 0, gaugeMax: 50, decimals: 0, smoothing: 0.3, oledStyle: 'text', hysteresis: 1 },
   };
   // Analog presets: sensor volts -> value. divider = how much the resistors scale the signal down.
   const PRESETS = {
     '': null,
-    'p100': { label: '0.5–4.5 V sender, 0–100 psi (10k/20k divider)', unit: 'psi', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 100, faultLowV: 0.2, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 100 },
-    'p30': { label: '0.5–4.5 V sender, 0–30 psi (10k/20k divider)', unit: 'psi', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 30, faultLowV: 0.2, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 30, decimals: 1 },
-    'p150': { label: '0.5–4.5 V sender, 0–150 psi (10k/20k divider)', unit: 'psi', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 150, faultLowV: 0.2, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 150 },
-    'bar10': { label: '0.5–4.5 V sender, 0–10 bar (10k/20k divider)', unit: 'bar', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 10, faultLowV: 0.2, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 10, decimals: 1 },
+    'p100': { label: '0.5–4.5 V sender, 0–100 psi (10k/20k divider)', unit: 'psi', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 100, faultLowV: 0.35, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 100 },
+    'p30': { label: '0.5–4.5 V sender, 0–30 psi (10k/20k divider)', unit: 'psi', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 30, faultLowV: 0.35, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 30, decimals: 1 },
+    'p150': { label: '0.5–4.5 V sender, 0–150 psi (10k/20k divider)', unit: 'psi', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 150, faultLowV: 0.35, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 150 },
+    'bar10': { label: '0.5–4.5 V sender, 0–10 bar (10k/20k divider)', unit: 'bar', divider: 1.5, inMin: 0.5, inMax: 4.5, outMin: 0, outMax: 10, faultLowV: 0.35, faultHighV: 4.8, gaugeMin: 0, gaugeMax: 10, decimals: 1 },
     'b25': { label: 'Battery via B25 module (×5)', unit: 'V', divider: 5, inMin: 0, inMax: 1, outMin: 0, outMax: 1, faultLowV: null, faultHighV: null, gaugeMin: 8, gaugeMax: 16, decimals: 1 },
     'volts': { label: 'Plain voltage (no scaling)', unit: 'V', divider: 1, inMin: 0, inMax: 1, outMin: 0, outMax: 1, faultLowV: null, faultHighV: null, gaugeMin: 0, gaugeMax: 3.3, decimals: 2 },
   };
@@ -73,7 +73,7 @@
     const s = Object.assign({ id: uniqueId(type), name: 'New ' + typeName[type], type, enabled: true, address: '', pin: -1, sckPin: -1, soPin: -1,
       adsAddress: 0x48, adsChannel: 0, mcpAddress: 0x67, bmpField: 'temperature', divider: 1, inMin: 0, inMax: 1, outMin: 0, outMax: 1,
       faultLowV: null, faultHighV: null, offset: 0, oledLabel: '', warnLow: null, critLow: null, warnHigh: null, critHigh: null,
-      engineRunningOnly: false }, TEMPLATES[type]);
+      engineRunningOnly: false, faultAlarm: true }, TEMPLATES[type]);
     sensors.push(s);
     renderList();
     edit(sensors.length - 1);
@@ -143,7 +143,7 @@
       calib = h('fieldset', {}, h('legend', {}, 'Calibration'),
         h('p', { class: 'muted small', style: 'margin-top:0' },
           'sensor volts = pin volts × divider. The input range (sensor volts) maps linearly onto the output range. ',
-          'Fault limits flag a broken wire (e.g. below 0.2 V on a 0.5–4.5 V sender).'),
+          'Fault limits flag a broken wire (e.g. below 0.35 V on a 0.5–4.5 V sender). Fit a 100 kΩ pull-down on each analog input so an unplugged sender reads 0 V and shows FAULT.'),
         h('div', { class: 'fields' },
           h('div', { class: 'wide' }, preset),
           field('Divider (×)', 'divider', s, { nullable: false }),
@@ -172,7 +172,8 @@
         field('Critical low', 'critLow', s), field('Warning low', 'warnLow', s),
         field('Warning high', 'warnHigh', s), field('Critical high', 'critHigh', s),
         field('Hysteresis', 'hysteresis', s, { nullable: false }),
-        field('Only alarm while engine runs', 'engineRunningOnly', s, { type: 'checkbox', wide: true }))));
+        field('Only alarm while engine runs', 'engineRunningOnly', s, { type: 'checkbox', wide: true }),
+        field('Alarm if sensor is missing or faulty', 'faultAlarm', s, { type: 'checkbox', wide: true }))));
     ed.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   function closeEditor() { editing = -1; $('#editor').classList.add('hidden'); }

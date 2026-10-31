@@ -1,89 +1,128 @@
 'use strict';
-// Lightweight canvas line charts (replaces the 280 KB Highcharts bundle).
+// Grouped canvas line charts: sensors with the same kind of reading share one axis.
 (() => {
   const { $, h, api, live, onConfig, fmt } = CM;
-  let charts = {}, interval = 5, lastAppend = 0, maxLen = 360;
+  const COLORS = ['#3fa7ff', '#f4c430', '#34c77b', '#ff7a45', '#b37feb', '#ff4d9a', '#36cfc9', '#d3f261'];
+  let groups = [], interval = 5, lastAppend = 0, maxLen = 360;
 
-  function draw(c) {
-    const cv = c.canvas, dpr = window.devicePixelRatio || 1;
+  // 1-Wire temps together, pressures together, EGT on its own, everything else by unit.
+  function groupOf(s) {
+    if (s.type === 'ds18b20') return ['temps', 'Temperatures (1-Wire)'];
+    if (s.type === 'max6675' || s.type === 'mcp9600') return ['egt', 'Exhaust gas temperature'];
+    if (/^(psi|bar|kpa)$/i.test(s.unit)) return ['pressure', 'Pressures'];
+    if (/^v$/i.test(s.unit)) return ['volts', 'Voltages'];
+    return ['unit:' + s.unit + ':' + s.type, null];
+  }
+
+  function draw(g) {
+    const cv = g.canvas, dpr = window.devicePixelRatio || 1;
     const W = cv.clientWidth, H = cv.clientHeight;
     if (!W) return;
-    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
-    const g = cv.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, W, H);
-    const s = c.s, data = c.data;
-    const vals = data.filter(v => v !== null);
-    let lo = Math.min(...vals, ...[s.warnLow, s.critLow].filter(x => x != null && x >= s.gaugeMin));
-    let hi = Math.max(...vals, ...[s.warnHigh, s.critHigh].filter(x => x != null && x <= s.gaugeMax));
-    if (!vals.length) { lo = s.gaugeMin; hi = s.gaugeMax; }
-    const minSpan = Math.max((s.gaugeMax - s.gaugeMin) * 0.05, 1e-3);
-    if (hi - lo < minSpan) { const mid = (hi + lo) / 2; hi = mid + minSpan / 2; lo = mid - minSpan / 2; }
-    const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
-    const L = 38, R = 6, T = 6, B = 16, pw = W - L - R, ph = H - T - B;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    const shown = g.series.filter(x => !x.hidden);
+    const single = g.series.length === 1 ? g.series[0].s : null;
+
+    // auto-zoom to visible data (+ limits when the chart has a single sensor)
+    let vals = [];
+    shown.forEach(x => x.data.forEach(v => { if (v !== null) vals.push(v); }));
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (single) [single.warnLow, single.critLow, single.warnHigh, single.critHigh]
+      .filter(t => t != null && t >= single.gaugeMin && t <= single.gaugeMax).forEach(t => { lo = Math.min(lo, t); hi = Math.max(hi, t); });
+    const ref = shown[0] ? shown[0].s : g.series[0].s;
+    if (!isFinite(lo)) { lo = ref.gaugeMin; hi = ref.gaugeMax; }
+    const minSpan = Math.max((ref.gaugeMax - ref.gaugeMin) * 0.05, 1e-3);
+    if (hi - lo < minSpan) { const m = (hi + lo) / 2; lo = m - minSpan / 2; hi = m + minSpan / 2; }
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+
+    const L = 40, R = 8, T = 6, B = 16, pw = W - L - R, ph = H - T - B;
     const y = v => T + ph - (v - lo) / (hi - lo) * ph;
-    const x = i => L + (maxLen <= 1 ? pw : (i + (maxLen - data.length)) / (maxLen - 1) * pw);
-
-    g.font = '11px system-ui, sans-serif';
-    g.fillStyle = '#8b9ab0'; g.strokeStyle = '#263247'; g.lineWidth = 1;
-    for (let k = 0; k <= 3; k++) {
-      const v = lo + (hi - lo) * k / 3, yy = Math.round(y(v)) + .5;
-      g.beginPath(); g.moveTo(L, yy); g.lineTo(W - R, yy); g.stroke();
-      g.fillText(v.toFixed(Math.abs(hi - lo) < 10 ? 1 : 0), 2, yy + 4);
+    c.font = '11px system-ui, sans-serif';
+    c.fillStyle = '#8b9ab0'; c.strokeStyle = '#263247'; c.lineWidth = 1;
+    for (let k = 0; k <= 4; k++) {
+      const v = lo + (hi - lo) * k / 4, yy = Math.round(y(v)) + .5;
+      c.beginPath(); c.moveTo(L, yy); c.lineTo(W - R, yy); c.stroke();
+      c.fillText(v.toFixed(hi - lo < 10 ? 1 : 0), 2, yy + 4);
     }
-    const mins = Math.round(maxLen * interval / 60);
-    g.fillText(`-${mins}m`, L, H - 3);
-    g.fillText('now', W - R - 22, H - 3);
+    c.fillText(`-${Math.round(maxLen * interval / 60)}m`, L, H - 3);
+    c.fillText('now', W - R - 22, H - 3);
 
-    const th = [[s.warnHigh, '#f4c430'], [s.critHigh, '#ff4d4f'], [s.warnLow, '#f4c430'], [s.critLow, '#ff4d4f']];
-    g.setLineDash([4, 4]);
-    for (const [v, col] of th) {
-      if (v == null || v < lo || v > hi) continue;
-      g.strokeStyle = col; g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
+    if (single) {
+      c.setLineDash([4, 4]);
+      for (const [v, col] of [[single.warnHigh, '#f4c430'], [single.critHigh, '#ff4d4f'], [single.warnLow, '#f4c430'], [single.critLow, '#ff4d4f']]) {
+        if (v == null || v < lo || v > hi) continue;
+        c.strokeStyle = col; c.beginPath(); c.moveTo(L, y(v)); c.lineTo(W - R, y(v)); c.stroke();
+      }
+      c.setLineDash([]);
     }
-    g.setLineDash([]);
-    g.strokeStyle = '#3fa7ff'; g.lineWidth = 1.6; g.beginPath();
-    let pen = false;
-    data.forEach((v, i) => {
-      if (v === null) { pen = false; return; }
-      pen ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v));
-      pen = true;
-    });
-    g.stroke();
-
-    const last = [...data].reverse().find(v => v !== null);
-    c.cur.textContent = `${fmt(last, s.decimals)} ${s.unit}`;
-    c.range.textContent = vals.length ? `min ${fmt(Math.min(...vals), s.decimals)} · max ${fmt(Math.max(...vals), s.decimals)}` : 'no data';
+    for (const x of shown) {
+      const n = x.data.length, xx = i => L + (i + (maxLen - n)) / (maxLen - 1) * pw;
+      c.strokeStyle = x.color; c.lineWidth = 1.8; c.beginPath();
+      let pen = false;
+      x.data.forEach((v, i) => {
+        if (v === null) { pen = false; return; }
+        pen ? c.lineTo(xx(i), y(v)) : c.moveTo(xx(i), y(v));
+        pen = true;
+      });
+      c.stroke();
+    }
+    // legend values
+    for (const x of g.series) {
+      const d = x.data.filter(v => v !== null), last = d.length ? d[d.length - 1] : null;
+      x.val.textContent = last === null ? '--' : `${fmt(last, x.s.decimals)} ${x.s.unit}`;
+      x.range.textContent = d.length ? `${fmt(Math.min(...d), x.s.decimals)}–${fmt(Math.max(...d), x.s.decimals)}` : 'no data';
+      x.chip.classList.toggle('off', !!x.hidden);
+    }
   }
 
   async function build() {
     const [cfg, hist] = await Promise.all([api('/api/config'), api('/api/history')]);
     interval = hist.interval || 5;
-    $('#span').textContent = `Last ${Math.round(maxLen * interval / 60)} minutes (one point every ${interval}s), kept on the ESP32 — cleared on reboot or when sensors change.`;
+    $('#span').textContent = `Last ${Math.round(maxLen * interval / 60)} minutes, one point every ${interval}s. Tap a legend entry to hide or show a line.`;
     const box = $('#charts');
     box.innerHTML = '';
-    charts = {};
+    const byKey = new Map();
     for (const s of cfg.sensors.filter(s => s.enabled)) {
-      const canvas = h('canvas'), cur = h('b'), range = h('span', { class: 'muted small' });
-      box.append(h('div', { class: 'chart' }, h('div', { class: 'head' }, h('span', {}, s.name), cur), canvas, range));
-      const data = (hist.series[s.id] || []).map(v => (v === null ? null : +v));
-      charts[s.id] = { s, canvas, cur, range, data };
+      const [key, title] = groupOf(s);
+      if (!byKey.has(key)) byKey.set(key, { title, series: [] });
+      byKey.get(key).series.push(s);
+    }
+    groups = [];
+    for (const { title, series } of byKey.values()) {
+      const canvas = h('canvas'), legend = h('div', { class: 'legend' });
+      const g = { canvas, series: [] };
+      series.forEach((s, i) => {
+        const val = h('b'), range = h('span', { class: 'muted' });
+        const chip = h('button', { class: 'chip' }, h('i', { style: `background:${COLORS[i % COLORS.length]}` }), s.name, ' ', val, ' ', range);
+        const x = { s, color: COLORS[i % COLORS.length], data: (hist.series[s.id] || []).map(v => (v === null ? null : +v)), val, range, chip, hidden: false };
+        chip.onclick = () => { x.hidden = !x.hidden; draw(g); };
+        if (series.length === 1) chip.disabled = true;
+        legend.append(chip);
+        g.series.push(x);
+      });
+      box.append(h('div', { class: 'chart' }, h('div', { class: 'head' }, h('span', {}, title || series[0].name)), canvas, legend));
+      groups.push(g);
     }
     lastAppend = Date.now() - (hist.ageMs || 0);
-    Object.values(charts).forEach(draw);
+    groups.forEach(draw);
   }
 
   live(st => {
     if (Date.now() - lastAppend < interval * 1000) return;
     lastAppend = Date.now();
-    for (const [id, c] of Object.entries(charts)) {
-      const r = st.sensors[id];
-      c.data.push(r && r.v !== null ? +r.v : null);
-      if (c.data.length > maxLen) c.data.shift();
-      draw(c);
+    for (const g of groups) {
+      for (const x of g.series) {
+        const r = st.sensors[x.s.id];
+        x.data.push(r && r.v !== null && r.st === 'ok' ? +r.v : null);
+        if (x.data.length > maxLen) x.data.shift();
+      }
+      draw(g);
     }
   });
-  window.addEventListener('resize', () => Object.values(charts).forEach(draw));
+  let rt;
+  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => groups.forEach(draw), 100); });
   onConfig(() => build().catch(e => CM.toast(e.message, true)));
   document.addEventListener('DOMContentLoaded', () => build().catch(e => CM.toast(e.message, true)));
 })();

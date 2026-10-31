@@ -62,6 +62,8 @@ All pins can be changed in the web app.
 - **Divider:** 10 kΩ from the signal to the ESP32 pin, 20 kΩ from the pin to ground. This divides by 1.5, so 4.5 V becomes 3.0 V, which matches the default calibration.
 - **Or an ADS1115:** power it from 3.3 V and keep the same dividers in front of it. It's much more accurate than the ESP32's own analog pins.
 
+Also fit a **100 kΩ pull-down** (pin to ground) on every analog input. Without it, an unplugged or broken sender lets the pin float and show random values; with it, the pin reads 0 V and the sensor shows **FAULT**.
+
 On each input, also fit a 1 kΩ series resistor, a 3.3 V zener/TVS to ground and a 100 nF capacitor to protect against engine-bay voltage spikes.
 
 Analog sensors **must** use GPIO 32–39. The ESP32's other analog pins stop working while Wi-Fi is on.
