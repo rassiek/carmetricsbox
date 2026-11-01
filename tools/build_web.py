@@ -49,6 +49,13 @@ def main():
     ap.add_argument("--mklittlefs", help="path to the mklittlefs tool")
     args = ap.parse_args()
 
+    # The firmware's release label (Config.h FW_VERSION) is baked into the web
+    # app, so the pages can warn when the firmware and web app don't match.
+    import re
+    cfg = open(os.path.join(ROOT, "firmware", "CarMetrics", "Config.h"), encoding="utf-8").read()
+    version = re.search(r'#define FW_VERSION "([^"]+)"', cfg).group(1)
+    print(f"release {version}")
+
     shutil.rmtree(DATA, ignore_errors=True)
     os.makedirs(OUT)
     total_in = total_out = 0
@@ -56,7 +63,7 @@ def main():
         src = os.path.join(SRC, name)
         if not os.path.isfile(src) or name.startswith("."):
             continue
-        raw = open(src, "rb").read()
+        raw = open(src, "rb").read().replace(b"__CM_VERSION__", version.encode())
         packed = gzip.compress(raw, compresslevel=9, mtime=0)
         with open(os.path.join(OUT, name + ".gz"), "wb") as f:
             f.write(packed)

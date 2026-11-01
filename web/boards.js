@@ -72,7 +72,7 @@
   }
 
   async function load() {
-    const d = await api('/api/v2/boards');
+    const d = await api('/api/v2/boards').catch(e => { throw new Error(e.message === 'Not found' ? 'This firmware has no Boards support yet: upload the firmware of this release (System page)' : e.message); });
     const l = d.link;
     $('#linkPill').textContent = l.ok ? `${l.type}, channel ${l.channel}` : 'radio off';
     $('#linkPill').className = 'pill ' + (l.ok ? 'ok' : 'warn');

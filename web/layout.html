@@ -19,16 +19,24 @@
       <div class="row" style="margin-top:8px"><select id="tAdd" style="width:auto"></select><button id="tAddBtn" class="small">Add tile</button></div>
     </div>
 
-    <div class="panel">
-      <div class="row"><h3 style="margin:0">OLED pages</h3><span class="spacer"></span>
-        <button id="oAuto" class="small">Automatic</button></div>
-      <p class="muted small">Order of the values on the OLED and where each page starts. Text or bar style is set per sensor (Sensors page). Pages that don't fit split automatically; they rotate every few seconds.</p>
-      <div id="oList"></div>
-      <div class="row" style="margin-top:8px"><select id="oAdd" style="width:auto"></select><button id="oAddBtn" class="small">Add</button>
-        <button id="oBreak" class="small">Add page break</button></div>
+    <div class="panel" id="oledPanel">
+      <div class="row"><h3 style="margin:0">OLED screen</h3><span class="spacer"></span>
+        <label class="small" style="margin:0">Values per text line</label>
+        <select id="oCols" style="width:auto"><option value="0">Automatic</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+        <button id="oAbbr" class="small" title="CLT coolant, IT intake, GBT gearbox, TCT transfer case, CT cabin, EGT, BST boost, OIL">Suggested labels</button>
+        <button id="oAuto" class="small">Automatic order</button></div>
+      <p class="muted small">What shows on the OLED, in which order and style. <b>Label</b>: up to 3 characters (e.g. GBT gearbox, TCT transfer case,
+        IT intake, CT cabin, EGT). <b>Text</b> values share a line; <b>Bar</b> and <b>Marker</b> get a line each, with ticks at the thresholds:
+        drag the sliders to set them. Pages that don't fit split automatically and rotate.</p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:1;min-width:300px"><div id="oList"></div>
+          <div class="row" style="margin-top:8px"><select id="oAdd" style="width:auto"></select><button id="oAddBtn" class="small">Add</button>
+            <button id="oBreak" class="small">Add page break</button></div></div>
+        <div><div class="muted small" style="margin-bottom:4px">Preview (live values)</div><div id="oPreview" style="display:flex;gap:8px;flex-wrap:wrap"></div></div>
+      </div>
     </div>
 
-    <div class="row"><button id="save" class="primary">Save layout</button><a class="btn" href="index.html">Back to gauges</a>
+    <div class="row"><button id="save" class="primary">Save layout</button><a class="btn" href="index.html">Back to gauges</a><a class="btn" href="system.html">OLED type &amp; contrast</a>
       <span id="dirty" class="pill warn hidden">unsaved changes</span></div>
   </main>
   <script src="layout.js"></script>

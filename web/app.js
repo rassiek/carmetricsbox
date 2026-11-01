@@ -1,6 +1,7 @@
 // CarMetrics shared helpers: API, live events, header, toast
 'use strict';
 const CM = (() => {
+  const WEB_VERSION = '__CM_VERSION__';   // replaced by tools/build_web.py with the release label
   const $ = (s, el = document) => el.querySelector(s);
   const h = (tag, attrs = {}, ...kids) => {
     const el = document.createElement(tag);
@@ -128,7 +129,7 @@ const CM = (() => {
   function header() {
     const here = location.pathname.split('/').pop() || 'index.html';
     const hd = h('header', {},
-      h('span', { class: 'brand' }, 'CarMetrics'),
+      h('span', { class: 'brand', title: 'Web app ' + WEB_VERSION }, 'CarMetrics', h('small', { id: 'relLabel', class: 'muted', style: 'font-weight:400;font-size:11px;margin-left:6px' }, WEB_VERSION.startsWith('__') ? 'dev' : WEB_VERSION)),
       h('nav', {}, pages.map(([href, name]) => h('a', { href, class: href === here ? 'active' : '' }, name))),
       h('span', { id: 'clock', class: 'pill', title: 'Board clock' }, '--:--'),
       h('span', { id: 'engine', class: 'pill' }, 'engine ?'),
@@ -182,7 +183,17 @@ const CM = (() => {
   function fmt(v, dec) { return v === null || v === undefined || Number.isNaN(v) ? '--' : Number(v).toFixed(dec); }
   const statusText = { ok: '', waiting: 'waiting', unassigned: 'not assigned', not_found: 'not found', fault: 'FAULT', disabled: 'disabled' };
 
-  document.addEventListener('DOMContentLoaded', () => { header(); connectWs(); });
+  // Firmware and web app are uploaded separately: say so when they don't match
+  // (e.g. only littlefs.bin was uploaded and new pages call missing firmware APIs).
+  async function checkVersion() {
+    if (WEB_VERSION.startsWith('__')) return;   // development copy, not built
+    const i = await api('/api/info').catch(() => null);
+    if (!i || i.version === WEB_VERSION) return;
+    document.querySelector('header').after(h('div', { class: 'banner' },
+      `Firmware ${i.version} and web app ${WEB_VERSION} are from different releases. Upload both files of one release on the System page (firmware, then web app), or flash the full image over USB.`));
+  }
+
+  document.addEventListener('DOMContentLoaded', () => { header(); connectWs(); checkVersion(); });
   // ---- several boards: Sensors / Relays pages edit another board with ?board=N
   function remoteBoard() { const b = +new URLSearchParams(location.search).get('board'); return b > 0 ? b : 0; }
   async function boardPicker(sel) {   // <select> inside a hidden wrapper; shown when boards are paired
@@ -194,5 +205,5 @@ const CM = (() => {
     sel.parentElement.classList.remove('hidden');
   }
 
-  return { $, h, api, toast, live, onConfig, fmt, statusText, command, board, remoteBoard, boardPicker, get state() { return lastState; } };
+  return { WEB_VERSION, $, h, api, toast, live, onConfig, fmt, statusText, command, board, remoteBoard, boardPicker, get state() { return lastState; } };
 })();

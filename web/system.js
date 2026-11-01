@@ -9,7 +9,8 @@
   async function loadInfo() {
     const i = await api('/api/info');
     const rows = [
-      ['Firmware', `${i.version} (${i.build})`],
+      ['Release', `firmware ${i.version}, web app ${CM.WEB_VERSION}` + (i.version !== CM.WEB_VERSION && !CM.WEB_VERSION.startsWith('__') ? ' (MISMATCH)' : '')],
+      ['Firmware built', i.build],
       ['Uptime', dur(i.uptimeS)],
       ['Access point', `${i.apSsid} – ${i.apIp}`],
       ['Network', i.staSsid && i.ip ? `${i.staSsid} – ${i.ip} (${i.rssi} dBm)` : i.networks ? (i.wifiState || 'not connected') : 'no networks saved'],

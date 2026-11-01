@@ -126,6 +126,19 @@ Health panel showed a **crash reset**, **loop max ~1 s**, **lowest free 77 KB** 
 
 `async_tcp` aborted: `AsyncResponseStream` grew its buffer a few bytes at a time while ArduinoJson wrote a reply (`cbuf::resize` → `new[]` failed → `abort`). Out of memory, made likely by many live-data clients each holding queued messages. Fixed: reply buffer sized once from `measureJson`, a 503 "low memory" answer instead of crashing, and live data skips clients that aren't keeping up (one shared buffer for all WebSocket clients).
 
+## Releases: 5.1 and 5.2 (decided 1 Nov 2026)
+
+| Line | Boards | What |
+|---|---|---|
+| **5.1** (now, `5.1.0-beta.N`) | Every board: classic ESP32 (4 MB) and ESP32-S3; main, sensor and relay roles | Everything built so far; fits the 4 MB layout. This is what gets tested now |
+| **5.2** (later) | Main board **must be an ESP32-S3** (8/16 MB, PSRAM); its firmware also runs on any S3 | Bigger partitions, more features, richer layout / touch display. **Must stay compatible with 5.1 sensor and relay boards**: same board-to-board protocol (`Proto::VERSION` 1, frames ≤ 250 B), new features only as optional additions |
+
+The release label (`FW_VERSION` in `Config.h`) is shown in the web app header, on the System page (firmware and web app) and on the OLED start screen; the web app warns when firmware and web app come from different releases. Release files are named after it.
+
+## OLED layout editor (5.1.0-beta.7)
+
+Layout page → *OLED screen*: per value a **3-character label** (Suggested labels: CLT coolant, IT intake, GBT gearbox, TCT transfer case, CT cabin, EGT, BST, OIL), style **Text / Bar / Marker** (marker = the original look: threshold ticks in the frame and an "I" needle at the value), **threshold sliders** for bar and marker values, page breaks, **values per text line** (auto / 2 / 3 / 4, smaller font for 3–4), and a **live preview** of every page drawn like the firmware draws it. New default labels for fresh configs: CLT, IT, GBT, TCT, CT; EGT / boost / oil / coolant default to Marker.
+
 ## Next session
 
 1. Wi-Fi fix bench-tested OK by the user (31 Oct).

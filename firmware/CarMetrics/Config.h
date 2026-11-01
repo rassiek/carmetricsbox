@@ -6,7 +6,10 @@
 #include <ArduinoJson.h>
 #include <vector>
 
-#define FW_VERSION "5.0.0-dev"
+// Release label: shown in the web app header, System page, OLED start screen and
+// the release file names. Bump for every build handed out; the web app gets the
+// same label baked in (tools/build_web.py) and warns when the two don't match.
+#define FW_VERSION "5.1.0-beta.7"
 #define CONFIG_SCHEMA 2   // bumped when the stored layout changes; older configs are upgraded on load
 #define MAX_SENSORS 24
 #define MAX_RELAYS 12
@@ -20,7 +23,7 @@ enum class SensorType : uint8_t { DS18B20, MAX6675, MCP9600, BMP, ADC, ADS1115,
                                   COMPUTED,  // derived from other sensors
                                   UNKNOWN };
 enum class BmpField : uint8_t { TEMPERATURE, PRESSURE, ALTITUDE, HUMIDITY };   // humidity: BME280 only
-enum class OledStyle : uint8_t { OFF, TEXT, BAR };
+enum class OledStyle : uint8_t { OFF, TEXT, BAR, MARKER };   // MARKER: needle between the threshold ticks (original v1 look)
 
 struct SensorConfig {
   String id;    // unique, [a-z0-9_]
@@ -191,6 +194,7 @@ struct LayoutTile { String id; uint8_t size = 1; String widget = "bar"; };   // 
 struct LayoutConfig {
   std::vector<LayoutTile> tiles;     // empty = every enabled sensor, config order
   std::vector<String> oled;          // sensor ids, "|" = page break; empty = automatic
+  uint8_t oledColumns = 0;           // text values per OLED line: 0 = automatic (2 on 128x128, 3 on 128x64), 2..4
 };
 
 struct BlackBoxConfig {

@@ -25,6 +25,7 @@ struct Snapshot {
   int ota = -1;
   bool clock = false;
   uint16_t pageSeconds = 4;
+  uint8_t columns = 0;      // text values per line, 0 = automatic
   bool timeSynced = false;
   int tzOffset = 0;
   uint8_t turboPhase = TURBO_OFF, overall = LVL_OK;
@@ -51,6 +52,7 @@ void takeSnapshot(Snapshot& s) {
   s.ota = gSys.otaProgress;
   s.clock = gConfig.sys.oledClock;
   s.pageSeconds = gConfig.sys.oledPageSeconds;
+  s.columns = gConfig.layout.oledColumns;
   s.timeSynced = gSys.timeSynced;
   s.tzOffset = gConfig.sys.tzOffsetMinutes;
   s.turboPhase = gSys.turbo.phase; s.turboLeft = gSys.turbo.leftS; s.turboEgt = gSys.turbo.egt;
@@ -188,12 +190,26 @@ void drawBarRow(int y, int h, int W, const Item& it, bool invert) {
   oled->setCursor(0, base); oled->print(it.label);
   oled->setDrawColor(1);
   oled->drawFrame(bx, by, bw, barH);
-  if (!isnan(it.frac)) oled->drawBox(bx + 1, by + 1, (int)((bw - 2) * it.frac), barH - 2);
-  for (int k = 0; k < 4; k++) {
-    if (isnan(it.ticks[k])) continue;
-    int tx = bx + (int)((bw - 1) * it.ticks[k]);
-    oled->drawVLine(tx, by - 2, 2);
-    oled->drawVLine(tx, by + barH, 2);
+  if (it.style == OledStyle::MARKER) {
+    // Original look: threshold ticks inside the frame, a needle at the value.
+    for (int k = 0; k < 4; k++) {
+      if (isnan(it.ticks[k])) continue;
+      int tx = bx + 1 + (int)((bw - 3) * it.ticks[k]);
+      oled->drawVLine(tx, by + 2, barH - 4);
+    }
+    if (!isnan(it.frac)) {
+      int nx = bx + 1 + (int)((bw - 5) * it.frac);
+      oled->drawBox(nx + 1, by + 1, 2, barH - 2);           // stem
+      oled->drawHLine(nx, by + 1, 4); oled->drawHLine(nx, by + barH - 2, 4);   // serifs: an "I"
+    }
+  } else {
+    if (!isnan(it.frac)) oled->drawBox(bx + 1, by + 1, (int)((bw - 2) * it.frac), barH - 2);
+    for (int k = 0; k < 4; k++) {
+      if (isnan(it.ticks[k])) continue;
+      int tx = bx + (int)((bw - 1) * it.ticks[k]);
+      oled->drawVLine(tx, by - 2, 2);
+      oled->drawVLine(tx, by + barH, 2);
+    }
   }
   int vw = oled->getStrWidth(it.value);
   oled->setCursor(W - vw, base);
@@ -245,7 +261,7 @@ void render(const Snapshot& s, uint32_t now) {
 
   // Segments (layout page breaks), each: optional clock + text items, then bars.
   int textH = large ? 14 : 10, barH = large ? 17 : 11;
-  size_t cols = large ? 2 : 3;  // 128 px wide: 2 roomy columns on the tall screen, 3 on 128x64
+  size_t cols = s.columns >= 2 ? s.columns : (large ? 2 : 3);  // automatic: 2 roomy columns on the tall screen, 3 on 128x64
   std::vector<Item> texts, bars;
   std::vector<Row> rows;
   std::vector<size_t> forcedBreaks;   // row index where a new page must start
@@ -266,7 +282,7 @@ void render(const Snapshot& s, uint32_t now) {
   }
   for (auto& it : s.items) {
     if (it.pageBreak && (!segT.empty() || !segB.empty())) flushSegment(segT, segB);
-    (it.style == OledStyle::BAR ? segB : segT).push_back(it);
+    (it.style == OledStyle::BAR || it.style == OledStyle::MARKER ? segB : segT).push_back(it);
   }
   flushSegment(segT, segB);
 
@@ -290,12 +306,16 @@ void render(const Snapshot& s, uint32_t now) {
       bool inv = it.level == LVL_WARN || (it.level == LVL_CRIT && blink);
       drawBarRow(y, row.h, W, it, inv);
     } else {
-      int cw = W / (large ? 2 : 3);
+      int cw = W / (int)cols;
+      // Narrow cells (3-4 per line) need a smaller font so label + value fit.
+      const uint8_t* font = cols >= 4 ? u8g2_font_5x7_tr : (cols == 3 && large) ? u8g2_font_6x10_tr : (large ? u8g2_font_7x13_tr : u8g2_font_6x10_tr);
+      oled->setFont(font);
       for (int k = row.a; k < row.b; k++) {
         const Item& it = texts[k];
         bool inv = it.level == LVL_WARN || (it.level == LVL_CRIT && blink);
         drawCellText((k - row.a) * cw, y, cw, row.h, it, inv);
       }
+      oled->setFont(large ? u8g2_font_7x13_tr : u8g2_font_6x10_tr);
     }
     y += row.h;
   }

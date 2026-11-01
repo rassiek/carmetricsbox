@@ -56,12 +56,14 @@ const char* oledStyleToStr(OledStyle s) {
   switch (s) {
     case OledStyle::TEXT: return "text";
     case OledStyle::BAR:  return "bar";
+    case OledStyle::MARKER: return "marker";
     default:              return "off";
   }
 }
 OledStyle oledStyleFromStr(const String& s) {
   if (s == "text") return OledStyle::TEXT;
   if (s == "bar")  return OledStyle::BAR;
+  if (s == "marker") return OledStyle::MARKER;
   return OledStyle::OFF;
 }
 
@@ -87,10 +89,11 @@ void defaultSensors(std::vector<SensorConfig>& v, const BoardProfile& b) {
   const BoardPins& P = b.pins;
   v.clear();
   // 1-Wire temperatures - addresses are assigned from the Settings page after a bus scan
-  v.push_back(ds("coolant_temp", "Coolant", "CT", OledStyle::BAR, 15, 120, 100, 105));
-  v.push_back(ds("intake_temp", "Intake air", "I", OledStyle::TEXT, 0, 80, 55, 65));
-  v.push_back(ds("gearbox_temp", "Gearbox", "G", OledStyle::TEXT, 0, 120, 90, 105));
-  v.push_back(ds("transfer_case_temp", "Transfer case", "T", OledStyle::TEXT, 0, 120, 90, 105));
+  // OLED labels (3 characters max): CLT coolant, IT intake, GBT gearbox, TCT transfer case, CT cabin
+  v.push_back(ds("coolant_temp", "Coolant", "CLT", OledStyle::MARKER, 15, 120, 100, 105));
+  v.push_back(ds("intake_temp", "Intake air", "IT", OledStyle::TEXT, 0, 80, 55, 65));
+  v.push_back(ds("gearbox_temp", "Gearbox", "GBT", OledStyle::TEXT, 0, 120, 90, 105));
+  v.push_back(ds("transfer_case_temp", "Transfer case", "TCT", OledStyle::TEXT, 0, 120, 90, 105));
 
   // EGT thermocouple (MAX6675; classic ESP32 DevKit: SCK=5, CS=17, SO=16)
   SensorConfig egt;
@@ -99,20 +102,20 @@ void defaultSensors(std::vector<SensorConfig>& v, const BoardProfile& b) {
   egt.faultAlarm = false;  // unplugged probe shows NOT FOUND without sounding the alarm
   egt.smoothing = 0.5f;
   egt.gaugeMin = 0; egt.gaugeMax = 800; egt.warnHigh = 600; egt.critHigh = 700; egt.hysteresis = 10;
-  egt.oledStyle = OledStyle::BAR; egt.oledLabel = "EGT";
+  egt.oledStyle = OledStyle::MARKER; egt.oledLabel = "EGT";
   v.push_back(egt);
 
   // Pressure senders: 5 V, 0.5-4.5 V out, through a 10k/20k divider (x1.5)
   SensorConfig boost = analog("boost_pressure", "Boost", "psi", P.analog[0], 1.5f, 0.5f, 4.5f, 0, 30);
   boost.decimals = 1; boost.gaugeMin = 0; boost.gaugeMax = 25; boost.warnHigh = 17; boost.critHigh = 20;
   boost.hysteresis = 0.5f; boost.faultLowV = 0.35f; boost.faultHighV = 4.8f;
-  boost.oledStyle = OledStyle::BAR; boost.oledLabel = "BST";
+  boost.oledStyle = OledStyle::MARKER; boost.oledLabel = "BST";
   v.push_back(boost);
 
   SensorConfig oil = analog("oil_pressure", "Oil pressure", "psi", P.analog[1], 1.5f, 0.5f, 4.5f, 0, 100);
   oil.gaugeMin = 0; oil.gaugeMax = 100; oil.warnLow = 15; oil.critLow = 7; oil.warnHigh = 85;
   oil.hysteresis = 2; oil.faultLowV = 0.35f; oil.faultHighV = 4.8f; oil.engineRunningOnly = true;
-  oil.oledStyle = OledStyle::BAR; oil.oledLabel = "OIL";
+  oil.oledStyle = OledStyle::MARKER; oil.oledLabel = "OIL";
   v.push_back(oil);
 
   // Battery voltage via B25 module (30k/7.5k = x5)
@@ -132,7 +135,7 @@ void defaultSensors(std::vector<SensorConfig>& v, const BoardProfile& b) {
   SensorConfig cab;
   cab.id = "cabin_temp"; cab.name = "Cabin"; cab.unit = "°C"; cab.type = SensorType::BMP;
   cab.bmpField = BmpField::TEMPERATURE; cab.gaugeMin = 0; cab.gaugeMax = 50; cab.warnHigh = 40;
-  cab.oledStyle = OledStyle::TEXT; cab.oledLabel = "C";
+  cab.oledStyle = OledStyle::TEXT; cab.oledLabel = "CT";
   v.push_back(cab);
 
   SensorConfig alt;
@@ -522,6 +525,7 @@ void layoutToJson(const LayoutConfig& l, JsonObject o) {
   for (auto& x : l.tiles) { JsonObject j = t.add<JsonObject>(); j["id"] = x.id; j["size"] = x.size; j["widget"] = x.widget; }
   JsonArray d = o["oled"].to<JsonArray>();
   for (auto& x : l.oled) d.add(x);
+  o["oledColumns"] = l.oledColumns;
 }
 bool layoutFromJson(JsonVariantConst v, LayoutConfig& l, String& err) {
   if (!v.is<JsonObjectConst>()) { err = "Expected a layout"; return false; }
@@ -533,6 +537,8 @@ bool layoutFromJson(JsonVariantConst v, LayoutConfig& l, String& err) {
   }
   for (JsonVariantConst x : v["oled"].as<JsonArrayConst>()) { String id = x.as<const char*>() ? x.as<const char*>() : ""; if (id.length()) n.oled.push_back(id); }
   if (n.tiles.size() > 64 || n.oled.size() > 64) { err = "Layout too long"; return false; }
+  n.oledColumns = constrain(getI(v.as<JsonObjectConst>(), "oledColumns", 0), 0, 4);
+  if (n.oledColumns == 1) n.oledColumns = 2;
   l = n;
   return true;
 }

@@ -226,7 +226,7 @@
         field('Decimals', 'decimals', s, { type: 'select', numeric: true, options: [[0, '0'], [1, '1'], [2, '2'], [3, '3']] }),
         field('Offset (added)', 'offset', s, { nullable: false }),
         field('Smoothing (1 = raw)', 'smoothing', s, { nullable: false, step: '0.05' }),
-        field('OLED', 'oledStyle', s, { type: 'select', options: [['off', 'Hidden'], ['text', 'Text cell'], ['bar', 'Bar gauge']] }),
+        field('OLED', 'oledStyle', s, { type: 'select', options: [['off', 'Hidden'], ['text', 'Text cell'], ['bar', 'Bar gauge'], ['marker', 'Marker between thresholds']] }),
         field('OLED label (≤3)', 'oledLabel', s, { type: 'text' }))),
       h('fieldset', {}, h('legend', {}, 'Alerts (leave blank to disable)'), h('div', { class: 'fields' },
         field('Critical low', 'critLow', s), field('Warning low', 'warnLow', s),
