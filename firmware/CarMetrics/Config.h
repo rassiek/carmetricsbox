@@ -6,10 +6,23 @@
 #include <ArduinoJson.h>
 #include <vector>
 
+#ifdef CM_V52
+#define CM_MAX_BUFFER_KB 1536    // offline upload buffer on the 1.75 MB file system
+#define CM_MAX_BLACKBOX 60
+#else
+#define CM_MAX_BUFFER_KB 400
+#define CM_MAX_BLACKBOX 30
+#endif
 // Release label: shown in the web app header, System page, OLED start screen and
 // the release file names. Bump for every build handed out; the web app gets the
 // same label baked in (tools/build_web.py) and warns when the two don't match.
-#define FW_VERSION "5.1.0-beta.8"
+#define FW_RELEASE_51 "5.1.0-beta.9"   // every board (classic ESP32 4 MB, ESP32-S3), 4 MB layout
+#define FW_RELEASE_52 "5.2.0-beta.1"   // ESP32-S3 8 MB+ only (tools/cm.sh build52, -DCM_V52): main board, bigger buffers
+#ifdef CM_V52
+#define FW_VERSION FW_RELEASE_52
+#else
+#define FW_VERSION FW_RELEASE_51
+#endif
 #define CONFIG_SCHEMA 2   // bumped when the stored layout changes; older configs are upgraded on load
 #define MAX_SENSORS 24
 #define MAX_RELAYS 12
@@ -101,7 +114,10 @@ struct WifiNetwork { String ssid, pass; uint8_t priority = 5; };   // priority 1
 struct SystemConfig {
   String board = "auto";             // board profile id (see Board.cpp); "auto" = detect
   String role = "main";              // main | sensor | relay | sensor_relay (extra boards, phase 3); change = reboot
-  bool boardEncrypt = false;         // main board: give boards paired from now on an encryption key (off in the 5.1 betas until bench-tested)
+  bool boardEncrypt = false;
+  bool canEnabled = false;           // CAN link (built-in controller + 3.3 V transceiver, e.g. SN65HVD230)
+  int canTx = -1, canRx = -1;        // to the transceiver's D (TX) and R (RX) pins
+  uint16_t canKbps = 500;            // 125 / 250 / 500 / 1000, the same on every board         // main board: give boards paired from now on an encryption key (off in the 5.1 betas until bench-tested)
   std::vector<WifiNetwork> networks; // known networks to join (phone hotspot, home...)
   bool scanWhileApInUse = true;      // false: don't search for networks while a phone uses the CarMetrics AP
 

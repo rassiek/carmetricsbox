@@ -178,6 +178,34 @@ bool decodeAssign(const uint8_t* p, size_t n, Assign& m) {
   return r.ok;
 }
 
+size_t encodeFwOffer(uint8_t* out, const Header& h, const FwOffer& m) {
+  return frame(out, h, FW_OFFER, [&](Writer& w) { w.u32(m.size); w.u32(m.crc); w.u8(m.chip); w.str(m.version, sizeof(m.version)); });
+}
+bool decodeFwOffer(const uint8_t* p, size_t n, FwOffer& m) {
+  Reader r(p, n);
+  m.size = r.u32(); m.crc = r.u32(); m.chip = r.u8(); r.str(m.version, sizeof(m.version));
+  return r.ok;
+}
+size_t encodeFwData(uint8_t* out, const Header& h, const FwData& m) {
+  if (m.len > FW_CHUNK || (m.len && !m.data)) return 0;
+  return frame(out, h, FW_DATA, [&](Writer& w) { w.u32(m.offset); w.u8(m.len); w.bytes(m.data, m.len); });
+}
+bool decodeFwData(const uint8_t* p, size_t n, FwData& m) {
+  Reader r(p, n);
+  m.offset = r.u32(); m.len = r.u8();
+  if (!r.ok || m.len > FW_CHUNK || r.i + m.len != n) return false;
+  m.data = p + r.i;
+  return true;
+}
+size_t encodeFwAck(uint8_t* out, const Header& h, const FwAck& m) {
+  return frame(out, h, FW_ACK, [&](Writer& w) { w.u32(m.next); w.u8(m.status); w.str(m.message, sizeof(m.message)); });
+}
+bool decodeFwAck(const uint8_t* p, size_t n, FwAck& m) {
+  Reader r(p, n);
+  m.next = r.u32(); m.status = r.u8(); r.str(m.message, sizeof(m.message));
+  return r.ok;
+}
+
 // ---- configuration transfer
 ConfigChunk makeChunk(uint32_t rev, const uint8_t* all, size_t total, uint32_t crc, uint16_t index) {
   ConfigChunk c;
@@ -240,6 +268,7 @@ const char* typeName(uint8_t t) {
   switch (t) {
     case HELLO: return "hello"; case HEARTBEAT: return "heartbeat"; case CONFIG_CHUNK: return "config";
     case CONFIG_ACK: return "config-ack"; case POINTS: return "points"; case COMMAND: return "command"; case ACK: return "ack"; case ASSIGN: return "assign";
+    case FW_OFFER: return "fw-offer"; case FW_DATA: return "fw-data"; case FW_ACK: return "fw-ack";
     default: return "unknown";
   }
 }

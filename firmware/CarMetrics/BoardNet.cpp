@@ -52,6 +52,7 @@ void NodeSession::update(uint32_t now) {
     hb.flags = flags | (cfgRev ? 0 : HB_NEEDS_CONFIG) | (up ? 0 : HB_RELAYS_SAFE);
     send([&](uint8_t* f, const Header& h) { return encodeHeartbeat(f, h, hb); });
   }
+  if (fw.active && late(now, fw.lastAck, 500)) fwAck(FW_RECEIVING, now);   // keep the sender going if an answer got lost
   if (cfgRev && cb.points && (!lastPoints || late(now, lastPoints, pointsEveryMs))) {
     lastPoints = now ? now : 1;
     Point all[255];
@@ -91,6 +92,7 @@ void NodeSession::receive(const uint8_t* frame, size_t len, int8_t r, uint32_t n
   rssi = r; lastHeard = now;
   if (!up) { up = true; everHeard = true; if (cb.link) cb.link(true); }
 
+  if (h.type == FW_OFFER || h.type == FW_DATA) { fwReceive(h.type, p, n, now); return; }
   switch (h.type) {
     case CONFIG_CHUNK: {
       ConfigChunk c;
@@ -128,6 +130,54 @@ void NodeSession::receive(const uint8_t* frame, size_t len, int8_t r, uint32_t n
   }
 }
 
+void NodeSession::fwAck(uint8_t status, uint32_t now, const std::string& msg) {
+  FwAck a; a.next = fw.next; a.status = status; copyStr(a.message, sizeof(a.message), msg);
+  fw.lastAck = now ? now : 1;
+  fw.sinceAck = 0;
+  send([&](uint8_t* f, const Header& h) { return encodeFwAck(f, h, a); });
+}
+
+void NodeSession::fwReceive(uint8_t type, const uint8_t* p, size_t n, uint32_t now) {
+  if (type == FW_OFFER) {
+    FwOffer o;
+    if (!decodeFwOffer(p, n, o)) return;
+    if (fw.done && o.crc == fw.crc) { fwAck(FW_DONE, now); return; }          // finished, restarting
+    if (fw.active && o.crc == fw.crc && o.size == fw.size) { fwAck(FW_RECEIVING, now); return; }   // resent offer
+    if (fw.active && cb.fwAbort) cb.fwAbort();
+    fw = decltype(fw)();
+    std::string msg;
+    uint8_t st = cb.fwBegin ? cb.fwBegin(o.size, o.chip, o.version, msg) : (uint8_t)FW_REFUSED;
+    if (st != FW_RECEIVING) { fwAck(st, now, msg.empty() ? "refused" : msg); return; }
+    fw.active = true; fw.size = o.size; fw.crc = o.crc;
+    fwAck(FW_RECEIVING, now);
+    return;
+  }
+  FwData d;
+  if (!decodeFwData(p, n, d)) return;
+  if (fw.done) { fwAck(FW_DONE, now); return; }
+  if (!fw.active) return;
+  if (d.offset != fw.next || fw.next + d.len > fw.size) {           // duplicate or gap: say where we are
+    if (!fw.gapAcked || late(now, fw.lastAck, 50)) { fwAck(FW_RECEIVING, now); fw.gapAcked = true; }   // at once the first time
+    return;
+  }
+  fw.gapAcked = false;
+  if (!cb.fwWrite || !cb.fwWrite(d.offset, d.data, d.len)) {
+    fw.active = false; if (cb.fwAbort) cb.fwAbort();
+    fwAck(FW_WRITE_ERROR, now, "flash write failed");
+    return;
+  }
+  fw.runCrc = crc32(d.data, d.len, fw.runCrc);
+  fw.next += d.len;
+  if (fw.next < fw.size) { if (++fw.sinceAck >= 8) fwAck(FW_RECEIVING, now); return; }
+  fw.active = false;
+  if (fw.runCrc != fw.crc) { if (cb.fwAbort) cb.fwAbort(); fwAck(FW_BAD_CRC, now, "image damaged in transfer"); return; }
+  std::string msg;
+  uint8_t st = cb.fwEnd ? cb.fwEnd(msg) : (uint8_t)FW_DONE;
+  fw.done = st == FW_DONE;
+  fwAck(st, now, msg);
+  if (fw.done && cb.fwDone) cb.fwDone();
+}
+
 // ============================================================== main board
 MainSession::MainSession(Link& l, const Identity& m, const Callbacks& c) : link(l), me(m), cb(c) {}
 
@@ -146,6 +196,54 @@ uint16_t MainSession::send(uint8_t dst, const std::function<size_t(uint8_t*, con
   size_t n = enc(f, h);
   if (n) link.send(dst, f, n);
   return h.seq;
+}
+
+bool MainSession::sendOk(uint8_t dst, const std::function<size_t(uint8_t*, const Header&)>& enc) {
+  uint8_t f[MAX_FRAME];
+  Header h; h.src = MAIN_BOARD; h.dst = dst; h.seq = seq;
+  size_t n = enc(f, h);
+  if (!n || !link.send(dst, f, n)) return false;
+  seq++;
+  return true;
+}
+
+bool MainSession::startFirmware(uint8_t id, uint32_t size, uint32_t crc, uint8_t chip, const std::string& version,
+                                std::function<bool(uint32_t, uint8_t*, size_t)> read) {
+  BoardInfo* b = find(id);
+  if (!b || !size || !read) return false;
+  b->fw = BoardInfo::Fw();
+  b->fw.state = BoardInfo::Fw::OFFERING; b->fw.size = size; b->fw.crc = crc; b->fw.chip = chip; b->fw.version = version;
+  b->fw.read = read; b->fw.startedAt = b->fw.lastProgress = nowMs ? nowMs : 1;
+  return true;
+}
+
+void MainSession::cancelFirmware(uint8_t id) {
+  BoardInfo* b = find(id);
+  if (b && (b->fw.state == BoardInfo::Fw::OFFERING || b->fw.state == BoardInfo::Fw::SENDING)) { b->fw.state = BoardInfo::Fw::FAILED; b->fw.error = "cancelled"; }
+}
+
+void MainSession::fwUpdate(BoardInfo& b, uint32_t now) {
+  auto& fw = b.fw;
+  if (fw.state != BoardInfo::Fw::OFFERING && fw.state != BoardInfo::Fw::SENDING) return;
+  if (late(now, fw.lastProgress, FW_STALL_MS)) { fw.state = BoardInfo::Fw::FAILED; fw.error = b.online ? "transfer stalled" : "board went offline"; return; }
+  if (fw.state == BoardInfo::Fw::OFFERING) {
+    if (fw.lastOffer && !late(now, fw.lastOffer, FW_OFFER_MS)) return;
+    fw.lastOffer = now ? now : 1;
+    FwOffer o; o.size = fw.size; o.crc = fw.crc; o.chip = fw.chip; copyStr(o.version, sizeof(o.version), fw.version);
+    send(b.id, [&](uint8_t* f, const Header& h) { return encodeFwOffer(f, h, o); });
+    return;
+  }
+  if (fw.sentTo < fw.acked) fw.sentTo = fw.acked;
+  uint32_t windowEnd = std::min(fw.size, fw.acked + FW_WINDOW);
+  if (fw.sentTo >= windowEnd && late(now, fw.lastAckAt, FW_RESEND_MS)) { fw.sentTo = fw.acked; fw.lastAckAt = now; }   // no answer: send the window again
+  uint8_t buf[FW_CHUNK];
+  for (int k = 0; k < 4 && fw.sentTo < windowEnd; k++) {
+    uint8_t len = (uint8_t)std::min<uint32_t>(FW_CHUNK, fw.size - fw.sentTo);
+    if (!fw.read(fw.sentTo, buf, len)) { fw.state = BoardInfo::Fw::FAILED; fw.error = "could not read the image"; return; }
+    FwData d; d.offset = fw.sentTo; d.data = buf; d.len = len;
+    if (!sendOk(b.id, [&](uint8_t* f, const Header& h) { return encodeFwData(f, h, d); })) break;   // radio busy: next time
+    fw.sentTo += len;
+  }
 }
 
 void MainSession::restore(const BoardInfo& b) {
@@ -233,6 +331,7 @@ void MainSession::update(uint32_t now) {
       send(b.id, [&](uint8_t* f, const Header& h) { return encodeConfigChunk(f, h, c); });
     }
   }
+  for (auto& b : list) fwUpdate(b, now);
   // commands: resend until answered
   for (auto it = pending.begin(); it != pending.end();) {
     if (!late(now, it->lastSent, COMMAND_RESEND_MS)) { ++it; continue; }
@@ -318,6 +417,19 @@ void MainSession::receive(const uint8_t* frame, size_t len, int8_t rssi, uint32_
       if (b->points.size() < need) b->points.resize(need);
       for (uint8_t i = 0; i < m.count; i++) b->points[m.first + i] = m.points[i];
       b->pointsAt = now;
+      return;
+    }
+    case FW_ACK: {
+      FwAck a;
+      if (!decodeFwAck(p, n, a)) return;
+      auto& fw = b->fw;
+      if (fw.state != BoardInfo::Fw::OFFERING && fw.state != BoardInfo::Fw::SENDING) return;
+      if (a.status == FW_RECEIVING) {
+        if (fw.state == BoardInfo::Fw::OFFERING) { fw.state = BoardInfo::Fw::SENDING; fw.acked = fw.sentTo = a.next; fw.lastProgress = fw.lastAckAt = now; }
+        else if (a.next > fw.acked) { fw.acked = a.next; fw.lastProgress = fw.lastAckAt = now; }
+        else if (late(now, fw.rewoundAt, 150)) { fw.sentTo = fw.acked; fw.rewoundAt = fw.lastAckAt = now; }   // same place again: something was lost, go back (once per 150 ms: answers to frames already on their way say the same)
+      } else if (a.status == FW_DONE) { fw.state = BoardInfo::Fw::DONE; fw.acked = fw.size; }
+      else { fw.state = BoardInfo::Fw::FAILED; fw.error = a.message[0] ? a.message : "refused by the board"; }
       return;
     }
     case ACK: {

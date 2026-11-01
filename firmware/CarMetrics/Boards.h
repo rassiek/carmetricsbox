@@ -31,6 +31,13 @@ String shareJson(int id, String& out);                           // that board's
 String setShare(int id, JsonVariantConst sensors, JsonVariantConst relays);   // either may be null = keep
 String relayCommand(int id, int relayIndex, bool on);
 
+// Firmware for another board, sent over the link: this board's own firmware
+// (same chip), or a file uploaded into this board's spare firmware slot.
+String firmwareFromSelf(int id);
+bool uploadChunk(size_t index, const uint8_t* data, size_t len, bool final, String& err);
+String firmwareFromUpload(int id);
+String firmwareCancel(int id);
+
 // Main board: every sensor of every paired board also exists here as a REMOTE
 // sensor ("b1_coolant_temp", name "<board> <sensor>"), so gauges, charts,
 // alarms, black box, OLED and cloud upload treat it like a local one.

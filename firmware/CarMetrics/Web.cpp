@@ -136,6 +136,9 @@ String uploadError;
 bool uploadAuthorised = false;
 size_t uploadTotal = 0;
 
+bool boardUploadAuthorised = false;
+String boardUploadError;
+
 void handleUpload(AsyncWebServerRequest* req, const String& filename, size_t index, uint8_t* data, size_t len, bool final) {
   if (index == 0) {
     String pass;
@@ -314,6 +317,29 @@ void setupV2Routes() {
     String err = Boards::setShare(j["id"] | 0, j["sensors"], j["relays"]);
     if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Saved. Sending it to the board; the Boards page shows when it is accepted.");
   });
+  // firmware for another board: {id, source:"self"|"upload"}; the file goes to /firmware/upload first
+  addJsonPost("/api/v2/boards/firmware", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    int id = j["id"] | 0;
+    String src = j["source"] | "self";
+    String err = src == "cancel" ? Boards::firmwareCancel(id) : src == "upload" ? Boards::firmwareFromUpload(id) : Boards::firmwareFromSelf(id);
+    if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, src == "cancel" ? "Cancelled" : "Sending the firmware; the board restarts when it has all of it");
+  });
+  server.on("/api/v2/boards/firmware/upload", HTTP_POST,
+    [](AsyncWebServerRequest* req) {
+      if (!boardUploadAuthorised) { requireAuth(req); return; }
+      if (boardUploadError.length()) sendStatus(req, 400, boardUploadError); else sendStatus(req, 200, "Firmware file stored on this board");
+    },
+    [](AsyncWebServerRequest* req, const String&, size_t index, uint8_t* data, size_t len, bool final) {
+      if (index == 0) {
+        String pass; { StateLock lk; pass = gConfig.sys.adminPass; }
+        boardUploadAuthorised = req->authenticate("admin", pass.c_str());
+        boardUploadError = "";
+      }
+      if (!boardUploadAuthorised || boardUploadError.length()) return;
+      String err;
+      if (!Boards::uploadChunk(index, data, len, final, err)) boardUploadError = err;
+    });
   addJsonPost("/api/v2/boards/relay", [](AsyncWebServerRequest* req, JsonVariant& j) {
     if (!requireAuth(req)) return;
     String err = Boards::relayCommand(j["id"] | 0, j["index"] | -1, j["on"] | false);

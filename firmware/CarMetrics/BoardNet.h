@@ -32,7 +32,13 @@ constexpr uint32_t CONFIG_RESEND_MS = 2000;
 constexpr uint32_t COMMAND_RESEND_MS = 300;
 constexpr uint8_t COMMAND_TRIES = 4;
 constexpr uint8_t CHUNKS_PER_UPDATE = 4;      // don't flood the radio
-constexpr size_t MAX_BOARDS = 3;              // extra boards in this phase
+#ifdef CM_V52
+constexpr size_t MAX_BOARDS = 6;              // 5.2 main board (ESP-NOW allows ~6 encrypted peers next to the AP)
+#else
+constexpr size_t MAX_BOARDS = 3;              // extra boards per main board in 5.1
+#endif
+constexpr uint32_t FW_WINDOW = 32 * Proto::FW_CHUNK;   // bytes in flight before an answer is needed
+constexpr uint32_t FW_RESEND_MS = 250, FW_OFFER_MS = 1000, FW_STALL_MS = 20000;
 
 struct Identity {                             // this board, for HELLO
   uint8_t role = Proto::ROLE_SENSOR, chip = Proto::CHIP_ESP32;
@@ -52,6 +58,13 @@ class NodeSession {
     std::function<void(bool up)> link;                                     // link lost / back
     std::function<uint8_t(Proto::Point* out, uint8_t max)> points;        // fill current values
     std::function<uint8_t()> level;                                        // worst local alarm level
+    // Firmware update from the main board. begin: FW_RECEIVING to accept (or a refusal + message);
+    // write: next bytes in order; end: all bytes in and CRC good -> FW_DONE to switch over; abort: give up.
+    std::function<uint8_t(uint32_t size, uint8_t chip, const char* version, std::string& message)> fwBegin;
+    std::function<bool(uint32_t offset, const uint8_t* data, size_t len)> fwWrite;
+    std::function<uint8_t(std::string& message)> fwEnd;
+    std::function<void()> fwAbort;
+    std::function<void()> fwDone;                                          // restart into the new firmware
   };
   NodeSession(Link& link, const Identity& me, uint8_t storedId, uint32_t storedConfigRev, const Callbacks& cb);
   void update(uint32_t now);
@@ -84,6 +97,10 @@ class NodeSession {
   bool haveAck = false;
   int32_t lastCmdSeq = -1;                    // a resent command is answered again, not run twice
   uint8_t lastCmdStatus = 0;
+  // firmware being received
+  struct { bool active = false, done = false, gapAcked = false; uint32_t size = 0, crc = 0, next = 0, runCrc = 0, lastAck = 0, sinceAck = 0; } fw;
+  void fwAck(uint8_t status, uint32_t now, const std::string& msg = "");
+  void fwReceive(uint8_t type, const uint8_t* p, size_t n, uint32_t now);
 };
 
 // ------------------------------------------------------------------ main board
@@ -108,6 +125,14 @@ struct BoardInfo {
   std::vector<Proto::Point> points;
   uint32_t pointsAt = 0;
   Proto::SeqTracker seqs;
+  // firmware update of this board (see MainSession::startFirmware)
+  struct Fw {
+    enum State : uint8_t { IDLE, OFFERING, SENDING, DONE, FAILED } state = IDLE;
+    uint32_t size = 0, crc = 0, acked = 0, sentTo = 0, lastAckAt = 0, lastProgress = 0, lastOffer = 0, startedAt = 0, rewoundAt = 0;
+    uint8_t chip = 0, offers = 0;
+    std::string version, error;
+    std::function<bool(uint32_t offset, uint8_t* buf, size_t len)> read;
+  } fw;
   // internal: configuration being sent
   struct Tx { std::vector<uint8_t> json; uint32_t crc = 0; uint16_t next = 0; uint32_t roundAt = 0; } tx;
 };
@@ -142,6 +167,10 @@ class MainSession {
   // configuration and commands
   void setConfig(uint8_t id, uint32_t rev, const std::vector<uint8_t>& json);
   int command(uint8_t id, const Proto::Command& c);             // -> command seq, or -1
+  // Send a firmware image to a board; read() supplies its bytes. Progress in board(id)->fw.
+  bool startFirmware(uint8_t id, uint32_t size, uint32_t crc, uint8_t chip, const std::string& version,
+                     std::function<bool(uint32_t offset, uint8_t* buf, size_t len)> read);
+  void cancelFirmware(uint8_t id);
 
   const std::vector<BoardInfo>& boards() const { return list; }
   const BoardInfo* board(uint8_t id) const;
@@ -151,6 +180,8 @@ class MainSession {
   struct PendingCmd { uint8_t board; uint16_t seq; Proto::Command c; uint32_t lastSent; uint8_t tries; };
   BoardInfo* find(uint8_t id);
   uint16_t send(uint8_t dst, const std::function<size_t(uint8_t*, const Proto::Header&)>& enc, int useSeq = -1);
+  bool sendOk(uint8_t dst, const std::function<size_t(uint8_t*, const Proto::Header&)>& enc);   // false = link busy
+  void fwUpdate(BoardInfo& b, uint32_t now);
   Link& link; Identity me; Callbacks cb;
   std::vector<BoardInfo> list;
   std::vector<FoundBoard> foundList;

@@ -34,6 +34,9 @@ enum Type : uint8_t {
   COMMAND = 6,       // main -> board: relay, mute, identify, reboot
   ACK = 7,           // reply to a COMMAND
   ASSIGN = 8,        // main -> all: "the board with this MAC is now board N" (pairing; N = UNPAIRED to forget it)
+  FW_OFFER = 9,      // main -> board: a firmware image is coming (size, CRC, chip, version)
+  FW_DATA = 10,      // main -> board: FW_CHUNK bytes at an offset
+  FW_ACK = 11,       // board -> main: next offset wanted, or done / refused
 };
 
 enum Role : uint8_t { ROLE_MAIN = 0, ROLE_SENSOR = 1, ROLE_RELAY = 2, ROLE_SENSOR_RELAY = 3, ROLE_DISPLAY = 4 };
@@ -116,6 +119,24 @@ struct Assign {
   uint8_t key[16] = {0};
 };
 
+struct FwOffer {
+  uint32_t size = 0, crc = 0;  // whole image, CRC-32
+  uint8_t chip = CHIP_ESP32;
+  char version[24] = "";
+};
+constexpr size_t FW_CHUNK = 200;
+struct FwData {
+  uint32_t offset = 0;
+  const uint8_t* data = nullptr;
+  uint8_t len = 0;
+};
+struct FwAck {
+  uint32_t next = 0;           // bytes received in order so far
+  uint8_t status = 0;          // FW_*
+  char message[40] = "";
+};
+enum FwStatus : uint8_t { FW_RECEIVING = 0, FW_DONE = 1, FW_WRONG_CHIP = 2, FW_TOO_BIG = 3, FW_WRITE_ERROR = 4, FW_BAD_CRC = 5, FW_REFUSED = 6 };
+
 // ---- frames
 // encode*: write a complete frame into out (MAX_FRAME bytes); return its length, 0 on error.
 size_t encodeHello(uint8_t* out, const Header& h, const Hello& m);
@@ -126,6 +147,9 @@ size_t encodePoints(uint8_t* out, const Header& h, const Points& m);
 size_t encodeCommand(uint8_t* out, const Header& h, const Command& m);
 size_t encodeAck(uint8_t* out, const Header& h, const Ack& m);
 size_t encodeAssign(uint8_t* out, const Header& h, const Assign& m);
+size_t encodeFwOffer(uint8_t* out, const Header& h, const FwOffer& m);
+size_t encodeFwData(uint8_t* out, const Header& h, const FwData& m);
+size_t encodeFwAck(uint8_t* out, const Header& h, const FwAck& m);
 
 // Check a received frame (marker, version, length, CRC) and split it.
 // Returns nullptr when valid, else a short reason ("bad CRC"...).
@@ -141,6 +165,9 @@ bool decodePoints(const uint8_t* p, size_t n, Points& m);
 bool decodeCommand(const uint8_t* p, size_t n, Command& m);
 bool decodeAck(const uint8_t* p, size_t n, Ack& m);
 bool decodeAssign(const uint8_t* p, size_t n, Assign& m);
+bool decodeFwOffer(const uint8_t* p, size_t n, FwOffer& m);
+bool decodeFwData(const uint8_t* p, size_t n, FwData& m);
+bool decodeFwAck(const uint8_t* p, size_t n, FwAck& m);
 
 // ---- configuration transfer
 uint32_t crc32(const uint8_t* data, size_t len, uint32_t crc = 0);

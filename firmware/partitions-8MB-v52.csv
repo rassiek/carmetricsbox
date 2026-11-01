@@ -1,0 +1,12 @@
+# CarMetrics 5.2 layout for ESP32-S3 boards with 8 MB flash or more (N8R8, N16R8):
+# two 3 MB firmware slots, 1.75 MB LittleFS (web app, black box, upload buffer),
+# 64 KB settings (same "cfg" NVS partition as 5.1), core dump.
+# Used by tools/cm.sh build52 (copied over the sketch's 4 MB partitions.csv).
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x5000
+otadata,  data, ota,     0xE000,   0x2000
+app0,     app,  ota_0,   0x10000,  0x300000
+app1,     app,  ota_1,   0x310000, 0x300000
+spiffs,   data, spiffs,  0x610000, 0x1C0000
+cfg,      data, nvs,     0x7D0000, 0x10000
+coredump, data, coredump,0x7E0000, 0x10000

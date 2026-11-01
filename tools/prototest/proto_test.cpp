@@ -10,6 +10,8 @@
 
 static int passed = 0, failed = 0;
 void boardsTest();
+void fwTest();
+void canTest();
 void check(bool ok, const char* what, const std::string& detail = "") {
   (ok ? passed : failed)++;
   printf("%s %s %s\n", ok ? "PASS" : "FAIL", what, detail.c_str());
@@ -184,6 +186,8 @@ int main() {
   check(crc16((const uint8_t*)"123456789", 9) == 0x29B1, "CRC-16/CCITT check value");
 
   boardsTest();
+  fwTest();
+  canTest();
   printf("DONE: %d passed, %d failed\n", passed, failed);
   return failed ? 1 : 0;
 }

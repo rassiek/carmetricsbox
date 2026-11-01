@@ -180,7 +180,7 @@
     for (const el of form().elements) {
       if (!el.name) continue;
       if (el.type === 'checkbox') out[el.name] = el.checked;
-      else if (el.type === 'number' || el.name === 'oneWireResolution' || el.name === 'i2cKhz' || el.name === 'gpsBaud') out[el.name] = el.value === '' ? null : +el.value;
+      else if (el.type === 'number' || el.name === 'oneWireResolution' || el.name === 'i2cKhz' || el.name === 'gpsBaud' || el.name === 'canKbps') out[el.name] = el.value === '' ? null : +el.value;
       else out[el.name] = el.value;
     }
     out.networks = nets.filter(n => n.ssid.trim()).map(n => ({ ssid: n.ssid.trim(), pass: n.pass, priority: n.priority }));
@@ -207,6 +207,7 @@
       if (/\.zip$/i.test(file.name)) throw new Error('That is a .zip – unzip it and choose the .bin inside');
       if (target === 'firmware') {
         if (/full-flash/i.test(file.name) || b[0] === 0xFF) throw new Error('That is the full USB flash image. For Wi-Fi updates choose carmetrics-firmware.bin');
+        if (/-5\.2\./.test(file.name) && !/^5\.2\./.test(CM.WEB_VERSION) && !confirm('This is a 5.2 file and the board runs 5.1. 5.2 needs an ESP32-S3 with 8 MB flash, installed the first time with the full image over USB. Upload anyway?')) throw new Error('Cancelled');
         if (b[0] !== 0xE9) throw new Error('Not a firmware file (choose carmetrics-firmware.bin, or "Web app" for littlefs.bin)');
         const s3 = /S3/i.test(document.body.dataset.chip || '');
         if (chip === 9 && !s3) throw new Error('That firmware is for an ESP32-S3. This board needs carmetrics-firmware.bin');

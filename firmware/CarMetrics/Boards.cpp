@@ -1,6 +1,7 @@
 #include "Boards.h"
 #include "BoardNet.h"
 #include "EspNowLink.h"
+#include "CanLink.h"
 #include "State.h"
 #include "Outputs.h"
 #include "Board.h"
@@ -8,6 +9,8 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_system.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <algorithm>
 
 using namespace Proto;
@@ -17,7 +20,10 @@ namespace {
 const char* NS = "boards";       // main board: paired boards + their shares (in the "cfg" NVS partition)
 const char* NODE_NS = "node";    // extra board: own id + accepted settings revision
 
-EspNowLink radio;
+EspNowLink radio;      // ESP-NOW (default)
+CanLink can;           // CAN (option)
+MultiLink links;       // what the sessions use: ESP-NOW and/or CAN
+bool useRadio = false, useCan = false, anyLink = false;
 MainSession* mainS = nullptr;
 NodeSession* nodeS = nullptr;
 bool started = false;
@@ -25,6 +31,24 @@ uint8_t hopChannel = 1;
 uint32_t lastHop = 0;
 
 void syncMirrors();
+
+// ---------------------------------------------------------------- firmware images
+// ESP32 image header: magic 0xE9 at 0, chip id (uint16) at 12; app description
+// (version string at +16) right after the first segment header, at 32.
+uint8_t chipOfImage(const uint8_t* hdr) {
+  uint16_t id = hdr[12] | (hdr[13] << 8);
+  return id == 0 ? Proto::CHIP_ESP32 : id == 9 ? Proto::CHIP_ESP32S3 : Proto::CHIP_OTHER;
+}
+uint8_t myChip() { return String(Board::chip()) == "esp32s3" ? Proto::CHIP_ESP32S3 : Proto::CHIP_ESP32; }
+const char* chipName(uint8_t c) { return c == Proto::CHIP_ESP32S3 ? "ESP32-S3" : c == Proto::CHIP_ESP32 ? "ESP32" : "other chip"; }
+
+// Main board: an image for another board, uploaded into this board's spare
+// firmware slot (raw: no boot change; that slot's old "previous firmware" is lost).
+struct Uploaded { const esp_partition_t* part = nullptr; uint32_t size = 0, crc = 0; uint8_t chip = 0; String version; bool ok = false; String error; } upload;
+
+// Extra board: OTA writing of an image coming over the link.
+esp_ota_handle_t otaHandle = 0;
+const esp_partition_t* otaPart = nullptr;
 
 struct PointName { String id, name, unit; uint8_t decimals; bool relay; };
 struct Share { String json; std::vector<PointName> names; };
@@ -253,7 +277,17 @@ void Boards::begin() {
 #endif
   if (started) return;
   started = true;
-  if (!radio.begin(isMain())) return;
+  // Main board: ESP-NOW always, CAN too when enabled. Extra board: CAN when
+  // enabled (then no radio channel search), otherwise ESP-NOW.
+  const SystemConfig& s = gConfig.sys;
+  bool canWanted = s.canEnabled && s.canTx >= 0 && s.canRx >= 0;
+  useRadio = isMain() || !canWanted;
+  if (useRadio && radio.begin(isMain())) links.add(&radio); else useRadio = false;
+  uint8_t mac[6]; WiFi.macAddress(mac);
+  useCan = canWanted && can.begin(s.canTx, s.canRx, s.canKbps, mac);
+  if (useCan) links.add(&can);
+  anyLink = useRadio || useCan;
+  if (!anyLink) return;
   if (isMain()) {
     MainSession::Callbacks cb;
     cb.online = [](const BoardInfo& b, bool on) { Serial.printf("[boards] board %u '%s' %s\n", b.id, b.name.c_str(), on ? "online" : "OFFLINE"); };
@@ -261,7 +295,7 @@ void Boards::begin() {
       Serial.printf("[boards] board %u settings %s %s\n", b.id, b.configStatus == CFG_OK ? "accepted" : "REFUSED:", b.configMessage.c_str());
     };
     cb.boardsChanged = [] { saveTable(); };
-    mainS = new MainSession(radio, identity(), cb);
+    mainS = new MainSession(links, identity(), cb);
     loadMain();
   } else {
     Preferences p;
@@ -289,25 +323,47 @@ void Boards::begin() {
     cb.link = nodeLink;
     cb.points = nodePoints;
     cb.level = [] { return (uint8_t)gSys.overallLevel; };
-    nodeS = new NodeSession(radio, identity(), id, rev, cb);
+    cb.fwBegin = [](uint32_t size, uint8_t chip, const char* version, std::string& msg) -> uint8_t {
+      if (chip != myChip()) { msg = std::string("image is for ") + chipName(chip) + ", this is " + chipName(myChip()); return FW_WRONG_CHIP; }
+      otaPart = esp_ota_get_next_update_partition(nullptr);
+      if (!otaPart) { msg = "no spare firmware slot"; return FW_REFUSED; }
+      if (size > otaPart->size) { msg = "image bigger than the firmware slot"; return FW_TOO_BIG; }
+      // Erase as we go (not all at once), so sensors and alarms keep running during the transfer.
+      if (esp_ota_begin(otaPart, OTA_WITH_SEQUENTIAL_WRITES, &otaHandle) != ESP_OK) { msg = "could not start the update"; return FW_REFUSED; }
+      Serial.printf("[boards] receiving firmware %s (%u bytes) from the main board\n", version, (unsigned)size);
+      return FW_RECEIVING;
+    };
+    cb.fwWrite = [](uint32_t offset, const uint8_t* data, size_t len) {
+      if (offset == 0 && (len < 16 || data[0] != 0xE9 || chipOfImage(data) != myChip())) return false;   // not a firmware for this chip
+      return esp_ota_write(otaHandle, data, len) == ESP_OK;
+    };
+    cb.fwEnd = [](std::string& msg) -> uint8_t {
+      if (esp_ota_end(otaHandle) != ESP_OK) { otaHandle = 0; msg = "image check failed"; return FW_BAD_CRC; }
+      otaHandle = 0;
+      if (esp_ota_set_boot_partition(otaPart) != ESP_OK) { msg = "could not switch firmware"; return FW_WRITE_ERROR; }
+      return FW_DONE;   // the new firmware is confirmed after 60 s of running (rollback otherwise)
+    };
+    cb.fwAbort = [] { if (otaHandle) { esp_ota_abort(otaHandle); otaHandle = 0; } };
+    cb.fwDone = [] { Serial.println("[boards] new firmware received: restarting"); requestReboot(1500); };
+    nodeS = new NodeSession(links, identity(), id, rev, cb);
   }
-  radio.onReceive([](const uint8_t* f, size_t n, int8_t rssi) {
+  links.onReceive([](const uint8_t* f, size_t n, int8_t rssi) {
     if (mainS) mainS->receive(f, n, rssi, millis());
     if (nodeS) nodeS->receive(f, n, rssi, millis());
   });
 }
 
 void Boards::update() {
-  if (!started || !radio.ok()) return;
+  if (!started || !anyLink) return;
   uint32_t now = millis();
   StateLock lk;   // web handlers use the main session too
-  radio.poll();
+  links.poll();
   if (mainS) { mainS->update(now); updateMirrors(now); }
   if (nodeS) {
     nodeS->flags = (gSys.muted ? HB_MUTED : 0) | (Health::safeMode() ? HB_SAFE_MODE : 0);
     nodeS->update(now);
     // Channel search: hop until the main board answers (its beacon / reply to our hello).
-    if (!nodeS->mainInRange(now) && now - lastHop >= 300) {
+    if (useRadio && !nodeS->mainInRange(now) && now - lastHop >= 300) {
       lastHop = now;
       hopChannel = hopChannel % 13 + 1;
       radio.setChannel(hopChannel);
@@ -322,7 +378,13 @@ void Boards::toJson(JsonObject o) {
   uint32_t now = millis();
   o["role"] = gConfig.sys.role;
   JsonObject l = o["link"].to<JsonObject>();
-  l["type"] = radio.name(); l["ok"] = radio.ok(); l["channel"] = radio.ok() ? radio.channel() : 0;
+  l["type"] = links.name(); l["ok"] = anyLink; l["channel"] = radio.ok() ? radio.channel() : 0;
+  if (useCan || gConfig.sys.canEnabled) {
+    JsonObject cj = o["can"].to<JsonObject>();
+    cj["state"] = can.state(); cj["rx"] = can.rxCount; cj["tx"] = can.txCount; cj["txFail"] = can.txFail; cj["busErrors"] = can.busErrors;
+  }
+  o["firmware"] = FW_VERSION; o["chip"] = chipName(myChip());
+  if (upload.ok) { JsonObject u = o["uploaded"].to<JsonObject>(); u["version"] = upload.version; u["chip"] = chipName(upload.chip); u["size"] = upload.size; }
   l["rx"] = radio.rxCount; l["tx"] = radio.txCount; l["txFail"] = radio.txFail; l["queueDrops"] = radio.queueDrops;
   if (nodeS) {
     JsonObject n = o["node"].to<JsonObject>();
@@ -341,6 +403,14 @@ void Boards::toJson(JsonObject o) {
   for (auto& b : mainS->boards()) {
     JsonObject x = ba.add<JsonObject>();
     x["encrypted"] = b.hasKey;
+    if (b.fw.state != BoardInfo::Fw::IDLE) {
+      JsonObject f = x["fw"].to<JsonObject>();
+      static const char* const names[] = {"idle", "offering", "sending", "done", "failed"};
+      f["state"] = names[b.fw.state]; f["version"] = b.fw.version; f["error"] = b.fw.error;
+      f["percent"] = b.fw.size ? (int)(100.0 * b.fw.acked / b.fw.size) : 0;
+      f["seconds"] = (now - b.fw.startedAt) / 1000;
+    }
+    x["sameChip"] = b.chip == myChip();
     x["id"] = b.id; x["name"] = b.name; x["mac"] = macStr(b.mac); x["role"] = roleName(b.role); x["firmware"] = b.firmware;
     x["chip"] = b.chip == Proto::CHIP_ESP32S3 ? "ESP32-S3" : "ESP32";
     x["online"] = b.online; x["ageS"] = b.lastHeard ? (int32_t)((now - b.lastHeard) / 1000) : -1;
@@ -426,6 +496,69 @@ String Boards::setShare(int id, JsonVariantConst sensors, JsonVariantConst relay
   shares[id].json = j;
   indexShare(id); saveShare(id); pushShare(id);
   syncMirrors();   // its sensors show up on gauges, charts, alarms...
+  return "";
+}
+
+// ---------------------------------------------------------------- firmware for other boards
+String Boards::firmwareFromSelf(int id) {
+  if (!mainS) return "Only on the main board";
+  StateLock lk;
+  const BoardInfo* b = id >= 1 && id <= MAX_BOARD_ID ? mainS->board((uint8_t)id) : nullptr;
+  if (!b) return "Unknown board";
+  if (b->chip != myChip()) return String("That board is an ") + chipName(b->chip) + ": upload a firmware file for it instead";
+  const esp_partition_t* run = esp_ota_get_running_partition();
+  uint32_t size = ESP.getSketchSize();
+  if (!run || !size) return "Can't read this board's firmware";
+  uint8_t buf[512]; uint32_t crc = 0;
+  for (uint32_t off = 0; off < size; off += sizeof(buf)) {
+    size_t n = std::min<uint32_t>(sizeof(buf), size - off);
+    if (esp_partition_read(run, off, buf, n) != ESP_OK) return "Can't read this board's firmware";
+    crc = crc32(buf, n, crc);
+  }
+  mainS->startFirmware((uint8_t)id, size, crc, myChip(), FW_VERSION,
+    [run](uint32_t off, uint8_t* out, size_t len) { return esp_partition_read(run, off, out, len) == ESP_OK; });
+  return "";
+}
+
+bool Boards::uploadChunk(size_t index, const uint8_t* data, size_t len, bool final, String& err) {
+  if (!mainS) { err = "Only on the main board"; return false; }
+  if (index == 0) {
+    upload = Uploaded();
+    upload.part = esp_ota_get_next_update_partition(nullptr);   // this board's spare slot
+    if (!upload.part) { err = "No spare firmware slot"; return false; }
+    if (len < 64 || data[0] != 0xE9) { err = "Not an ESP32 firmware file (use carmetrics-...-firmware.bin, not the full image)"; return false; }
+    upload.chip = chipOfImage(data);
+    char v[33] = {0}; memcpy(v, data + 32 + 16, 32); upload.version = v;
+  }
+  if (!upload.part) { err = "Upload not started"; return false; }
+  if (index + len > upload.part->size) { err = "File bigger than a firmware slot"; upload.part = nullptr; return false; }
+  // erase each 4 KB sector as the data reaches it
+  for (size_t sec = (index + 4095) / 4096 * 4096; sec < index + len; sec += 4096)
+    if (esp_partition_erase_range(upload.part, sec, 4096) != ESP_OK) { err = "Erase failed"; upload.part = nullptr; return false; }
+  if (esp_partition_write(upload.part, index, data, len) != ESP_OK) { err = "Write failed"; upload.part = nullptr; return false; }
+  upload.crc = crc32(data, len, upload.crc);
+  upload.size = index + len;
+  if (final) upload.ok = true;
+  return true;
+}
+
+String Boards::firmwareFromUpload(int id) {
+  if (!mainS) return "Only on the main board";
+  StateLock lk;
+  const BoardInfo* b = id >= 1 && id <= MAX_BOARD_ID ? mainS->board((uint8_t)id) : nullptr;
+  if (!b) return "Unknown board";
+  if (!upload.ok || !upload.part) return "No firmware file uploaded";
+  if (upload.chip != b->chip) return String("That file is for an ") + chipName(upload.chip) + ", the board is an " + chipName(b->chip);
+  const esp_partition_t* part = upload.part;
+  mainS->startFirmware((uint8_t)id, upload.size, upload.crc, upload.chip, upload.version.c_str(),
+    [part](uint32_t off, uint8_t* out, size_t len) { return esp_partition_read(part, off, out, len) == ESP_OK; });
+  return "";
+}
+
+String Boards::firmwareCancel(int id) {
+  if (!mainS) return "Only on the main board";
+  StateLock lk;
+  mainS->cancelFirmware((uint8_t)id);
   return "";
 }
 

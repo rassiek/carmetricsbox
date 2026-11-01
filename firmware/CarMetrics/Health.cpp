@@ -190,6 +190,13 @@ void Health::earlyBoot() {
   }
 
   readCrash();
+#ifdef CM_V52
+  {   // 5.2 needs its own 8 MB partition table; installed over the air onto a 5.1 layout it runs, but without the 5.2 space
+    const esp_partition_t* run = esp_ota_get_running_partition();
+    if (run && run->size < 0x300000)
+      otaNote = String(otaNote.length() ? otaNote + " " : "") + "This is 5.2 firmware on the 4 MB (5.1) layout: flash carmetrics-5.2...-full-flash.bin over USB once to get the 5.2 storage.";
+  }
+#endif
 
   esp_register_freertos_idle_hook_for_cpu(idleHook0, 0);
   esp_register_freertos_tick_hook_for_cpu(tickHook0, 0);

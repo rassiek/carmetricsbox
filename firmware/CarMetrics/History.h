@@ -5,7 +5,11 @@
 // Samples kept per sensor: 360 x 5 s = 30 min on boards without PSRAM,
 // 2880 x 5 s = 4 h on boards with PSRAM (ESP32-S3 N8R8 / N16R8, WROVER).
 #define HISTORY_LEN 360
+#ifdef CM_V52
+#define HISTORY_LEN_PSRAM 5760   // 5.2 (S3 main board): 8 h at 5 s
+#else
 #define HISTORY_LEN_PSRAM 2880
+#endif
 
 class Print;
 namespace History {

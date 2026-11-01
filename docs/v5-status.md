@@ -35,7 +35,9 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 | 19–22 | ESP-NOW, board roles, Boards page | First round built | Role setting, ESP-NOW link with channel search, Boards page (pair / status / values / relays), board selector on Sensors + Relays, relay safe state. Needs two boards to try. Remote values on gauges/charts/alarms next |
 | 22b | Remote values on gauges / charts / alarms / black box / cloud / OLED | Done (5.1.0-beta.8) | Mirrored `remote` sensors on the main board |
 | 19b | Encrypted board links | Done, off by default | Key per board at pairing; turn on after the first two-board test |
-| 18, 23 | CAN, remote firmware updates | Not started | Both need two boards (CAN also transceivers) to test |
+| 23 | Firmware updates for other boards | Built (5.1.0-beta.9), PC-tested | Needs two boards to try |
+| 18 | CAN link | Built (5.1.0-beta.9), framing PC-tested | Needs two boards + SN65HVD230s |
+| — | 5.2 for ESP32-S3 8 MB+ | Built (5.2.0-beta.1) | `tools/cm.sh build52`; needs an S3 N8R8/N16R8 |
 
 ## How it was tested
 

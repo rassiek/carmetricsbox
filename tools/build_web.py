@@ -47,17 +47,22 @@ def find_mklittlefs(explicit):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mklittlefs", help="path to the mklittlefs tool")
+    ap.add_argument("--line", default="51", help="release line whose label goes into the web app (51 or 52)")
+    ap.add_argument("--fs-size", default=hex(FS_SIZE), help="LittleFS partition size (5.1: 0x90000, 5.2: 0x1C0000)")
+    ap.add_argument("--data", default=DATA, help="where the gzipped files go")
+    ap.add_argument("--out", default=os.path.join(BUILD, "littlefs.bin"), help="LittleFS image to write")
     args = ap.parse_args()
 
     # The firmware's release label (Config.h FW_VERSION) is baked into the web
     # app, so the pages can warn when the firmware and web app don't match.
     import re
     cfg = open(os.path.join(ROOT, "firmware", "CarMetrics", "Config.h"), encoding="utf-8").read()
-    version = re.search(r'#define FW_VERSION "([^"]+)"', cfg).group(1)
+    version = re.search(r'#define FW_RELEASE_%s "([^"]+)"' % args.line, cfg).group(1)
+    data_dir, out_dir = args.data, os.path.join(args.data, "www")
     print(f"release {version}")
 
-    shutil.rmtree(DATA, ignore_errors=True)
-    os.makedirs(OUT)
+    shutil.rmtree(data_dir, ignore_errors=True)
+    os.makedirs(out_dir)
     total_in = total_out = 0
     for name in sorted(os.listdir(SRC)):
         src = os.path.join(SRC, name)
@@ -65,7 +70,7 @@ def main():
             continue
         raw = open(src, "rb").read().replace(b"__CM_VERSION__", version.encode())
         packed = gzip.compress(raw, compresslevel=9, mtime=0)
-        with open(os.path.join(OUT, name + ".gz"), "wb") as f:
+        with open(os.path.join(out_dir, name + ".gz"), "wb") as f:
             f.write(packed)
         total_in += len(raw)
         total_out += len(packed)
@@ -77,8 +82,9 @@ def main():
         print("mklittlefs not found - skipped littlefs.bin (data/ folder is ready for the IDE upload plugin)")
         return 0
     os.makedirs(BUILD, exist_ok=True)
-    image = os.path.join(BUILD, "littlefs.bin")
-    subprocess.check_call([tool, "-c", DATA, "-b", "4096", "-p", "256", "-s", str(FS_SIZE), image],
+    image = args.out
+    os.makedirs(os.path.dirname(image), exist_ok=True)
+    subprocess.check_call([tool, "-c", data_dir, "-b", "4096", "-p", "256", "-s", str(int(args.fs_size, 0)), image],
                           stdout=subprocess.DEVNULL)
     print(f"filesystem image: {image} ({os.path.getsize(image)} bytes)")
     return 0

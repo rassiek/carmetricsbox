@@ -257,6 +257,7 @@ void relayToJson(const RelayConfig& r, JsonObject o) {
 
 void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
   o["board"] = s.board; o["role"] = s.role; o["boardEncrypt"] = s.boardEncrypt;
+  o["canEnabled"] = s.canEnabled; o["canTx"] = s.canTx; o["canRx"] = s.canRx; o["canKbps"] = s.canKbps;
   o["apSsid"] = s.apSsid; o["apPass"] = includeSecrets ? s.apPass : "";
   JsonArray nets = o["networks"].to<JsonArray>();
   for (auto& n : s.networks) {
@@ -423,6 +424,9 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   if (s.board != "auto" && !Board::find(s.board)) { err = "Unknown board '" + s.board + "' for this firmware (" + Board::chip() + ")"; return false; }
   s.role = getS(o, "role", s.role); s.role.trim();
   s.boardEncrypt = getB(o, "boardEncrypt", s.boardEncrypt);
+  s.canEnabled = getB(o, "canEnabled", s.canEnabled); s.canTx = getI(o, "canTx", s.canTx); s.canRx = getI(o, "canRx", s.canRx);
+  s.canKbps = getI(o, "canKbps", s.canKbps);
+  if (s.canKbps != 125 && s.canKbps != 250 && s.canKbps != 500 && s.canKbps != 1000) { err = "CAN speed must be 125, 250, 500 or 1000 kbit/s"; return false; }
   if (s.role != "main" && s.role != "sensor" && s.role != "relay" && s.role != "sensor_relay") { err = "Unknown board role '" + s.role + "'"; return false; }
   s.apSsid = getS(o, "apSsid", s.apSsid);
   String p = getS(o, "apPass", ""); if (p.length()) s.apPass = p;
@@ -598,7 +602,7 @@ bool cloudFromJson(JsonVariantConst v, CloudConfig& c, String& err) {
   c.protocol = getS(o, "protocol", c.protocol);
   c.intervalMs = getI(o, "intervalMs", c.intervalMs);
   c.uploadEverySec = constrain(getI(o, "uploadEverySec", c.uploadEverySec), 10, 3600);
-  c.bufferKB = constrain(getI(o, "bufferKB", c.bufferKB), 16, 400);
+  c.bufferKB = constrain(getI(o, "bufferKB", c.bufferKB), 16, CM_MAX_BUFFER_KB);
   c.onlyEngineRunning = getB(o, "onlyEngineRunning", c.onlyEngineRunning);
   c.sendSystem = getB(o, "sendSystem", c.sendSystem);
   c.zbxServer = getS(o, "zbxServer", c.zbxServer); c.zbxServer.trim();
@@ -641,7 +645,7 @@ bool configFromJson(JsonVariantConst v, Config& out, String& err) {
   if (!v["layout"].isNull() && !layoutFromJson(v["layout"], tmp.layout, err)) return false;
   if (v["blackbox"].is<JsonObjectConst>()) {
     tmp.blackbox.enabled = v["blackbox"]["enabled"] | tmp.blackbox.enabled;
-    tmp.blackbox.keepEvents = constrain((int)(v["blackbox"]["keepEvents"] | (int)tmp.blackbox.keepEvents), 1, 30);
+    tmp.blackbox.keepEvents = constrain((int)(v["blackbox"]["keepEvents"] | (int)tmp.blackbox.keepEvents), 1, CM_MAX_BLACKBOX);
   }
   if (!validateConfig(tmp, err)) return false;
   out = tmp;
@@ -731,6 +735,10 @@ bool validateConfig(const Config& c, String& err) {
     if (!pinExists(s.gpsRxPin)) { err = "GPS: set the RX pin (wired to the GPS TX)"; return false; }
     if (s.gpsTxPin >= 0 && !pinCanOutput(s.gpsTxPin)) { err = "GPS: TX pin can't be an output"; return false; }
     if (!pb.add(s.gpsRxPin, "GPS RX") || !pb.add(s.gpsTxPin, "GPS TX")) { err = pb.err; return false; }
+  }
+  if (s.canEnabled) {
+    if (!pinExists(s.canRx) || !pinCanOutput(s.canTx)) { err = "CAN: set the TX pin (an output) and the RX pin"; return false; }
+    if (!pb.add(s.canTx, "CAN TX") || !pb.add(s.canRx, "CAN RX")) { err = pb.err; return false; }
   }
   if (c.turbo.enabled) {
     auto exists = [&](const String& id) { for (auto& y : c.sensors) if (y.id == id) return true; return false; };

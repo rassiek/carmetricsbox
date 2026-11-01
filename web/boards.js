@@ -15,6 +15,39 @@
     if (!confirm(`Forget "${b.name}"? It goes back to unpaired and loses the settings sent to it.`)) return;
     try { toast((await api('/api/v2/boards/forget', { body: { id: b.id } })).message); load(); } catch (e) { toast(e.message, true); }
   }
+  async function firmware(b, source) {
+    try { toast((await api('/api/v2/boards/firmware', { body: { id: b.id, source } })).message, false, 6000); setTimeout(load, 800); }
+    catch (e) { toast(e.message, true, 8000); }
+  }
+  async function uploadFirmware(b, file) {
+    if (!file) return toast('Choose a carmetrics-...-firmware.bin file first', true);
+    if (/full-flash/i.test(file.name)) return toast('That is the full USB image; choose the ...-firmware.bin file', true, 8000);
+    const fd = new FormData(); fd.append('file', file, file.name);
+    toast('Uploading the file to this board…', false, 20000);
+    try {
+      const r = await fetch('/api/v2/boards/firmware/upload', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.message || r.statusText);
+      await firmware(b, 'upload');
+    } catch (e) { toast(e.message, true, 8000); }
+  }
+  function fwBox(b, d) {
+    const f = b.fw;
+    const box = h('div', { class: 'small', style: 'margin-top:10px;border-top:1px solid var(--line);padding-top:8px' });
+    if (f && (f.state === 'offering' || f.state === 'sending')) {
+      box.append(h('div', { class: 'row', style: 'gap:8px' }, h('span', {}, `Updating to ${f.version}: ${f.state === 'offering' ? 'waiting for the board' : f.percent + '%'} (${f.seconds} s)`),
+        h('div', { class: 'progress', style: 'flex:1' }, h('div', { style: `width:${f.percent}%` })), h('button', { class: 'small', onclick: () => firmware(b, 'cancel') }, 'Cancel')));
+      return box;
+    }
+    if (f && f.state === 'done') box.append(h('p', { style: 'margin:0 0 6px;color:var(--ok)' }, `Firmware ${f.version} sent; the board restarts and shows its new version here.`));
+    if (f && f.state === 'failed') box.append(h('p', { style: 'margin:0 0 6px;color:var(--crit)' }, `Update failed: ${f.error}`));
+    const file = h('input', { type: 'file', accept: '.bin', style: 'max-width:240px' });
+    box.append(h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, h('b', {}, 'Firmware'),
+      b.sameChip ? h('button', { class: 'small', disabled: !b.online, onclick: () => { if (confirm(`Send this board's firmware (${d.firmware}) to "${b.name}"? It restarts when done.`)) firmware(b, 'self'); } }, `Send this board's (${d.firmware})`) : h('span', { class: 'muted' }, `${b.chip}: needs a file for its chip`),
+      file, h('button', { class: 'small', disabled: !b.online, onclick: () => uploadFirmware(b, file.files[0]) }, 'Send file')));
+    box.append(h('p', { class: 'muted', style: 'margin:4px 0 0' }, 'A file is stored in this board\'s spare firmware slot first (its own "previous firmware" for rollback is replaced). Sending takes about 1–3 minutes; sensors and alarms keep running.'));
+    return box;
+  }
   async function relay(b, index, on) {
     try { await api('/api/v2/boards/relay', { body: { id: b.id, index, on } }); setTimeout(load, 700); } catch (e) { toast(e.message, true); }
   }
@@ -66,6 +99,7 @@
         h('p', { class: 'small', style: c.status === 'refused' ? 'color:var(--crit)' : '' }, cfgText),
         sensors.length ? h('table', { class: 'small' }, rows) : h('p', { class: 'muted small' }, 'No sensors on this board.'),
         relayBtns.length ? h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-top:8px' }, relayBtns) : '',
+        fwBox(b, d),
         h('div', { class: 'row', style: 'margin-top:10px;gap:8px' },
           h('a', { href: `settings.html?board=${b.id}` }, h('button', {}, 'Sensors…')), h('a', { href: `relays.html?board=${b.id}` }, h('button', {}, 'Relays…')),
           h('span', { class: 'spacer' }), h('button', { class: 'small danger', onclick: () => forget(b) }, 'Forget')));
@@ -75,13 +109,13 @@
   async function load() {
     const d = await api('/api/v2/boards').catch(e => { throw new Error(e.message === 'Not found' ? 'This firmware has no Boards support yet: upload the firmware of this release (System page)' : e.message); });
     const l = d.link;
-    $('#linkPill').textContent = l.ok ? `${l.type}, channel ${l.channel}` : 'radio off';
+    $('#linkPill').textContent = l.ok ? `${l.type}${l.channel ? ', channel ' + l.channel : ''}` + (d.can ? `, CAN ${d.can.state}` : '') : 'no link';
     $('#linkPill').className = 'pill ' + (l.ok ? 'ok' : 'warn');
     if (d.role !== 'main') renderNode(d); else renderMain(d);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    const tick = () => { if (document.activeElement?.tagName !== 'INPUT') load().catch(e => toast(e.message, true)); };
+    const tick = () => { if (document.activeElement?.tagName !== 'INPUT' && !document.querySelector('#boards input[type=file]:not([value=""])')?.files?.length) load().catch(e => toast(e.message, true)); };
     tick(); setInterval(tick, 2000);
   });
 })();

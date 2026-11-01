@@ -8,6 +8,7 @@
 #   tools/cm.sh emu [secs]         boot the firmware in the emulator and show the log
 #   tools/cm.sh webtest            headless browser test of the web app (mock ESP32)
 #   tools/cm.sh prototest          board-to-board protocol test on this PC (g++, a few seconds)
+#   tools/cm.sh build52            5.2 for ESP32-S3 8 MB+ (main board): build/carmetrics-52-*.bin
 #   tools/cm.sh all                prototest + build + build3 esp32 + build3 esp32s3 + selftest + webtest
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,6 +63,28 @@ cmd_build3() {
   echo "core 3 $chip build OK"
 }
 
+# 5.2: ESP32-S3 with 8 MB+ flash and PSRAM. Same sources, compiled with -DCM_V52
+# and the 8 MB partition table (copied over the sketch's 4 MB one in a temp copy).
+cmd_build52() {
+  local s="$OUT/sketch52/CarMetrics" dir="$OUT/v52"
+  rm -rf "$OUT/sketch52" "$dir" && mkdir -p "$s"
+  cp "$SKETCH"/*.h "$SKETCH"/*.cpp "$SKETCH"/*.ino "$s"/
+  cp "$ROOT/firmware/partitions-8MB-v52.csv" "$s/partitions.csv"
+  python3 "$ROOT/tools/build_web.py" --mklittlefs "$CORE/tools/mklittlefs/mklittlefs" --line 52 --fs-size 0x1C0000 \
+    --data "$OUT/v52data" --out "$dir/littlefs.bin" | tail -2
+  ARDUINO_DIRECTORIES_USER="${CM_CORE3_USER:-$PREFIX/core3/Arduino}" ARDUINO_DIRECTORIES_DATA="${CM_CORE3_DATA:-$PREFIX/core3/arduino15}" \
+    "$CLI" compile --fqbn "espressif:esp32:esp32s3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB" \
+      --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --build-property "compiler.cpp.extra_flags=-DCM_V52" \
+      --output-dir "$dir" "$s" 2>&1 | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
+  [ -f "$dir/CarMetrics.ino.bin" ] || { echo "5.2 compile failed"; exit 1; }
+  cp "$dir/CarMetrics.ino.bin" "$OUT/carmetrics-52-firmware.bin"
+  cp "$dir/littlefs.bin" "$OUT/carmetrics-52-littlefs.bin"
+  $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-52-full-flash.bin" --flash_mode dio --flash_freq 80m --flash_size 8MB \
+    0x0 "$dir/CarMetrics.ino.bootloader.bin" 0x8000 "$dir/CarMetrics.ino.partitions.bin" \
+    0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetrics.ino.bin" 0x610000 "$dir/littlefs.bin" > /dev/null
+  echo "5.2 (ESP32-S3, 8 MB) build OK: $OUT/carmetrics-52-*.bin"
+}
+
 cmd_build() {
   web
   rm -rf "$OUT/fw" && compile "$OUT/fw" "PartitionScheme=min_spiffs"
@@ -96,7 +119,7 @@ cmd_emu() {
 cmd_prototest() {
   mkdir -p "$OUT/prototest"
   g++ -std=c++17 -Wall -Wextra -Werror -O1 -fsanitize=address,undefined -I "$SKETCH" \
-    "$ROOT/tools/prototest/proto_test.cpp" "$ROOT/tools/prototest/boards_test.cpp" "$SKETCH/Proto.cpp" "$SKETCH/BoardNet.cpp" \
+    "$ROOT/tools/prototest/proto_test.cpp" "$ROOT/tools/prototest/boards_test.cpp" "$ROOT/tools/prototest/fw_test.cpp" "$ROOT/tools/prototest/can_test.cpp" "$SKETCH/CanFrag.cpp" "$SKETCH/Proto.cpp" "$SKETCH/BoardNet.cpp" \
     -o "$OUT/prototest/proto_test"
   "$OUT/prototest/proto_test"
 }
@@ -116,6 +139,7 @@ case "${1:-}" in
   emu) cmd_emu "${2:-}" ;;
   webtest) cmd_webtest ;;
   prototest) cmd_prototest ;;
+  build52) cmd_build52 ;;
   all) cmd_prototest && cmd_build && cmd_build3 esp32 && cmd_build3 esp32s3 && cmd_selftest && cmd_webtest ;;
-  *) sed -n '2,12p' "$0"; exit 1 ;;
+  *) sed -n '2,13p' "$0"; exit 1 ;;
 esac

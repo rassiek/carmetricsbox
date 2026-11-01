@@ -140,6 +140,9 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await p.locator('#found').innerText()).includes('24:6F:28:AA:BB:CC'), 'found board listed');
   check((await p.locator('#boards').innerText()).includes('Engine bay') && (await p.locator('#boards').innerText()).includes('88.4 °C'), 'paired board with live value');
   check((await p.locator('#boards').innerText()).includes('encrypted'), 'link encryption shown');
+  p.once('dialog', dlg => dlg.accept());
+  await p.locator('#boards button', { hasText: "Send this board's" }).click(); await p.waitForTimeout(2600);
+  check((await p.locator('#boards').innerText()).includes('42%'), 'firmware update of another board: progress shown');
   await p.locator('#boards button', { hasText: 'Fan: OFF' }).click(); await p.waitForTimeout(2500);
   check((await p.locator('#boards').innerText()).includes('Fan: ON'), 'remote relay switched from the Boards page');
   await p.locator('#found input').fill('Trailer'); await p.locator('#found button', { hasText: 'Accept' }).click(); await p.waitForTimeout(800);

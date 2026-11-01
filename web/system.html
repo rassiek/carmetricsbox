@@ -75,7 +75,12 @@
           <option value="sensor">Sensor board: reads sensors for the main board</option>
           <option value="relay">Relay board: switches relays for the main board</option>
           <option value="sensor_relay">Sensor + relay board</option></select></div>
-        <label class="check"><input type="checkbox" name="boardEncrypt"> Main board: encrypt the link to boards paired from now on (each board gets its own key when you press Accept; already paired boards keep what they have: Forget and Accept again to change)</label></div>
+        <label class="check"><input type="checkbox" name="boardEncrypt"> Main board: encrypt the link to boards paired from now on (each board gets its own key when you press Accept; already paired boards keep what they have: Forget and Accept again to change)</label>
+        <label class="check"><input type="checkbox" name="canEnabled"> CAN link (option 2): built-in CAN controller + 3.3 V transceiver (SN65HVD230), 120 Ω at both ends of the bus.
+          On the main board it runs next to ESP-NOW; an extra board with CAN on uses only CAN.</label>
+        <div><label>CAN TX pin (to transceiver D)</label><input name="canTx" type="number" min="-1" max="48"></div>
+        <div><label>CAN RX pin (to transceiver R)</label><input name="canRx" type="number" min="-1" max="48"></div>
+        <div><label>CAN speed</label><select name="canKbps"><option value="125">125 kbit/s</option><option value="250">250 kbit/s</option><option value="500">500 kbit/s (default)</option><option value="1000">1 Mbit/s</option></select></div></div>
         <p class="muted small" style="margin-top:0">An extra board talks to the main board over ESP-NOW and stops joining Wi-Fi networks
           (its own access point stays on). Pair it on the main board's <a href="boards.html">Boards</a> page.</p>
       </fieldset>
