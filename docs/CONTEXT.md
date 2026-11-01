@@ -2,7 +2,7 @@
 
 Give this file to Claude at the start of a new session (or say: *"Clone github.com/rassiek/carmetricsbox, branch v5, and read docs/CONTEXT.md, docs/v5-status.md and docs/v5-phase3-plan.md"*). It holds what was built, how, what has only been tested on a PC / emulator, and how to test and debug on the real boards.
 
-Last updated: 1 Nov 2026, releases **5.1.0-beta.9** and **5.2.0-beta.1**.
+Last updated: 1 Nov 2026, releases **5.1.0-beta.10** and **5.2.0-beta.2**.
 
 ---
 
@@ -23,7 +23,7 @@ Engine monitor for older vehicles without OBD-II (Land Rover 300Tdi). ESP32 read
 Claude sessions so far could **not push** (no write access). The routine:
 
 1. Claude commits locally, builds, and sends **release files** + a **`.patch`** named after the release.
-2. You save them in a folder per release, e.g. `Downloads\V5\5.1.0-beta.9\`.
+2. You save them in a folder per release, e.g. `Downloads\V5\5.1.0-beta.10\`.
 3. In your clone: `git am "<full path>\<file>.patch"` then `git push`.
 4. If `git am` says *patch does not apply* / *already exists in index*: the patch is probably already on GitHub. Run `git am --abort`, check `git log --oneline -3`, and only apply patches that are newer.
 5. PowerShell: give full paths; `*` and `...` are not expanded inside quotes.
@@ -163,6 +163,7 @@ Call the boards **A** (main, the current one) and **B** (new). Flash both with t
 - **APIs**: `/api/info`, `/api/v2/system` (health, storage, crash), `/api/v2/wifi` (join log), `/api/v2/boards` (link counters, found, boards, `fw` progress, CAN state), `/api/v2/crash/dump` (core dump ELF).
 - **Crash**: System → *Last crash* shows the backtrace. Send it together with the release; decode with the matching build's ELF: `xtensa-esp32-elf-addr2line -pfiaC -e build/fw/CarMetrics.ino.elf <addresses>`. If the ELF is gone, rebuild the exact commit: same code gives the same addresses (only the build date differs).
 - **Memory**: health panel "lowest" and "largest block"; replies needing more than the largest block now answer *Low memory, try again* instead of crashing. Many open tabs / phones = many live-data clients (capped 6 WebSocket + 3 event-stream).
+- **Past crash, 5.1.0-beta.8 (fixed in beta.10)**: `async_tcp` null read in `AsyncClient::setNoDelay` from the `AsyncEventSourceClient` constructor. Cause: the event-stream cap closed a 4th client inside `events.onConnect`, which frees the connection while the library is still setting it up. Three of these = safe mode. Now the cap is checked before the connection is adopted (`events.authorizeConnect`, answered 401). Rule: never `close()` a client inside an ESPAsyncWebServer connect callback. Decoding with the wrong release's ELF gives plausible-looking but wrong frames (it pointed at the multipart parser first): always decode with the ELF of the release shown on the System page.
 - **Loop time max** > ~100 ms: something holds the state lock; look at what was added recently in web handlers.
 - **Settings on an extra board refused**: validation runs on that board with its own board profile (pins).
 - **Remote values "waiting"**: the board hasn't accepted the current settings revision yet (card shows *sending settings…* / *REFUSED*).

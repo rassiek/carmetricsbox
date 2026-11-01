@@ -145,6 +145,7 @@ void setup() {
   Web::begin();
   Display::start();
   if (!Health::safeMode()) Cloud::startNetTask();   // no internet features in safe mode
+  else Health::refreshStorage(true);                  // the net task normally keeps the storage figures
   Serial.println("[boot] ready");
 }
 

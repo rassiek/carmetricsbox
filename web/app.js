@@ -79,6 +79,8 @@ const CM = (() => {
     es = new EventSource('/events');
     es.addEventListener('state', ev => { lastLive = Date.now(); handleState(JSON.parse(ev.data)); });
     es.addEventListener('config', () => onConfigChanged());
+    // Events are only the fallback (and capped at 3 on the device): try the WebSocket again in a minute.
+    setTimeout(() => { if (mode === 'sse' && !ws) { wsFails = 0; connectWs(); } }, 60000);
   }
   // Send a command over the WebSocket when open (falls back to HTTP): {cmd:'mute', minutes:5}
   function command(c) {

@@ -16,8 +16,8 @@
 // Release label: shown in the web app header, System page, OLED start screen and
 // the release file names. Bump for every build handed out; the web app gets the
 // same label baked in (tools/build_web.py) and warns when the two don't match.
-#define FW_RELEASE_51 "5.1.0-beta.9"   // every board (classic ESP32 4 MB, ESP32-S3), 4 MB layout
-#define FW_RELEASE_52 "5.2.0-beta.1"   // ESP32-S3 8 MB+ only (tools/cm.sh build52, -DCM_V52): main board, bigger buffers
+#define FW_RELEASE_51 "5.1.0-beta.10"   // every board (classic ESP32 4 MB, ESP32-S3), 4 MB layout
+#define FW_RELEASE_52 "5.2.0-beta.2"   // ESP32-S3 8 MB+ only (tools/cm.sh build52, -DCM_V52): main board, bigger buffers
 #ifdef CM_V52
 #define FW_VERSION FW_RELEASE_52
 #else

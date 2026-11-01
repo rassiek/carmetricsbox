@@ -664,11 +664,15 @@ void setupRoutes() {
   setupV2Routes();
 
   // ---- live events
+  // Live data normally goes over the WebSocket; this is only the fallback.
+  // Cap it: every client holds send buffers, and stale ones (a phone that
+  // left the access point) linger until TCP gives up. The cap is checked
+  // BEFORE the connection is adopted (answered 401): closing a client inside
+  // onConnect makes the library use the freed connection right after
+  // (AsyncEventSourceClient constructor -> setNoDelay on null) = crash in
+  // async_tcp (5.1.0-beta.8, safe mode after three of them).
+  events.authorizeConnect([](AsyncWebServerRequest*) { return events.count() < SSE_MAX_CLIENTS; });
   events.onConnect([](AsyncEventSourceClient* client) {
-    // Live data normally goes over the WebSocket; this is only the fallback.
-    // Cap it: every client holds send buffers, and stale ones (a phone that
-    // left the access point) linger until TCP gives up.
-    if (events.count() > SSE_MAX_CLIENTS) { client->close(); return; }
     client->send(stateString().c_str(), "state", ++eventId, 3000);
   });
   server.addHandler(&events);
