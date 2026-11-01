@@ -288,8 +288,9 @@
   }
 
   // ---------------------------------------------------------------- load / save
+  const remote = CM.remoteBoard();   // editing another board's sensors (kept on this main board, sent to it)
   async function load() {
-    const cfg = await api('/api/config');
+    const cfg = remote ? await api('/api/v2/boards/config?id=' + remote) : await api('/api/config');
     sensors = cfg.sensors;
     saved = JSON.stringify(sensors);
     closeEditor();
@@ -297,11 +298,11 @@
   }
   async function save() {
     try {
-      const r = await api('/api/config/sensors', { body: sensors });
+      const r = remote ? await api('/api/v2/boards/config', { body: { id: remote, sensors } }) : await api('/api/config/sensors', { body: sensors });
       saved = JSON.stringify(sensors);
       markDirty();
       toast(r.message);
-      setTimeout(loadScan, 1500);
+      if (!remote) setTimeout(loadScan, 1500);
     } catch (e) { toast(e.message, true, 6000); }
   }
 
@@ -314,8 +315,15 @@
       if (!confirm('Replace ALL sensors and relays with the defaults? Wi-Fi and passwords are kept.')) return;
       try { toast((await api('/api/config/reset', { method: 'POST' })).message); setTimeout(load, 1200); } catch (e) { toast(e.message, true); }
     };
-    load().then(loadScan).catch(e => toast(e.message, true));
-    live(liveUpdate);
+    CM.boardPicker($('#boardSel'));
+    if (remote) {   // the 1-Wire scan, defaults and live values belong to this board, not the remote one
+      $('#owPanel').classList.add('hidden'); $('#reset').classList.add('hidden');
+      $('#boardNote').textContent = 'Editing another board: saved here and sent to it over ESP-NOW. Pins refer to that board; it checks them and the Boards page shows if it refused. Live values are on the Boards page.';
+      load().catch(e => toast(e.message, true));
+    } else {
+      load().then(loadScan).catch(e => toast(e.message, true));
+      live(liveUpdate);
+    }
   });
   window.addEventListener('beforeunload', e => { if (JSON.stringify(sensors) !== saved) { e.preventDefault(); e.returnValue = ''; } });
 })();

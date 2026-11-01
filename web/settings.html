@@ -11,6 +11,8 @@
 </head>
 <body>
   <main>
+    <div class="panel hidden" id="boardBox"><label>Board</label><select id="boardSel" style="max-width:320px"></select>
+      <p class="muted small" id="boardNote" style="margin:6px 0 0"></p></div>
     <div class="panel">
       <div class="row">
         <h3 style="margin:0">Sensors</h3><span id="dirty" class="pill warn hidden">unsaved changes</span>
@@ -42,7 +44,7 @@
 
     <div id="editor" class="panel hidden"></div>
 
-    <div class="panel">
+    <div class="panel" id="owPanel">
       <div class="row"><h3 style="margin:0">1-Wire bus</h3><span class="spacer"></span><button id="scan">Scan</button></div>
       <p class="muted small">Every DS18B20 on the bus is listed with its live temperature. To find which is which, warm one sensor
         in your hand, scan again, and assign the one that rose. Assigning only changes the list above — press <b>Save changes</b>.</p>

@@ -117,6 +117,26 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await toast()).includes('Turbo timer saved'), 'turbo timer saved', await toast());
   check((await p.getAttribute('#conn', 'title')) === 'WebSocket' && (await p.textContent('#conn')) === 'live', 'live data over WebSocket', await p.getAttribute('#conn', 'title'));
   await p.screenshot({ path: `${OUT}/system.png`, fullPage: true });
+  check(await p.locator('select[name=role]').inputValue() === 'main', 'board role setting (main)');
+
+  // ---- several boards (phase 3)
+  await p.goto(BASE + 'boards.html'); await p.waitForTimeout(1500);
+  check((await p.locator('#found').innerText()).includes('24:6F:28:AA:BB:CC'), 'found board listed');
+  check((await p.locator('#boards').innerText()).includes('Engine bay') && (await p.locator('#boards').innerText()).includes('88.4 °C'), 'paired board with live value');
+  await p.locator('#boards button', { hasText: 'Fan: OFF' }).click(); await p.waitForTimeout(2500);
+  check((await p.locator('#boards').innerText()).includes('Fan: ON'), 'remote relay switched from the Boards page');
+  await p.locator('#found input').fill('Trailer'); await p.locator('#found button', { hasText: 'Accept' }).click(); await p.waitForTimeout(800);
+  check((await toast()).includes('Paired as board 2'), 'board accepted', await toast());
+  await p.screenshot({ path: `${OUT}/boards.png`, fullPage: true });
+  await p.goto(BASE + 'settings.html?board=1'); await p.waitForTimeout(1500);
+  check(await p.locator('#boardBox').isVisible() && await p.locator('#boardSel').inputValue() === '1', 'Sensors page: board selector on the remote board');
+  check(!(await p.locator('#owPanel').isVisible()) && (await p.locator('#list').innerText()).includes('Coolant (bay)'), 'remote board sensors loaded, local 1-Wire scan hidden');
+  await p.click('#save'); await p.waitForTimeout(700);
+  check((await toast()).includes('Sending it to the board'), 'remote sensors saved to the main board', await toast());
+  await p.goto(BASE + 'relays.html?board=1'); await p.waitForTimeout(1500);
+  check((await p.locator('#cfg select').nth(1).inputValue()) === 'on', 'relay safe state shown (remote fan: on)');
+  await p.click('#save'); await p.waitForTimeout(700);
+  check((await toast()).includes('Sending it to the board'), 'remote relays saved', await toast());
 
   check(errors.length === 0, 'no browser errors', errors.join(' | '));
   await browser.close();

@@ -63,3 +63,18 @@ Frames: `'C'`, version, type, from, to, sequence number, length, payload, CRC-16
 | 3 s silence (Wi-Fi search) = nothing happens; 7 s = link lost on both sides (relays to safe state), then automatic recovery | yes |
 | Main board restart: paired boards restored from storage, back online without re-pairing | yes |
 | Forget: board returns to unpaired and is offered again | yes |
+
+## Firmware wiring, first visible round (built, needs two boards to try)
+
+| Piece | Where | What it does |
+|---|---|---|
+| Role setting | System → Settings → *Board role* (`sys.role`: main / sensor / relay / sensor_relay); change = reboot | Picks main board or extra board behaviour |
+| ESP-NOW link | `EspNowLink.*` | Main board on its AP interface; extra boards on the station interface. Frames queued from the radio callback, handled in `loop()`. Learns each board's MAC from its frames; unicast to known boards, broadcast otherwise. **Not encrypted yet.** |
+| Channel search | `Boards.cpp` | Extra board hops channels 1–13 every 300 ms, saying hello, until it hears the main board (its 1 s beacon or the immediate answer to a hello); searches again when out of range for 5 s |
+| Extra board | `Boards.cpp`, `WifiMgr` | Never joins a Wi-Fi network (keeps its AP); runs the sensors / relays it is sent, with its own alarms; sends values every second; relays to their **safe state** (off / on / keep, per relay) when the link is lost |
+| Main board | `Boards.cpp` | Paired boards and each board's settings ("share": its sensors + relays) kept in NVS (`boards` namespace); shares sent with revision = CRC-32; a newly accepted board gets an empty share (so its demo defaults don't raise alarms) |
+| Boards page | `boards.html` | Found boards with name + **Accept**; paired boards: online, signal both ways, lost messages, alarm level, settings accepted / refused (with the board's reason), live values, relay buttons, **Forget** |
+| Board selector | Sensors and Relays pages (`?board=N`) | Edit another board's sensors / relays on the main board; saved there and sent. Pins are checked by the board itself |
+| API | `GET /api/v2/boards`, `POST /api/v2/boards/accept {mac,name}`, `/forget {id}`, `GET/POST /api/v2/boards/config`, `POST /api/v2/boards/relay {id,index,on}` | |
+
+Not yet: remote values on the Gauges / Charts / alarms / black box / cloud (next round), encryption, CAN, remote firmware updates.

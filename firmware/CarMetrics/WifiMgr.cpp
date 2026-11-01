@@ -349,6 +349,11 @@ void WifiMgr::update() {
 #endif
   uint32_t now = millis();
   const SystemConfig& s = gConfig.sys;
+  if (s.role != "main") {   // extra board: never join a network (that would pin the radio channel the ESP-NOW search needs)
+    if (phase != IDLE) { WiFi.disconnect(false); cands.clear(); phase = IDLE; }
+    if (gSys.wifiState != "extra board: access point only") setState("extra board: access point only");
+    return;
+  }
   if (s.networks.empty()) {   // nothing to join; "search now" still lists nearby networks
     if (phase == SCANNING) {
       int n = WiFi.scanComplete();

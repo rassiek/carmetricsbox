@@ -56,6 +56,10 @@ class NodeSession {
   void update(uint32_t now);
   void receive(const uint8_t* frame, size_t len, int8_t rssi, uint32_t now);
   bool paired() const { return id != Proto::UNPAIRED; }
+  // Heard the main board (any frame, even one for another board) recently:
+  // the radio is on the right channel. Used for the channel search on ESP-NOW.
+  bool mainInRange(uint32_t now) const { return heardMainAt && now - heardMainAt < Proto::LINK_LOST_MS; }
+  void sayHello() { sendHello(); }          // e.g. right after switching channel
   bool linkUp() const { return up; }
   uint8_t boardId() const { return id; }
   uint32_t configRev() const { return cfgRev; }
@@ -70,7 +74,7 @@ class NodeSession {
   uint8_t id;
   uint32_t cfgRev;
   bool up = false, everHeard = false;
-  uint32_t lastHeard = 0, lastHello = 0, lastHeartbeat = 0, lastPoints = 0;
+  uint32_t lastHeard = 0, lastHello = 0, lastHeartbeat = 0, lastPoints = 0, heardMainAt = 0;
   uint16_t seq = 0;
   int8_t rssi = 0;
   Proto::SeqTracker fromMain;
@@ -148,7 +152,8 @@ class MainSession {
   std::vector<FoundBoard> foundList;
   std::vector<PendingCmd> pending;
   uint16_t seq = 0;
-  uint32_t lastHeartbeat = 0, nowMs = 0;
+  uint32_t lastHeartbeat = 0, nowMs = 0, lastBeacon = 0;
+  void beacon(uint32_t now);                  // broadcast heartbeat: lets boards find our channel
 };
 
 }  // namespace BoardNet

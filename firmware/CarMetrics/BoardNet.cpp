@@ -68,6 +68,7 @@ void NodeSession::update(uint32_t now) {
 void NodeSession::receive(const uint8_t* frame, size_t len, int8_t r, uint32_t now) {
   Header h; const uint8_t* p; size_t n;
   if (parse(frame, len, h, p, n) || h.src != MAIN_BOARD) return;
+  heardMainAt = now ? now : 1;
   if (h.type == ASSIGN) {                     // addressed by MAC, works before and after pairing
     Assign a;
     if (!decodeAssign(p, n, a) || memcmp(a.mac, me.mac, 6)) return;
@@ -206,9 +207,10 @@ void MainSession::update(uint32_t now) {
     if (b.online && late(now, b.lastHeard, LINK_LOST_MS)) { b.online = false; if (cb.online) cb.online(b, false); }
   // forget "found" boards not heard for a while
   foundList.erase(std::remove_if(foundList.begin(), foundList.end(), [&](const FoundBoard& f) { return late(now, f.lastHeard, 4 * HELLO_UNPAIRED_MS); }), foundList.end());
-  // heartbeat to every paired board
+  // heartbeat to every paired board, plus one broadcast "beacon" so boards can find our channel
   if (!lastHeartbeat || late(now, lastHeartbeat, HEARTBEAT_MS)) {
     lastHeartbeat = now ? now : 1;
+    beacon(now);
     for (auto& b : list) {
       Heartbeat hb; hb.uptimeS = now / 1000; hb.configRev = b.configRev; hb.rssi = b.rssi;
       send(b.id, [&](uint8_t* f, const Header& h) { return encodeHeartbeat(f, h, hb); });
@@ -243,6 +245,12 @@ void MainSession::update(uint32_t now) {
   }
 }
 
+void MainSession::beacon(uint32_t now) {
+  lastBeacon = now ? now : 1;
+  Heartbeat hb; hb.uptimeS = now / 1000;
+  send(BROADCAST, [&](uint8_t* f, const Header& h) { return encodeHeartbeat(f, h, hb); });
+}
+
 void MainSession::receive(const uint8_t* frame, size_t len, int8_t rssi, uint32_t now) {
   Header h; const uint8_t* p; size_t n;
   if (parse(frame, len, h, p, n) || h.src == MAIN_BOARD) return;
@@ -251,6 +259,7 @@ void MainSession::receive(const uint8_t* frame, size_t len, int8_t rssi, uint32_
   if (h.type == HELLO) {
     Hello m;
     if (!decodeHello(p, n, m)) return;
+    if (!lastBeacon || late(now, lastBeacon, 200)) beacon(now);   // answer at once: a searching board only waits briefly per channel
     BoardInfo* b = nullptr;
     for (auto& x : list) if (!memcmp(x.mac, m.mac, 6)) b = &x;
     if (!b) {                                 // not paired here: list it as found

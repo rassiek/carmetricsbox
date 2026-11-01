@@ -56,6 +56,7 @@ void boardsTest() {
   run(2500);
   check(mainB->found().size() == 1 && mainB->found()[0].name == "Engine bay" && mainB->found()[0].role == ROLE_SENSOR_RELAY && !node.paired(),
         "unpaired board listed as found");
+  check(node.mainInRange(now), "unpaired board hears the main board's beacon (channel found)");
 
   // 2. accept it
   int id = mainB->accept(nodeMac, "Engine bay");
@@ -99,6 +100,7 @@ void boardsTest() {
 
   // 7. a 7 s gap IS: relays to their safe state on the board, offline on the main board; both recover
   mainLink.cut = nodeLink.cut = true; run(7000);
+  check(!node.mainInRange(now), "out of range: board knows to search channels again");
   bool lostOk = linkDowns == downs + 1 && offlineEvents == offs + 1 && !b->online && !node.linkUp();
   int pointsBefore = (int)b->pointsAt;
   mainLink.cut = nodeLink.cut = false; run(3000);

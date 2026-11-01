@@ -85,6 +85,7 @@ struct RelayConfig {
   bool defaultOn = false;   // state after boot
   uint32_t blinkMs = 500;
   bool enabled = true;
+  uint8_t safeState = 0;    // relay board, link to the main board lost: 0 off, 1 on, 2 keep as it is
 };
 
 struct BoardProfile;
@@ -93,6 +94,7 @@ struct WifiNetwork { String ssid, pass; uint8_t priority = 5; };   // priority 1
 
 struct SystemConfig {
   String board = "auto";             // board profile id (see Board.cpp); "auto" = detect
+  String role = "main";              // main | sensor | relay | sensor_relay (extra boards, phase 3); change = reboot
   std::vector<WifiNetwork> networks; // known networks to join (phone hotspot, home...)
   bool scanWhileApInUse = true;      // false: don't search for networks while a phone uses the CarMetrics AP
 

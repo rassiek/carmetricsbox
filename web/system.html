@@ -69,6 +69,15 @@
         <div><label>Hostname (.local)</label><input name="hostname"></div>
         <div><label>Admin password (blank = keep)</label><input name="adminPass" type="password" autocomplete="new-password"></div>
       </div></fieldset>
+      <fieldset><legend>Board role (several boards, changes reboot the device)</legend><div class="fields">
+        <div class="wide"><label>This board is</label><select name="role">
+          <option value="main">Main board: web app, settings, internet (default)</option>
+          <option value="sensor">Sensor board: reads sensors for the main board</option>
+          <option value="relay">Relay board: switches relays for the main board</option>
+          <option value="sensor_relay">Sensor + relay board</option></select></div></div>
+        <p class="muted small" style="margin-top:0">An extra board talks to the main board over ESP-NOW and stops joining Wi-Fi networks
+          (its own access point stays on). Pair it on the main board's <a href="boards.html">Boards</a> page.</p>
+      </fieldset>
       <fieldset><legend>Networks to join (internet for weather, upload, time)</legend>
         <p class="muted small" style="margin-top:0">The CarMetrics access point always stays on. The board also joins the best of these that's in range: highest priority first, then strongest signal. <span id="wifiNow"></span></p>
         <div id="nets"></div>

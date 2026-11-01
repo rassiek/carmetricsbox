@@ -32,7 +32,8 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 | 14 | Other optional sensors | Done | INA226, MPU-6050 roll/pitch, switch inputs, BME280 humidity, non-linear analog curves (fuel senders). ICM-42688 not yet |
 | 15–16 | Touch display | Not started | After phase 3 |
 | 17 | Board-to-board protocol | Format + exchange logic done | `Proto.*`, `Link.h`, `BoardNet.*`; PC test `tools/cm.sh prototest` (36 checks incl. two boards over a lossy simulated link); see [phase 3 plan](v5-phase3-plan.md) |
-| 18–23 | CAN, ESP-NOW, board roles, Boards page, remote updates | Not started | Order in the [phase 3 plan](v5-phase3-plan.md) |
+| 19–22 | ESP-NOW, board roles, Boards page | First round built | Role setting, ESP-NOW link with channel search, Boards page (pair / status / values / relays), board selector on Sensors + Relays, relay safe state. Needs two boards to try. Remote values on gauges/charts/alarms next |
+| 18, 23 | CAN, remote firmware updates | Not started | |
 
 ## How it was tested
 
@@ -120,6 +121,10 @@ Health panel showed a **crash reset**, **loop max ~1 s**, **lowest free 77 KB** 
 - **Crash report:** the ESP32 already writes a core dump to flash on a crash; the System page now shows it (task, cause, address, backtrace, whether it was this firmware), with **Download crash dump** and **Clear**. The 1 Nov crash happened with build `10cbe4c`; its ELF is kept to decode the backtrace.
 - **Live-data clients:** the event-stream fallback is capped at 3 clients (WebSocket stays at 6); stale ones from phones that left the access point no longer pile up.
 - **Cloud "Recording: no":** by design while the engine isn't running; the status now says so and which box to untick for bench tests.
+
+## Crash 1 Nov 2026: decoded and fixed
+
+`async_tcp` aborted: `AsyncResponseStream` grew its buffer a few bytes at a time while ArduinoJson wrote a reply (`cbuf::resize` → `new[]` failed → `abort`). Out of memory, made likely by many live-data clients each holding queued messages. Fixed: reply buffer sized once from `measureJson`, a 503 "low memory" answer instead of crashing, and live data skips clients that aren't keeping up (one shared buffer for all WebSocket clients).
 
 ## Next session
 

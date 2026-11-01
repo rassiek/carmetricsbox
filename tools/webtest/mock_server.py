@@ -22,7 +22,7 @@ def an(i, n, u, pin, div, i0, i1, o0, o1, **kw):
 
 cfg = {
     "version": "4.0.0",
-    "system": dict(board="auto", apSsid="CarMetrics", apPass="", hostname="carmetrics", adminPass="",
+    "system": dict(board="auto", role="main", apSsid="CarMetrics", apPass="", hostname="carmetrics", adminPass="",
                    networks=[dict(ssid="Phone", **{"pass": ""}, passSet=True, priority=8)], scanWhileApInUse=True,
                    ignitionPin=-1, ignitionActiveLow=True, sleepAfterMinutes=0, gpsRxPin=-1, gpsTxPin=-1, gpsBaud=9600,
                    i2cSda=21, i2cScl=22, oneWirePin=4, oneWireResolution=11, oledType="ssd1327_128x128", oledFlip=False,
@@ -56,6 +56,11 @@ cfg = {
 rev = 1
 relay_state = {r["id"]: dict(on=False, out=False, blinkMs=r["blinkMs"]) for r in cfg["relays"]}
 muted_until = 0
+# other boards (phase 3): one paired, one found
+board_shares = {1: {"sensors": [dict(id="eb_coolant", name="Coolant (bay)", type="ds18b20", unit="°C", decimals=1, enabled=True, pin=4)],
+                    "relays": [dict(id="fan", name="Fan", pin=26, mode="on_off", activeLow=True, defaultOn=False, blinkMs=500, enabled=True, safeState="on")]}}
+board_relay = {"fan": False}
+found_boards = [dict(mac="24:6F:28:AA:BB:CC", name="carmetrics", firmware="5.0.0-dev", role="relay", chip="ESP32", rssi=-55, ageS=1)]
 clock_set = False   # like a freshly booted ESP32: no time until the web app sends it
 lock = threading.Lock()
 
@@ -169,6 +174,19 @@ class H(BaseHTTPRequestHandler):
                 crash=dict(task="async_tcp", pc="0x400d5a1c", cause="read from a bad address (null pointer?)", causeCode=28, address="0x00000000", backtrace="0x400d5a19 0x400d6f2e 0x40089a3d", corrupted=False, thisFirmware=False),
                 wifi=dict(connected=True, ssid="Phone", rssi=-61, channel=6, apClients=1), flash=dict(configWrites=1, bufferWrites=0, bufferKB=0),
                 clients=dict(events=1, websocket=0)))
+        if p == "/api/v2/boards":
+            pts = [dict(id=s["id"], name=s["name"], unit=s["unit"], relay=False, decimals=s["decimals"], value=88.4, status="ok", level="ok") for s in board_shares.get(1, {}).get("sensors", [])]
+            pts += [dict(id=r["id"], name=r["name"], unit="", relay=True, decimals=0, value=1 if board_relay.get(r["id"]) else 0, status="ok", level="ok") for r in board_shares.get(1, {}).get("relays", [])]
+            boards = [dict(id=1, name="Engine bay", mac="24:6F:28:01:02:03", role="sensor + relay", chip="ESP32", firmware="5.0.0-dev", online=True, ageS=0,
+                           rssi=-48, rssiAtBoard=-51, uptimeS=4000, level="ok", relaysSafe=False, safeMode=False, received=3990, lost=12,
+                           config=dict(pending=False, status="accepted", message="", hasShare=True, upToDate=True), points=pts)] if 1 in board_shares else []
+            return self.send_json(200, dict(role="main", link=dict(type="ESP-NOW", ok=True, channel=11, rx=4000, tx=4100, txFail=0, queueDrops=0),
+                                            found=found_boards, boards=boards))
+        if p == "/api/v2/boards/config":
+            from urllib.parse import urlparse, parse_qs
+            bid = int(parse_qs(urlparse(self.path).query).get("id", ["0"])[0])
+            if bid not in board_shares: return self.send_json(404, {"ok": False, "message": "Unknown board"})
+            return self.send_json(200, dict(id=bid, name="Engine bay", **board_shares[bid]))
         if p == "/api/v2/wifi":
             up = int(time.time() - T0) + 3700
             return self.send_json(200, dict(uptimeS=up, state="connected", ssid="HouseLAN", channel=6, saved=2, apClients=1, rssi=-58, ip="192.168.1.40",
@@ -266,6 +284,25 @@ class H(BaseHTTPRequestHandler):
             if j.get("cmd") == "mute":
                 muted_until = time.time() + 60 * j.get("minutes", 5) if j.get("minutes", 5) > 0 else 0
                 return self.send_json(200, {"ok": True, "message": "ok"})
+        if p == "/api/v2/boards/accept":
+            if not self.authed(): return
+            found_boards.clear()
+            return self.send_json(200, {"ok": True, "message": "Paired as board 2. Set up its sensors and relays next."})
+        if p == "/api/v2/boards/forget":
+            if not self.authed(): return
+            board_shares.pop(j.get("id"), None)
+            return self.send_json(200, {"ok": True, "message": "Board forgotten"})
+        if p == "/api/v2/boards/config":
+            if not self.authed(): return
+            sh = board_shares.setdefault(j["id"], {"sensors": [], "relays": []})
+            if "sensors" in j: sh["sensors"] = j["sensors"]
+            if "relays" in j: sh["relays"] = j["relays"]
+            return self.send_json(200, {"ok": True, "message": "Saved. Sending it to the board; the Boards page shows when it is accepted."})
+        if p == "/api/v2/boards/relay":
+            if not self.authed(): return
+            rl = board_shares[j["id"]]["relays"][j["index"]]
+            board_relay[rl["id"]] = bool(j["on"])
+            return self.send_json(200, {"ok": True, "message": "Sent"})
         if p == "/api/v2/crash/clear":
             if not self.authed(): return
             return self.send_json(200, {"ok": True, "message": "Crash report cleared"})

@@ -8,6 +8,7 @@
 #include "Board.h"
 #include "BlackBox.h"
 #include "WifiMgr.h"
+#include "Boards.h"
 #include <set>
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
@@ -283,6 +284,42 @@ void setupV2Routes() {
     { StateLock lk; Health::toJson(doc.to<JsonObject>()); }
     sendJson(req, 200, doc);
   });
+  // ---- other boards (phase 3)
+  server.on("/api/v2/boards", HTTP_GET, [](AsyncWebServerRequest* req) {
+    JsonDocument doc;
+    Boards::toJson(doc.to<JsonObject>());
+    sendJson(req, 200, doc);
+  });
+  addJsonPost("/api/v2/boards/accept", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    int id = -1;
+    String err = Boards::accept(j["mac"] | "", j["name"] | "", id);
+    if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Paired as board " + String(id) + ". Set up its sensors and relays next.");
+  });
+  addJsonPost("/api/v2/boards/forget", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    String err = Boards::forget(j["id"] | 0);
+    if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Board forgotten");
+  });
+  server.on("/api/v2/boards/config", HTTP_GET, [](AsyncWebServerRequest* req) {
+    String out;
+    String err = Boards::shareJson(req->hasParam("id") ? req->getParam("id")->value().toInt() : 0, out);
+    if (err.length()) { sendStatus(req, 404, err); return; }
+    AsyncWebServerResponse* res = req->beginResponse(200, "application/json", out);
+    res->addHeader("Cache-Control", "no-store");
+    req->send(res);
+  });
+  addJsonPost("/api/v2/boards/config", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    String err = Boards::setShare(j["id"] | 0, j["sensors"], j["relays"]);
+    if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Saved. Sending it to the board; the Boards page shows when it is accepted.");
+  });
+  addJsonPost("/api/v2/boards/relay", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    String err = Boards::relayCommand(j["id"] | 0, j["index"] | -1, j["on"] | false);
+    if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Sent");
+  });
+
   // ---- last crash (core dump in flash)
   server.on("/api/v2/crash/clear", HTTP_POST, [](AsyncWebServerRequest* req) {
     if (!requireAuth(req)) return;

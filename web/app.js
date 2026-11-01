@@ -124,7 +124,7 @@ const CM = (() => {
 
   // ---- header
   const pages = [['index.html', 'Gauges'], ['charts.html', 'Charts'], ['settings.html', 'Sensors'],
-                 ['relays.html', 'Relays'], ['weather.html', 'Weather'], ['events.html', 'Events'], ['system.html', 'System']];
+                 ['relays.html', 'Relays'], ['boards.html', 'Boards'], ['weather.html', 'Weather'], ['events.html', 'Events'], ['system.html', 'System']];
   function header() {
     const here = location.pathname.split('/').pop() || 'index.html';
     const hd = h('header', {},
@@ -183,5 +183,16 @@ const CM = (() => {
   const statusText = { ok: '', waiting: 'waiting', unassigned: 'not assigned', not_found: 'not found', fault: 'FAULT', disabled: 'disabled' };
 
   document.addEventListener('DOMContentLoaded', () => { header(); connectWs(); });
-  return { $, h, api, toast, live, onConfig, fmt, statusText, command, board, get state() { return lastState; } };
+  // ---- several boards: Sensors / Relays pages edit another board with ?board=N
+  function remoteBoard() { const b = +new URLSearchParams(location.search).get('board'); return b > 0 ? b : 0; }
+  async function boardPicker(sel) {   // <select> inside a hidden wrapper; shown when boards are paired
+    const d = await api('/api/v2/boards').catch(() => null);
+    if (!d || d.role !== 'main' || !d.boards.length) return;
+    sel.replaceChildren(h('option', { value: 0 }, 'This board (main)'), ...d.boards.map(b => h('option', { value: b.id }, `${b.name} (board ${b.id})`)));
+    sel.value = remoteBoard();
+    sel.onchange = () => { location.search = +sel.value ? '?board=' + sel.value : ''; };
+    sel.parentElement.classList.remove('hidden');
+  }
+
+  return { $, h, api, toast, live, onConfig, fmt, statusText, command, board, remoteBoard, boardPicker, get state() { return lastState; } };
 })();

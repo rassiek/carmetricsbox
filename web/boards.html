@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a10">
+  <title>CarMetrics - Boards</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js"></script>
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">Boards</h3><span class="spacer"></span><span id="linkPill" class="pill">…</span></div>
+      <p class="muted small" id="intro"></p>
+    </div>
+
+    <!-- extra board -->
+    <div class="panel hidden" id="nodePanel">
+      <h3>This board</h3>
+      <div class="kv" id="nodeKv"></div>
+      <p class="muted small">Its sensors and relays are set up on the <b>main board's</b> Sensors and Relays pages (board selector).
+        To make this the main board again, set the role on the System page.</p>
+    </div>
+
+    <!-- main board -->
+    <div class="panel hidden" id="foundPanel">
+      <h3>Found, not paired</h3>
+      <p class="muted small">Boards set to a sensor or relay role that can hear this one. Give it a name and press Accept.</p>
+      <div id="found"></div>
+    </div>
+    <div id="boards"></div>
+    <p id="noBoards" class="muted hidden">No boards paired yet. Flash a second board, set its role on its own System page
+      (connect to its CarMetrics access point), and it shows up above within a few seconds.</p>
+  </main>
+  <script src="boards.js"></script>
+</body>
+</html>

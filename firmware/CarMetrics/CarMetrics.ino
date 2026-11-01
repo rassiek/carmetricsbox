@@ -39,6 +39,7 @@
 #include "Health.h"
 #include "Board.h"
 #include "WifiMgr.h"
+#include "Boards.h"
 #include "Gps.h"
 #include "Vehicle.h"
 #include "BlackBox.h"
@@ -82,7 +83,7 @@ static void applyConfig(Config* next) {
   for (size_t i = 0; !wifiChanged && i < a.networks.size(); i++)
     wifiChanged = a.networks[i].ssid != b.networks[i].ssid || a.networks[i].pass != b.networks[i].pass || a.networks[i].priority != b.networks[i].priority;
   bool reboot = a.apSsid != b.apSsid || a.apPass != b.apPass ||
-                a.hostname != b.hostname || a.board != b.board || a.i2cSda != b.i2cSda || a.i2cScl != b.i2cScl || a.i2cKhz != b.i2cKhz;
+                a.hostname != b.hostname || a.board != b.board || a.role != b.role || a.i2cSda != b.i2cSda || a.i2cScl != b.i2cScl || a.i2cKhz != b.i2cKhz;
   {
     StateLock lk;
     Config old = gConfig;
@@ -139,6 +140,7 @@ void setup() {
   Vehicle::begin();
   BlackBox::begin();
   WifiMgr::begin();
+  Boards::begin();
   startOta();
   Web::begin();
   Display::start();
@@ -159,6 +161,7 @@ void loop() {
   Vehicle::update();
   BlackBox::update();
   WifiMgr::update();
+  Boards::update();
   Web::update();
   ArduinoOTA.handle();
 

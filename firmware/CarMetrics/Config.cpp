@@ -246,10 +246,11 @@ void relayToJson(const RelayConfig& r, JsonObject o) {
   o["mode"] = r.mode == RelayMode::BLINK ? "blink" : "on_off";
   o["activeLow"] = r.activeLow; o["defaultOn"] = r.defaultOn;
   o["blinkMs"] = r.blinkMs; o["enabled"] = r.enabled;
+  o["safeState"] = r.safeState == 1 ? "on" : r.safeState == 2 ? "hold" : "off";
 }
 
 void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
-  o["board"] = s.board;
+  o["board"] = s.board; o["role"] = s.role;
   o["apSsid"] = s.apSsid; o["apPass"] = includeSecrets ? s.apPass : "";
   JsonArray nets = o["networks"].to<JsonArray>();
   for (auto& n : s.networks) {
@@ -397,6 +398,8 @@ bool relaysFromJson(JsonVariantConst v, std::vector<RelayConfig>& out, String& e
     r.mode = getS(o, "mode", "on_off") == "blink" ? RelayMode::BLINK : RelayMode::ON_OFF;
     r.activeLow = getB(o, "activeLow", false); r.defaultOn = getB(o, "defaultOn", false);
     r.blinkMs = constrain(getI(o, "blinkMs", 500), 0, 60000); r.enabled = getB(o, "enabled", true);
+    String safe = getS(o, "safeState", "off");
+    r.safeState = safe == "on" ? 1 : safe == "hold" ? 2 : 0;
     tmp.push_back(r);
   }
   out = tmp;
@@ -408,6 +411,8 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   JsonObjectConst o = v.as<JsonObjectConst>();
   s.board = getS(o, "board", s.board); s.board.trim();
   if (s.board != "auto" && !Board::find(s.board)) { err = "Unknown board '" + s.board + "' for this firmware (" + Board::chip() + ")"; return false; }
+  s.role = getS(o, "role", s.role); s.role.trim();
+  if (s.role != "main" && s.role != "sensor" && s.role != "relay" && s.role != "sensor_relay") { err = "Unknown board role '" + s.role + "'"; return false; }
   s.apSsid = getS(o, "apSsid", s.apSsid);
   String p = getS(o, "apPass", ""); if (p.length()) s.apPass = p;
   if (o["networks"].is<JsonArrayConst>()) {
