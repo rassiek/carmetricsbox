@@ -74,7 +74,8 @@
           <option value="main">Main board: web app, settings, internet (default)</option>
           <option value="sensor">Sensor board: reads sensors for the main board</option>
           <option value="relay">Relay board: switches relays for the main board</option>
-          <option value="sensor_relay">Sensor + relay board</option></select></div></div>
+          <option value="sensor_relay">Sensor + relay board</option></select></div>
+        <label class="check"><input type="checkbox" name="boardEncrypt"> Main board: encrypt the link to boards paired from now on (each board gets its own key when you press Accept; already paired boards keep what they have: Forget and Accept again to change)</label></div>
         <p class="muted small" style="margin-top:0">An extra board talks to the main board over ESP-NOW and stops joining Wi-Fi networks
           (its own access point stays on). Pair it on the main board's <a href="boards.html">Boards</a> page.</p>
       </fieldset>

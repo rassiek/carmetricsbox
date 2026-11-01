@@ -3,6 +3,7 @@
 #include "State.h"
 #include "WifiMgr.h"
 #include "Proto.h"
+#include "Boards.h"
 #include "Display.h"
 #include "History.h"
 #include "Outputs.h"
@@ -133,6 +134,19 @@ void selftestLoop() {
       check(String(WifiMgr::reasonText(15)).indexOf("password") >= 0 && String(WifiMgr::reasonText(201)) == "network not found", "Wi-Fi reason codes in plain words");
       JsonDocument w; { StateLock lk; WifiMgr::toJson(w.to<JsonObject>()); }
       check(w["log"].is<JsonArray>() && w["scan"].is<JsonArray>() && w["remembered"].is<JsonObject>(), "Wi-Fi join log JSON");
+      {   // other boards' sensors mirrored on the main board
+        std::vector<Boards::ShareInfo> infos = {{1, "Engine bay", "{\"sensors\":[{\"id\":\"coolant\",\"name\":\"Coolant\",\"type\":\"ds18b20\",\"unit\":\"\u00b0C\",\"warnHigh\":100,\"critHigh\":105,\"pin\":4},"
+                                                   "{\"id\":\"oil\",\"name\":\"Oil\",\"type\":\"adc\",\"pin\":34}],\"relays\":[]}"}};
+        std::vector<SensorConfig> cur = gConfig.sensors;
+        SensorConfig old; old.id = "b1_coolant"; old.type = SensorType::REMOTE; old.remoteBoard = 1; old.oledStyle = OledStyle::MARKER; old.oledLabel = "EBC";
+        cur.push_back(old);
+        auto m = Boards::buildMirrors(infos, cur);
+        bool ok = m.size() == 2 && m[0].id == "b1_coolant" && m[0].name == "Engine bay Coolant" && m[0].critHigh == 105 && m[0].pin == -1 &&
+                  m[0].oledStyle == OledStyle::MARKER && m[0].oledLabel == "EBC" && m[1].remoteIndex == 1 && m[1].oledStyle == OledStyle::OFF;
+        Config c2 = gConfig; for (auto& x : m) c2.sensors.push_back(x);
+        String e2; bool valid = validateConfig(c2, e2);
+        check(ok && valid, "other boards' sensors mirrored (thresholds, ids, OLED choices kept)", e2);
+      }
       {   // board-to-board protocol on the chip itself (the full test runs on a PC: tools/cm.sh prototest)
         uint8_t fr[Proto::MAX_FRAME]; Proto::Header h; h.src = 2; h.seq = 9;
         Proto::Points pm; pm.count = Proto::MAX_POINTS_PER_FRAME;

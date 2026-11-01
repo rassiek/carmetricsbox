@@ -77,4 +77,9 @@ Frames: `'C'`, version, type, from, to, sequence number, length, payload, CRC-16
 | Board selector | Sensors and Relays pages (`?board=N`) | Edit another board's sensors / relays on the main board; saved there and sent. Pins are checked by the board itself |
 | API | `GET /api/v2/boards`, `POST /api/v2/boards/accept {mac,name}`, `/forget {id}`, `GET/POST /api/v2/boards/config`, `POST /api/v2/boards/relay {id,index,on}` | |
 
-Not yet: remote values on the Gauges / Charts / alarms / black box / cloud (next round), encryption, CAN, remote firmware updates.
+## Remote values and encryption (5.1.0-beta.8)
+
+- **Remote values everywhere:** each sensor of a paired board also exists on the main board as a `remote` sensor (`b1_coolant_temp`, named "<board> <sensor>", same unit, range and thresholds). Gauges, Charts, alarms (buzzer on the main board too), black box, cloud upload and the OLED (add it on the Layout page) use it like a local one. Kept in step automatically whenever a board's sensors change or a board is forgotten; the OLED style / label chosen for it is kept. Shown as **LINK LOST** (and a fault alarm if the sensor has one) when its board is out of reach. They don't appear in the Sensors-page list of the main board (counted below it).
+- **Encrypted links:** System → Settings → *encrypt the link to boards paired from now on*. On Accept the main board makes a random 16-byte key and sends it with the pairing message; from then on every message between the two boards is encrypted by ESP-NOW (CCMP), both sides keep the key in NVS. Broadcasts (channel search, hello, pairing) stay unencrypted. **Off by default in the 5.1 betas** until two boards have been bench-tested; turn it on, then Forget + Accept.
+
+Not yet: CAN, firmware updates for other boards from the main board.

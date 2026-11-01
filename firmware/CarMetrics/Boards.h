@@ -14,6 +14,8 @@
 #pragma once
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <vector>
+#include "Config.h"
 
 namespace Boards {
 void begin();                    // after WifiMgr::begin()
@@ -28,4 +30,12 @@ String forget(int id);
 String shareJson(int id, String& out);                           // that board's sensors + relays
 String setShare(int id, JsonVariantConst sensors, JsonVariantConst relays);   // either may be null = keep
 String relayCommand(int id, int relayIndex, bool on);
+
+// Main board: every sensor of every paired board also exists here as a REMOTE
+// sensor ("b1_coolant_temp", name "<board> <sensor>"), so gauges, charts,
+// alarms, black box, OLED and cloud upload treat it like a local one.
+// buildMirrors() is pure (also used by the self-test); the OLED style, label
+// and on/off of an existing mirror are kept when it is rebuilt.
+struct ShareInfo { uint8_t id; String boardName, json; };
+std::vector<SensorConfig> buildMirrors(const std::vector<ShareInfo>& shares, const std::vector<SensorConfig>& current);
 }

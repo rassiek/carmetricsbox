@@ -33,7 +33,9 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 | 15–16 | Touch display | Not started | After phase 3 |
 | 17 | Board-to-board protocol | Format + exchange logic done | `Proto.*`, `Link.h`, `BoardNet.*`; PC test `tools/cm.sh prototest` (36 checks incl. two boards over a lossy simulated link); see [phase 3 plan](v5-phase3-plan.md) |
 | 19–22 | ESP-NOW, board roles, Boards page | First round built | Role setting, ESP-NOW link with channel search, Boards page (pair / status / values / relays), board selector on Sensors + Relays, relay safe state. Needs two boards to try. Remote values on gauges/charts/alarms next |
-| 18, 23 | CAN, remote firmware updates | Not started | |
+| 22b | Remote values on gauges / charts / alarms / black box / cloud / OLED | Done (5.1.0-beta.8) | Mirrored `remote` sensors on the main board |
+| 19b | Encrypted board links | Done, off by default | Key per board at pairing; turn on after the first two-board test |
+| 18, 23 | CAN, remote firmware updates | Not started | Both need two boards (CAN also transceivers) to test |
 
 ## How it was tested
 

@@ -41,6 +41,7 @@ cfg = {
         an("aux_voltage", "Aux battery", "V", 33, 5, 0, 1, 0, 1, enabled=False, decimals=1, gaugeMin=8, gaugeMax=16, oledStyle="text", oledLabel="A"),
         dict(ds("cabin_temp", "Cabin", "C", "text", 0, 50, 40, None), type="bmp"),
         dict(ds("altitude", "Altitude", "^", "text", 0, 3000, None, None), type="bmp", unit="m", bmpField="altitude"),
+        dict(ds("b1_eb_coolant", "Engine bay Coolant (bay)", "", "off", 15, 120, 100, 105), type="remote", board=1, remoteIndex=0, remoteId="eb_coolant", decimals=1),
     ],
     "weather": dict(enabled=True, refTown="Nairobi", autoSeaLevel=True, refreshMinutes=20,
                     towns=[dict(name="Nairobi", lat=-1.2864, lon=36.8172), dict(name="Naivasha", lat=-0.7167, lon=36.431), dict(name="Mombasa", lat=-4.0435, lon=39.6682)]),
@@ -67,7 +68,7 @@ lock = threading.Lock()
 def value(s, t):
     base = {"coolant_temp": 88 + 18 * math.sin(t / 20), "intake_temp": 38, "egt": 420 + 200 * math.sin(t / 15),
             "boost_pressure": 9 + 8 * math.sin(t / 7), "oil_pressure": 45 + 20 * math.sin(t / 11), "bat_voltage": 14.1,
-            "cabin_temp": 24.5, "altitude": 1661}.get(s["id"])
+            "cabin_temp": 24.5, "altitude": 1661, "b1_eb_coolant": 88.4}.get(s["id"])
     if s["id"] == "transfer_case_temp": return None, "unassigned"
     if s["id"] == "gearbox_temp": return None, "not_found"
     if base is None: return 21.0 + random.random(), "ok"
@@ -177,7 +178,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/v2/boards":
             pts = [dict(id=s["id"], name=s["name"], unit=s["unit"], relay=False, decimals=s["decimals"], value=88.4, status="ok", level="ok") for s in board_shares.get(1, {}).get("sensors", [])]
             pts += [dict(id=r["id"], name=r["name"], unit="", relay=True, decimals=0, value=1 if board_relay.get(r["id"]) else 0, status="ok", level="ok") for r in board_shares.get(1, {}).get("relays", [])]
-            boards = [dict(id=1, name="Engine bay", mac="24:6F:28:01:02:03", role="sensor + relay", chip="ESP32", firmware="5.0.0-dev", online=True, ageS=0,
+            boards = [dict(id=1, encrypted=True, name="Engine bay", mac="24:6F:28:01:02:03", role="sensor + relay", chip="ESP32", firmware="5.0.0-dev", online=True, ageS=0,
                            rssi=-48, rssiAtBoard=-51, uptimeS=4000, level="ok", relaysSafe=False, safeMode=False, received=3990, lost=12,
                            config=dict(pending=False, status="accepted", message="", hasShare=True, upToDate=True), points=pts)] if 1 in board_shares else []
             return self.send_json(200, dict(role="main", link=dict(type="ESP-NOW", ok=True, channel=11, rx=4000, tx=4100, txFail=0, queueDrops=0),

@@ -130,10 +130,16 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   await p.screenshot({ path: `${OUT}/system.png`, fullPage: true });
   check(await p.locator('select[name=role]').inputValue() === 'main', 'board role setting (main)');
 
+  await p.goto(BASE + 'settings.html'); await p.waitForTimeout(1200);
+  check((await p.locator('#list').innerText()).includes('1 sensor(s) from other boards') && !(await p.locator('#list').innerText()).includes('Engine bay Coolant'), 'other boards\' sensors hidden in the local list, counted');
+  await p.goto(BASE + 'index.html'); await p.waitForTimeout(2500);
+  check((await p.locator('body').innerText()).includes('Engine bay Coolant'), 'other board\'s sensor on the Gauges page');
+
   // ---- several boards (phase 3)
   await p.goto(BASE + 'boards.html'); await p.waitForTimeout(1500);
   check((await p.locator('#found').innerText()).includes('24:6F:28:AA:BB:CC'), 'found board listed');
   check((await p.locator('#boards').innerText()).includes('Engine bay') && (await p.locator('#boards').innerText()).includes('88.4 °C'), 'paired board with live value');
+  check((await p.locator('#boards').innerText()).includes('encrypted'), 'link encryption shown');
   await p.locator('#boards button', { hasText: 'Fan: OFF' }).click(); await p.waitForTimeout(2500);
   check((await p.locator('#boards').innerText()).includes('Fan: ON'), 'remote relay switched from the Boards page');
   await p.locator('#found input').fill('Trailer'); await p.locator('#found button', { hasText: 'Accept' }).click(); await p.waitForTimeout(800);

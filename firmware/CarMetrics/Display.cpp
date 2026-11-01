@@ -95,6 +95,7 @@ void takeSnapshot(Snapshot& s) {
         break;
       case ST_FAULT:     strcpy(it.value, "ERR"); break;
       case ST_NOT_FOUND: strcpy(it.value, "--"); break;
+      case ST_LINK_LOST: strcpy(it.value, "LNK"); break;
       case ST_UNASSIGNED: strcpy(it.value, "?"); break;
       default:           strcpy(it.value, ".."); break;
     }

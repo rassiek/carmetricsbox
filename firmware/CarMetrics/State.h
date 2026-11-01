@@ -19,6 +19,7 @@ enum SensorStatus : uint8_t {
   ST_UNASSIGNED,   // DS18B20 with no address yet
   ST_NOT_FOUND,    // device missing (BMP / ADS1115 not detected, DS18B20 not on bus)
   ST_FAULT,        // reading failed / out of electrical range
+  ST_LINK_LOST,    // main board: the board this sensor is on is out of reach
 };
 const char* sensorStatusStr(uint8_t st);
 const char* alertLevelStr(uint8_t lvl);

@@ -33,7 +33,7 @@ uint32_t selfTestUntil = 0;
 
 uint8_t evalLevel(const SensorConfig& c, const SensorRuntime& r, uint8_t current, bool engineRunning) {
   if (!c.enabled) return LVL_OK;
-  if (r.status == ST_FAULT || r.status == ST_NOT_FOUND) return c.faultAlarm ? LVL_FAULT : LVL_OK;
+  if (r.status == ST_FAULT || r.status == ST_NOT_FOUND || r.status == ST_LINK_LOST) return c.faultAlarm ? LVL_FAULT : LVL_OK;
   if (r.status != ST_OK || isnan(r.value)) return LVL_OK;  // waiting / unassigned
   if (c.engineRunningOnly && !engineRunning) return LVL_OK;
 

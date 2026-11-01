@@ -44,7 +44,8 @@ struct Identity {                             // this board, for HELLO
 class NodeSession {
  public:
   struct Callbacks {
-    std::function<void(uint8_t id, const std::string& name)> paired;      // store the id (NVS)
+    // Store the id (NVS). key = link key for encrypted ESP-NOW, nullptr = unencrypted.
+    std::function<void(uint8_t id, const std::string& name, const uint8_t* key)> paired;
     // New settings arrived complete: apply them; return CFG_OK or an error (+ message).
     std::function<uint8_t(const std::vector<uint8_t>& json, uint32_t rev, std::string& message)> config;
     std::function<uint8_t(const Proto::Command& c)> command;              // 0 = done
@@ -91,6 +92,8 @@ struct BoardInfo {
   uint8_t mac[6] = {0};
   std::string name, firmware;
   uint8_t role = 0, chip = 0;
+  bool hasKey = false;                        // encrypted link (key given at pairing)
+  uint8_t key[16] = {0};
   bool online = false;
   uint32_t lastHeard = 0, uptimeS = 0;
   int8_t rssi = 0, rssiAtBoard = 0;           // as heard here / as heard by the board
@@ -131,7 +134,8 @@ class MainSession {
 
   // pairing
   const std::vector<FoundBoard>& found() const { return foundList; }
-  int accept(const uint8_t mac[6], const std::string& name);   // -> new id, or -1 (full / unknown)
+  // -> new id, or -1 (full / unknown). key: link key for encryption (nullptr = none), sent with the pairing.
+  int accept(const uint8_t mac[6], const std::string& name, const uint8_t* key = nullptr);
   bool forget(uint8_t id);
   void restore(const BoardInfo& b);                             // from storage at boot
 

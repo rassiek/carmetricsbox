@@ -56,7 +56,9 @@
   function renderList() {
     const list = $('#list');
     list.innerHTML = '';
+    const remoteCount = sensors.filter(s => s.type === 'remote').length;
     sensors.forEach((s, i) => {
+      if (s.type === 'remote') return;   // other boards' sensors: set up with the board selector above, kept in step automatically
       list.append(h('div', { class: 'list-item' },
         h('span', { class: 'dot', id: 'dot-' + s.id }),
         h('div', { style: 'flex:1;min-width:0' },
@@ -69,6 +71,7 @@
         h('button', { class: 'small danger', onclick: () => remove(i) }, '✕')));
     });
     if (!sensors.length) list.append(h('p', { class: 'muted' }, 'No sensors. Add one above.'));
+    if (remoteCount) list.append(h('p', { class: 'muted small' }, `+ ${remoteCount} sensor(s) from other boards: they show on the gauges, charts, OLED and alarms here; set them up by choosing that board above.`));
     markDirty();
     if (CM.state) liveUpdate(CM.state);
   }

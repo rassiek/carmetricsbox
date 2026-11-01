@@ -166,11 +166,15 @@ bool decodeAck(const uint8_t* p, size_t n, Ack& m) {
 }
 
 size_t encodeAssign(uint8_t* out, const Header& h, const Assign& m) {
-  return frame(out, h, ASSIGN, [&](Writer& w) { w.bytes(m.mac, 6); w.u8(m.board); w.str(m.name, sizeof(m.name)); });
+  return frame(out, h, ASSIGN, [&](Writer& w) {
+    w.bytes(m.mac, 6); w.u8(m.board); w.str(m.name, sizeof(m.name));
+    if (m.hasKey) w.bytes(m.key, 16);
+  });
 }
 bool decodeAssign(const uint8_t* p, size_t n, Assign& m) {
   Reader r(p, n);
   r.take(m.mac, 6); m.board = r.u8(); r.str(m.name, sizeof(m.name));
+  m.hasKey = r.ok && r.i + 16 <= n && r.take(m.key, 16);
   return r.ok;
 }
 

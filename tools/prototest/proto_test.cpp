@@ -167,6 +167,18 @@ int main() {
     check(exact, "all 65536 half values round-trip exactly", worst);
   }
 
+  // pairing message: with and without a link key; an old-style frame (no key) still decodes
+  {
+    Assign a; const uint8_t mac[6] = {1, 2, 3, 4, 5, 6}; memcpy(a.mac, mac, 6); a.board = 2; strcpy(a.name, "Bay");
+    a.hasKey = true; for (int i = 0; i < 16; i++) a.key[i] = (uint8_t)(i * 7);
+    uint8_t f2[MAX_FRAME]; Header hh; size_t n = encodeAssign(f2, hh, a);
+    Header h2; const uint8_t* p; size_t pn; Assign d;
+    bool k = n && !parse(f2, n, h2, p, pn) && decodeAssign(p, pn, d) && d.hasKey && !memcmp(d.key, a.key, 16) && d.board == 2;
+    a.hasKey = false; n = encodeAssign(f2, hh, a); Assign d2;
+    bool nk = n && !parse(f2, n, h2, p, pn) && decodeAssign(p, pn, d2) && !d2.hasKey && !strcmp(d2.name, "Bay");
+    check(k && nk, "pairing message with / without link key");
+  }
+
   // known CRC values (so the ESP32 and a PC agree)
   check(crc32((const uint8_t*)"123456789", 9) == 0xCBF43926u, "CRC-32 check value");
   check(crc16((const uint8_t*)"123456789", 9) == 0x29B1, "CRC-16/CCITT check value");

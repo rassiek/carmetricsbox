@@ -74,7 +74,7 @@ void NodeSession::receive(const uint8_t* frame, size_t len, int8_t r, uint32_t n
     if (!decodeAssign(p, n, a) || memcmp(a.mac, me.mac, 6)) return;
     id = a.board > MAX_BOARD_ID ? UNPAIRED : a.board;
     if (a.name[0]) me.name = a.name;
-    if (cb.paired) cb.paired(id, me.name);
+    if (cb.paired) cb.paired(id, me.name, paired() && a.hasKey ? a.key : nullptr);
     fromMain.reset();
     lastHello = 0; up = false;
     if (paired()) { lastHeard = now; sendHello(); }
@@ -152,10 +152,11 @@ void MainSession::restore(const BoardInfo& b) {
   if (b.id > MAX_BOARD_ID || find(b.id) || list.size() >= MAX_BOARDS) return;
   BoardInfo c;
   c.id = b.id; memcpy(c.mac, b.mac, 6); c.name = b.name; c.role = b.role; c.chip = b.chip;
+  c.hasKey = b.hasKey; memcpy(c.key, b.key, 16);
   list.push_back(c);
 }
 
-int MainSession::accept(const uint8_t mac[6], const std::string& name) {
+int MainSession::accept(const uint8_t mac[6], const std::string& name, const uint8_t* key) {
   if (list.size() >= MAX_BOARDS) return -1;
   auto it = std::find_if(foundList.begin(), foundList.end(), [&](const FoundBoard& f) { return !memcmp(f.mac, mac, 6); });
   if (it == foundList.end()) return -1;
@@ -164,9 +165,11 @@ int MainSession::accept(const uint8_t mac[6], const std::string& name) {
   BoardInfo b;
   b.id = id; memcpy(b.mac, mac, 6); b.name = name.empty() ? it->name : name;
   b.role = it->role; b.chip = it->chip; b.firmware = it->firmware;
+  if (key) { b.hasKey = true; memcpy(b.key, key, 16); }
   list.push_back(b);
   foundList.erase(it);
   Assign a; memcpy(a.mac, mac, 6); a.board = id; copyStr(a.name, sizeof(a.name), b.name);
+  a.hasKey = b.hasKey; memcpy(a.key, b.key, 16);
   send(BROADCAST, [&](uint8_t* f, const Header& h) { return encodeAssign(f, h, a); });
   if (cb.boardsChanged) cb.boardsChanged();
   return id;
@@ -272,6 +275,7 @@ void MainSession::receive(const uint8_t* frame, size_t len, int8_t rssi, uint32_
     }
     if (h.src != b->id) {                     // paired here but it lost / never got its id: tell it again
       Assign a; memcpy(a.mac, b->mac, 6); a.board = b->id; copyStr(a.name, sizeof(a.name), b->name);
+      a.hasKey = b->hasKey; memcpy(a.key, b->key, 16);
       send(BROADCAST, [&](uint8_t* f, const Header& hh) { return encodeAssign(f, hh, a); });
       return;
     }

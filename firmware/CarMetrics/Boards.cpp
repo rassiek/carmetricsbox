@@ -7,6 +7,8 @@
 #include "Health.h"
 #include <Preferences.h>
 #include <WiFi.h>
+#include <esp_system.h>
+#include <algorithm>
 
 using namespace Proto;
 using namespace BoardNet;
@@ -22,6 +24,8 @@ bool started = false;
 uint8_t hopChannel = 1;
 uint32_t lastHop = 0;
 
+void syncMirrors();
+
 struct PointName { String id, name, unit; uint8_t decimals; bool relay; };
 struct Share { String json; std::vector<PointName> names; };
 Share shares[MAX_BOARD_ID + 1];
@@ -35,6 +39,13 @@ bool parseMac(const String& s, uint8_t out[6]) {
   for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
   return true;
 }
+String hexKey(const uint8_t* k) { char b[33]; for (int i = 0; i < 16; i++) snprintf(b + 2 * i, 3, "%02x", k[i]); return b; }
+bool parseKey(const String& s, uint8_t out[16]) {
+  if (s.length() != 32) return false;
+  for (int i = 0; i < 16; i++) out[i] = (uint8_t)strtoul(s.substring(2 * i, 2 * i + 2).c_str(), nullptr, 16);
+  return true;
+}
+
 uint8_t roleCode(const String& r) {
   return r == "sensor" ? ROLE_SENSOR : r == "relay" ? ROLE_RELAY : r == "sensor_relay" ? ROLE_SENSOR_RELAY : ROLE_MAIN;
 }
@@ -73,6 +84,7 @@ void saveTable() {
   for (auto& b : mainS->boards()) {
     JsonObject o = d.add<JsonObject>();
     o["id"] = b.id; o["mac"] = macStr(b.mac); o["name"] = b.name; o["role"] = b.role; o["chip"] = b.chip;
+    if (b.hasKey) o["key"] = hexKey(b.key);
   }
   String s; serializeJson(d, s);
   Preferences p;
@@ -97,13 +109,59 @@ void loadMain() {
       BoardInfo b;
       b.id = o["id"] | 0; b.name = (const char*)(o["name"] | ""); b.role = o["role"] | 0; b.chip = o["chip"] | 0;
       if (b.id < 1 || b.id > MAX_BOARD_ID || !parseMac(o["mac"] | "", b.mac)) continue;
+      b.hasKey = parseKey(o["key"] | "", b.key);
       mainS->restore(b);
+      radio.setPeer(b.id, b.mac);
+      radio.setKey(b.id, b.hasKey ? b.key : nullptr);
       char key[6]; snprintf(key, sizeof(key), "s%u", b.id);
       shares[b.id].json = p.getString(key, "");
       indexShare(b.id);
       pushShare(b.id);
     }
   p.end();
+  syncMirrors();
+}
+
+// ---------------------------------------------------------------- mirrors of remote sensors
+// Keep gConfig's REMOTE sensors in step with the paired boards' shares (called
+// with the state lock held, after any change to the boards or their shares).
+void syncMirrors() {
+  if (!mainS) return;
+  std::vector<Boards::ShareInfo> infos;
+  for (auto& b : mainS->boards()) infos.push_back({b.id, b.name.c_str(), shares[b.id].json});
+  std::vector<SensorConfig> want = Boards::buildMirrors(infos, gConfig.sensors);
+  // Compare with what the config has now (as JSON, field by field).
+  JsonDocument a, b;
+  JsonArray aa = a.to<JsonArray>(), ba = b.to<JsonArray>();
+  for (auto& s : gConfig.sensors) if (s.type == SensorType::REMOTE) sensorToJson(s, aa.add<JsonObject>());
+  for (auto& s : want) sensorToJson(s, ba.add<JsonObject>());
+  String sa, sb; serializeJson(a, sa); serializeJson(b, sb);
+  if (sa == sb) return;
+  Config* c = new Config(gConfig);
+  c->sensors.erase(std::remove_if(c->sensors.begin(), c->sensors.end(), [](const SensorConfig& s) { return s.type == SensorType::REMOTE; }), c->sensors.end());
+  for (auto& s : want) c->sensors.push_back(s);
+  String err;
+  if (!validateConfig(*c, err)) { Serial.printf("[boards] remote sensors not added: %s\n", err.c_str()); delete c; return; }
+  requestConfigApply(c);
+  Serial.printf("[boards] %u remote sensor(s) on this board's pages\n", (unsigned)want.size());
+}
+
+// Live values of the REMOTE sensors (loop task, lock held).
+void updateMirrors(uint32_t now) {
+  for (size_t i = 0; i < gConfig.sensors.size() && i < gSensorRt.size(); i++) {
+    const SensorConfig& c = gConfig.sensors[i];
+    if (c.type != SensorType::REMOTE) continue;
+    SensorRuntime& r = gSensorRt[i];
+    if (!c.enabled) { r.status = ST_DISABLED; r.value = NAN; continue; }
+    const BoardInfo* b = mainS->board(c.remoteBoard);
+    if (!b) { r.status = ST_NOT_FOUND; r.value = NAN; continue; }
+    if (!b->online) { r.status = b->lastHeard ? ST_LINK_LOST : ST_WAITING; r.value = NAN; continue; }
+    bool current = b->ackedRev && b->ackedRev == b->configRev;   // values are indexed by the settings the board runs
+    if (!current || c.remoteIndex >= b->points.size()) { r.status = ST_WAITING; r.value = NAN; continue; }
+    const Point& p = b->points[c.remoteIndex];
+    r.value = p.value; r.status = p.status;
+    if (p.status == ST_OK) r.lastOkMs = now;
+  }
 }
 
 // ---------------------------------------------------------------- extra board
@@ -159,6 +217,33 @@ void nodeLink(bool up) {
 }
 }  // namespace
 
+std::vector<SensorConfig> Boards::buildMirrors(const std::vector<ShareInfo>& infos, const std::vector<SensorConfig>& current) {
+  std::vector<SensorConfig> out;
+  for (auto& info : infos) {
+    if (!info.json.length()) continue;
+    JsonDocument d;
+    if (deserializeJson(d, info.json)) continue;
+    std::vector<SensorConfig> sv; String err;
+    if (!sensorsFromJson(d["sensors"], sv, err)) continue;
+    for (size_t k = 0; k < sv.size() && k < 255; k++) {
+      SensorConfig m = sv[k];   // thresholds, units, gauge range, decimals: as on the board
+      m.type = SensorType::REMOTE;
+      m.remoteBoard = info.id; m.remoteIndex = (uint8_t)k; m.remoteId = sv[k].id;
+      m.id = "b" + String(info.id) + "_" + sv[k].id;
+      if (m.id.length() > 31) m.id = m.id.substring(0, 31);
+      m.name = info.boardName + " " + sv[k].name;
+      // Hardware and conversion happen on the board; none of it applies here.
+      m.address = ""; m.pin = m.sckPin = m.soPin = -1; m.curve = ""; m.formula = m.srcA = m.srcB = ""; m.field = "";
+      m.offset = 0; m.smoothing = 1;
+      m.oledStyle = OledStyle::OFF; m.oledLabel = "";
+      for (auto& old : current)   // keep the choices made here
+        if (old.type == SensorType::REMOTE && old.id == m.id) { m.oledStyle = old.oledStyle; m.oledLabel = old.oledLabel; m.enabled = old.enabled; }
+      out.push_back(m);
+    }
+  }
+  return out;
+}
+
 bool Boards::isMain() { return gConfig.sys.role == "main"; }
 const char* Boards::role() { return gConfig.sys.role.c_str(); }
 
@@ -180,12 +265,23 @@ void Boards::begin() {
     loadMain();
   } else {
     Preferences p;
-    uint8_t id = UNPAIRED; uint32_t rev = 0;
-    if (p.begin(NODE_NS, true, "cfg")) { id = p.getUChar("id", UNPAIRED); rev = p.getUInt("rev", 0); p.end(); }
+    uint8_t id = UNPAIRED; uint32_t rev = 0; uint8_t key[16]; bool hasKey = false;
+    if (p.begin(NODE_NS, true, "cfg")) {
+      id = p.getUChar("id", UNPAIRED); rev = p.getUInt("rev", 0);
+      hasKey = id != UNPAIRED && p.getBytes("key", key, 16) == 16;
+      p.end();
+    }
+    if (hasKey) radio.setKey(MAIN_BOARD, key);   // the main board's radio address is learned from its first frame
     NodeSession::Callbacks cb;
-    cb.paired = [](uint8_t newId, const std::string&) {
+    cb.paired = [](uint8_t newId, const std::string&, const uint8_t* key) {
       Preferences q;
-      if (q.begin(NODE_NS, false, "cfg")) { q.putUChar("id", newId); if (newId == UNPAIRED) q.putUInt("rev", 0); q.end(); }
+      if (q.begin(NODE_NS, false, "cfg")) {
+        q.putUChar("id", newId);
+        if (newId == UNPAIRED) q.putUInt("rev", 0);
+        if (key) q.putBytes("key", key, 16); else q.remove("key");
+        q.end();
+      }
+      radio.setKey(MAIN_BOARD, key);
       Serial.printf("[boards] %s\n", newId == UNPAIRED ? "unpaired by the main board" : ("paired as board " + String(newId)).c_str());
     };
     cb.config = nodeConfig;
@@ -206,7 +302,7 @@ void Boards::update() {
   uint32_t now = millis();
   StateLock lk;   // web handlers use the main session too
   radio.poll();
-  if (mainS) mainS->update(now);
+  if (mainS) { mainS->update(now); updateMirrors(now); }
   if (nodeS) {
     nodeS->flags = (gSys.muted ? HB_MUTED : 0) | (Health::safeMode() ? HB_SAFE_MODE : 0);
     nodeS->update(now);
@@ -232,6 +328,7 @@ void Boards::toJson(JsonObject o) {
     JsonObject n = o["node"].to<JsonObject>();
     n["paired"] = nodeS->paired(); n["id"] = nodeS->boardId(); n["linkUp"] = nodeS->linkUp();
     n["mainInRange"] = nodeS->mainInRange(now); n["configRev"] = nodeS->configRev();
+    n["encrypted"] = radio.encrypted(MAIN_BOARD);
   }
   if (!mainS) return;
   JsonArray fa = o["found"].to<JsonArray>();
@@ -243,6 +340,7 @@ void Boards::toJson(JsonObject o) {
   JsonArray ba = o["boards"].to<JsonArray>();
   for (auto& b : mainS->boards()) {
     JsonObject x = ba.add<JsonObject>();
+    x["encrypted"] = b.hasKey;
     x["id"] = b.id; x["name"] = b.name; x["mac"] = macStr(b.mac); x["role"] = roleName(b.role); x["firmware"] = b.firmware;
     x["chip"] = b.chip == Proto::CHIP_ESP32S3 ? "ESP32-S3" : "ESP32";
     x["online"] = b.online; x["ageS"] = b.lastHeard ? (int32_t)((now - b.lastHeard) / 1000) : -1;
@@ -273,7 +371,11 @@ String Boards::accept(const String& mac, const String& name, int& id) {
   uint8_t m[6];
   if (!parseMac(mac, m)) return "Bad board address";
   StateLock lk;
-  id = mainS->accept(m, name.c_str());
+  uint8_t key[16];
+  bool enc = gConfig.sys.boardEncrypt;
+  if (enc) esp_fill_random(key, sizeof(key));
+  id = mainS->accept(m, name.c_str(), enc ? key : nullptr);
+  if (id > 0) { radio.setPeer((uint8_t)id, m); radio.setKey((uint8_t)id, enc ? key : nullptr); }
   if (id < 0) return mainS->boards().size() >= MAX_BOARDS ? "Already " + String(MAX_BOARDS) + " boards paired" : "That board is no longer in range";
   shares[id].json = "{\"sensors\":[],\"relays\":[]}";   // a new board starts empty: set it up on the Sensors / Relays pages
   indexShare(id); saveShare(id); pushShare(id);
@@ -286,6 +388,7 @@ String Boards::forget(int id) {
   if (id < 1 || id > MAX_BOARD_ID || !mainS->forget((uint8_t)id)) return "Unknown board";
   radio.forget((uint8_t)id);
   shares[id] = Share(); saveShare(id);
+  syncMirrors();   // its sensors leave the main board's pages
   return "";
 }
 
@@ -322,6 +425,7 @@ String Boards::setShare(int id, JsonVariantConst sensors, JsonVariantConst relay
   if (j.length() > MAX_CONFIG) return "Too many settings for one board";
   shares[id].json = j;
   indexShare(id); saveShare(id); pushShare(id);
+  syncMirrors();   // its sensors show up on gauges, charts, alarms...
   return "";
 }
 

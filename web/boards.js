@@ -27,6 +27,7 @@
       ['Paired', n.paired ? `yes, board ${n.id}` : 'not yet', n.paired ? '' : 'press Accept on the main board\'s Boards page'],
       ['Link to main board', n.linkUp ? 'up' : 'down', n.mainInRange ? 'main board in range' : 'searching channels…'],
       ['Radio channel', String(d.link.channel || '–'), 'follows the main board'],
+      ['Encryption', n.encrypted ? 'on' : 'off', n.encrypted ? 'key from pairing' : 'turned on in the main board\'s settings'],
       ['Settings', n.configRev ? 'received' : 'none yet', n.configRev ? 'rev ' + n.configRev.toString(16) : 'set up on the main board'],
       ['Messages', `${d.link.rx} in / ${d.link.tx} out`, d.link.txFail ? `${d.link.txFail} failed` : ''],
     ];
@@ -35,7 +36,7 @@
 
   function renderMain(d) {
     $('#intro').textContent = 'Extra boards (engine bay sensors, relays near the loads) join this one over ESP-NOW. ' +
-      'This board stays the only web app: their sensors and relays are set up on the Sensors and Relays pages with the board selector.';
+      'This board stays the only web app: set up their sensors and relays on the Sensors and Relays pages (board selector). Their sensors then also appear on the Gauges, Charts, OLED (Layout page), alarms, black box and cloud upload here.';
     $('#foundPanel').classList.toggle('hidden', !d.found.length);
     $('#found').replaceChildren(...d.found.map(f => {
       const name = h('input', { value: names[f.mac] ?? f.name, placeholder: 'Name, e.g. Engine bay', style: 'max-width:200px' });
@@ -60,7 +61,7 @@
       return h('div', { class: 'panel' },
         h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, h('h3', { style: 'margin:0' }, `${b.name} `, h('span', { class: 'muted small' }, `board ${b.id}`)),
           h('span', { class: 'spacer' }), lvl, st),
-        h('p', { class: 'muted small' }, `${b.role}, ${b.chip}, firmware ${b.firmware || '?'} · signal ${sig(b.rssi)} here, ${sig(b.rssiAtBoard)} there · ` +
+        h('p', { class: 'muted small' }, `${b.role}, ${b.chip}, firmware ${b.firmware || '?'} · ${b.encrypted ? 'encrypted' : 'not encrypted'} · signal ${sig(b.rssi)} here, ${sig(b.rssiAtBoard)} there · ` +
           `up ${dur(b.uptimeS)} · ${b.lost} of ${b.received + b.lost} messages lost` + (b.relaysSafe ? ' · relays in safe state (link was lost)' : '') + (b.safeMode ? ' · SAFE MODE' : '')),
         h('p', { class: 'small', style: c.status === 'refused' ? 'color:var(--crit)' : '' }, cfgText),
         sensors.length ? h('table', { class: 'small' }, rows) : h('p', { class: 'muted small' }, 'No sensors on this board.'),

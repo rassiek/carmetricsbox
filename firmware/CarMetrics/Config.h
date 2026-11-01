@@ -9,7 +9,7 @@
 // Release label: shown in the web app header, System page, OLED start screen and
 // the release file names. Bump for every build handed out; the web app gets the
 // same label baked in (tools/build_web.py) and warns when the two don't match.
-#define FW_VERSION "5.1.0-beta.7"
+#define FW_VERSION "5.1.0-beta.8"
 #define CONFIG_SCHEMA 2   // bumped when the stored layout changes; older configs are upgraded on load
 #define MAX_SENSORS 24
 #define MAX_RELAYS 12
@@ -21,6 +21,7 @@ enum class SensorType : uint8_t { DS18B20, MAX6675, MCP9600, BMP, ADC, ADS1115,
                                   INA226,    // I2C current/voltage monitor
                                   IMU,       // I2C accelerometer (MPU-6050 family): roll / pitch
                                   COMPUTED,  // derived from other sensors
+                                  REMOTE,    // main board: a sensor on another board (kept in step with that board's settings)
                                   UNKNOWN };
 enum class BmpField : uint8_t { TEMPERATURE, PRESSURE, ALTITUDE, HUMIDITY };   // humidity: BME280 only
 enum class OledStyle : uint8_t { OFF, TEXT, BAR, MARKER };   // MARKER: needle between the threshold ticks (original v1 look)
@@ -49,6 +50,8 @@ struct SensorConfig {
   // COMPUTED: diff = a - b, sum = a + b, rate = change of a per minute,
   // time_in_warn = minutes a has spent in warning or worse, curve_margin = a - curve(b)
   String formula, srcA, srcB;
+  uint8_t remoteBoard = 0, remoteIndex = 0;   // REMOTE: board id, position in that board's value list
+  String remoteId;                            // REMOTE: the sensor's id on that board
   // Lookup curve "x:y,x:y,..." (sorted by x). Analog: sensor volts -> value (non-linear senders).
   // curve_margin: b -> minimum allowed a (e.g. RPM -> minimum oil pressure).
   String curve;
@@ -98,6 +101,7 @@ struct WifiNetwork { String ssid, pass; uint8_t priority = 5; };   // priority 1
 struct SystemConfig {
   String board = "auto";             // board profile id (see Board.cpp); "auto" = detect
   String role = "main";              // main | sensor | relay | sensor_relay (extra boards, phase 3); change = reboot
+  bool boardEncrypt = false;         // main board: give boards paired from now on an encryption key (off in the 5.1 betas until bench-tested)
   std::vector<WifiNetwork> networks; // known networks to join (phone hotspot, home...)
   bool scanWhileApInUse = true;      // false: don't search for networks while a phone uses the CarMetrics AP
 

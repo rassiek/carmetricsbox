@@ -181,7 +181,7 @@ const CM = (() => {
   }
 
   function fmt(v, dec) { return v === null || v === undefined || Number.isNaN(v) ? '--' : Number(v).toFixed(dec); }
-  const statusText = { ok: '', waiting: 'waiting', unassigned: 'not assigned', not_found: 'not found', fault: 'FAULT', disabled: 'disabled' };
+  const statusText = { ok: '', waiting: 'waiting', unassigned: 'not assigned', not_found: 'not found', fault: 'FAULT', disabled: 'disabled', link_lost: 'LINK LOST' };
 
   // Firmware and web app are uploaded separately: say so when they don't match
   // (e.g. only littlefs.bin was uploaded and new pages call missing firmware APIs).

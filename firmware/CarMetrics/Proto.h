@@ -112,6 +112,8 @@ struct Assign {
   uint8_t mac[6] = {0};
   uint8_t board = UNPAIRED;
   char name[24] = "";
+  bool hasKey = false;         // link key for encrypted ESP-NOW (optional trailing field; old decoders ignore it)
+  uint8_t key[16] = {0};
 };
 
 // ---- frames

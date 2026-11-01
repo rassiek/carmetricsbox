@@ -62,6 +62,7 @@ const char* sensorStatusStr(uint8_t st) {
     case ST_OK:         return "ok";
     case ST_UNASSIGNED: return "unassigned";
     case ST_NOT_FOUND:  return "not_found";
+    case ST_LINK_LOST:  return "link_lost";
     default:            return "fault";
   }
 }

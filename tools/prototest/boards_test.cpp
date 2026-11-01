@@ -21,7 +21,8 @@ void boardsTest() {
   uint8_t storedId = UNPAIRED; std::string applied; int applyCount = 0, relayActs = 0, linkDowns = 0, linkUps = 0;
   bool refuseNext = false; float coolant = 92.5f;
   NodeSession::Callbacks ncb;
-  ncb.paired = [&](uint8_t id, const std::string&) { storedId = id; };
+  uint8_t gotKey[16] = {0}; bool hasKey = false;
+  ncb.paired = [&](uint8_t id, const std::string&, const uint8_t* key) { storedId = id; hasKey = key != nullptr; if (key) memcpy(gotKey, key, 16); };
   ncb.config = [&](const std::vector<uint8_t>& j, uint32_t, std::string& msg) -> uint8_t {
     if (refuseNext) { msg = "relay on input-only GPIO34"; return CFG_INVALID; }
     applied.assign(j.begin(), j.end()); applyCount++; return CFG_OK;
@@ -59,11 +60,13 @@ void boardsTest() {
   check(node.mainInRange(now), "unpaired board hears the main board's beacon (channel found)");
 
   // 2. accept it
-  int id = mainB->accept(nodeMac, "Engine bay");
+  const uint8_t lmk[16] = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 11, 12, 13, 14, 15, 16};
+  int id = mainB->accept(nodeMac, "Engine bay", lmk);
   run(1500);
   const BoardInfo* b = mainB->board((uint8_t)id);
   check(id == 1 && node.paired() && storedId == 1 && b && b->online && node.linkUp() && mainB->found().empty() && tableSaves == 1,
         "accepted: board gets id 1, both sides online");
+  check(hasKey && !memcmp(gotKey, lmk, 16) && b->hasKey, "link key handed over at pairing");
 
   // 3. configuration over a lossy link (1 in 4 frames lost both ways)
   std::string cfg = "{\"role\":\"sensor+relay\",\"sensors\":[";

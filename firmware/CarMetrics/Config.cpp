@@ -20,6 +20,7 @@ const char* sensorTypeToStr(SensorType t) {
     case SensorType::INA226:  return "ina226";
     case SensorType::IMU:     return "imu";
     case SensorType::COMPUTED: return "computed";
+    case SensorType::REMOTE:   return "remote";
     default:                  return "unknown";
   }
 }
@@ -36,6 +37,7 @@ SensorType sensorTypeFromStr(const String& s) {
   if (s == "ina226")  return SensorType::INA226;
   if (s == "imu")     return SensorType::IMU;
   if (s == "computed") return SensorType::COMPUTED;
+  if (s == "remote")   return SensorType::REMOTE;
   return SensorType::UNKNOWN;
 }
 const char* bmpFieldToStr(BmpField f) {
@@ -227,6 +229,7 @@ static bool validId(const String& id) {
 void sensorToJson(const SensorConfig& s, JsonObject o) {
   o["id"] = s.id; o["name"] = s.name; o["unit"] = s.unit;
   o["type"] = sensorTypeToStr(s.type); o["enabled"] = s.enabled;
+  if (s.type == SensorType::REMOTE) { o["board"] = s.remoteBoard; o["remoteIndex"] = s.remoteIndex; o["remoteId"] = s.remoteId; }
   o["address"] = s.address; o["pin"] = s.pin; o["sckPin"] = s.sckPin; o["soPin"] = s.soPin;
   o["adsAddress"] = s.adsAddress; o["adsChannel"] = s.adsChannel; o["mcpAddress"] = s.mcpAddress;
   o["bmpField"] = bmpFieldToStr(s.bmpField);
@@ -253,7 +256,7 @@ void relayToJson(const RelayConfig& r, JsonObject o) {
 }
 
 void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
-  o["board"] = s.board; o["role"] = s.role;
+  o["board"] = s.board; o["role"] = s.role; o["boardEncrypt"] = s.boardEncrypt;
   o["apSsid"] = s.apSsid; o["apPass"] = includeSecrets ? s.apPass : "";
   JsonArray nets = o["networks"].to<JsonArray>();
   for (auto& n : s.networks) {
@@ -358,6 +361,10 @@ static bool sensorFromJson(JsonObjectConst o, SensorConfig& s, String& err) {
     if (s.i2cAddr != 0x68 && s.i2cAddr != 0x69) { err = "Sensor '" + s.id + "': IMU address must be 0x68 or 0x69"; return false; }
   }
   if (s.type == SensorType::RPM && (isnan(s.pulsesPerRev) || s.pulsesPerRev <= 0)) { err = "Sensor '" + s.id + "': pulses per revolution must be > 0"; return false; }
+  if (s.type == SensorType::REMOTE) {
+    s.remoteBoard = getI(o, "board", 0); s.remoteIndex = getI(o, "remoteIndex", 0); s.remoteId = getS(o, "remoteId", "");
+    if (s.remoteBoard < 1 || s.remoteBoard > 14) { err = "Sensor '" + s.id + "': remote board must be 1-14"; return false; }
+  }
   if (s.type == SensorType::COMPUTED) {
     static const char* const f[] = {"diff", "sum", "rate", "time_in_warn", "curve_margin"};
     bool ok = false; for (auto x : f) if (s.formula == x) ok = true;
@@ -415,6 +422,7 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   s.board = getS(o, "board", s.board); s.board.trim();
   if (s.board != "auto" && !Board::find(s.board)) { err = "Unknown board '" + s.board + "' for this firmware (" + Board::chip() + ")"; return false; }
   s.role = getS(o, "role", s.role); s.role.trim();
+  s.boardEncrypt = getB(o, "boardEncrypt", s.boardEncrypt);
   if (s.role != "main" && s.role != "sensor" && s.role != "relay" && s.role != "sensor_relay") { err = "Unknown board role '" + s.role + "'"; return false; }
   s.apSsid = getS(o, "apSsid", s.apSsid);
   String p = getS(o, "apPass", ""); if (p.length()) s.apPass = p;
