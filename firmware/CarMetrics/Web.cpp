@@ -276,6 +276,11 @@ void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventTyp
   }
 }
 
+// Route matching: a plain server.on("/a") also answers "/a/anything" (the library's
+// backward-compatible matching), so a GET route that has GET children below it must be
+// exact, or it swallows them (5.2.0-beta.2: /api/v2/boards/config answered with the
+// board list -> "Cannot read properties of undefined (reading 'filter')" on the
+// Sensors / Relays pages of another board; Events page detail and config export too).
 void setupV2Routes() {
   server.on("/api/v2/points", HTTP_GET, [](AsyncWebServerRequest* req) {
     JsonDocument doc;
@@ -288,7 +293,7 @@ void setupV2Routes() {
     sendJson(req, 200, doc);
   });
   // ---- other boards (phase 3)
-  server.on("/api/v2/boards", HTTP_GET, [](AsyncWebServerRequest* req) {
+  server.on(AsyncURIMatcher::exact("/api/v2/boards"), HTTP_GET, [](AsyncWebServerRequest* req) {
     JsonDocument doc;
     Boards::toJson(doc.to<JsonObject>());
     sendJson(req, 200, doc);
@@ -476,7 +481,7 @@ void setupV2Routes() {
     }, ("Calibrated: " + String(ppr, 2) + " pulses per revolution (" + String(hz, 1) + " Hz at " + String(rpm, 0) + " RPM)").c_str());
   });
   // ---- alarm black box
-  server.on("/api/blackbox", HTTP_GET, [](AsyncWebServerRequest* req) {
+  server.on(AsyncURIMatcher::exact("/api/blackbox"), HTTP_GET, [](AsyncWebServerRequest* req) {
     JsonDocument doc;
     doc["enabled"] = gConfig.blackbox.enabled; doc["keep"] = gConfig.blackbox.keepEvents;
     BlackBox::listToJson(doc["events"].to<JsonArray>());
@@ -539,7 +544,7 @@ void setupRoutes() {
     sendJson(req, 200, doc);
   });
 
-  server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest* req) {
+  server.on(AsyncURIMatcher::exact("/api/config"), HTTP_GET, [](AsyncWebServerRequest* req) {
     JsonDocument doc;
     { StateLock lk; configToJson(gConfig, doc.to<JsonObject>(), false); doc["revision"] = gSys.configRevision; }
     sendJson(req, 200, doc);

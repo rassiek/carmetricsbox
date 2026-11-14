@@ -108,4 +108,25 @@ void displayTest() {
   mainLink.cut = false; dispLink.cut = false;
   run(3000);
   check(d.linkUp() && b->online, "display link back by itself");
+
+  // Real firmware: update(now) runs with a time taken just BEFORE the frames are
+  // handled with a fresh millis(), so lastHeard can be a few ms ahead of "now".
+  // That must not count as "silent for 5 s" (boards flapped online/offline on 5.2.0-beta.2).
+  {
+    int flaps = 0;
+    MainSession::Callbacks c2; c2.online = [&](const BoardInfo&, bool on) { if (!on) flaps++; };
+    LoopbackLink a1, a2; LoopbackLink::connect(a1, a2);
+    Identity mi2; mi2.role = ROLE_MAIN;
+    MainSession m2(a1, mi2, c2);
+    BoardInfo bi; bi.id = 1; memcpy(bi.mac, mac, 6); bi.name = "Bay"; m2.restore(bi);
+    NodeSession::Callbacks nc; int nodeDrops = 0; nc.link = [&](bool up) { if (!up) nodeDrops++; };
+    Identity ni; ni.role = ROLE_SENSOR; memcpy(ni.mac, mac, 6);
+    NodeSession n2(a2, ni, 1, 0, nc);
+    uint32_t t = 5000;
+    a1.onReceive([&](const uint8_t* f, size_t l, int8_t r) { m2.receive(f, l, r, t + 3); });   // handled "3 ms later"
+    a2.onReceive([&](const uint8_t* f, size_t l, int8_t r) { n2.receive(f, l, r, t + 3); });
+    for (int i = 0; i < 3000; i++) { t += 10; a2.poll(); a1.poll(); n2.update(t); m2.update(t); }   // firmware order: poll, then update(now taken before)
+    check(flaps == 0 && nodeDrops == 0 && m2.board(1)->online && n2.linkUp(), "link stays up when frames are timestamped a few ms after update()",
+          "main offline " + std::to_string(flaps) + "x, board " + std::to_string(nodeDrops) + "x");
+  }
 }

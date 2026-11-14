@@ -6,7 +6,11 @@ namespace BoardNet {
 using namespace Proto;
 
 static void copyStr(char* dst, size_t n, const std::string& s) { strncpy(dst, s.c_str(), n - 1); dst[n - 1] = 0; }
-static bool late(uint32_t now, uint32_t since, uint32_t ms) { return now - since >= ms; }
+// "since" may be a few ms AFTER "now": frames are handled with a fresh millis()
+// while update() runs with the time taken just before. Plain unsigned "now - since"
+// would then be ~4 billion = "very late" and drop the link (5.2.0-beta.2: boards
+// flapping online / offline every few seconds). Signed difference: ahead = not late.
+static bool late(uint32_t now, uint32_t since, uint32_t ms) { return (int32_t)(now - since) >= (int32_t)ms; }
 
 // ============================================================== extra board
 NodeSession::NodeSession(Link& l, const Identity& m, uint8_t storedId, uint32_t storedRev, const Callbacks& c)

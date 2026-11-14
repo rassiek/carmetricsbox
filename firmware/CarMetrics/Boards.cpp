@@ -389,7 +389,17 @@ uint8_t nodeConfig(const std::vector<uint8_t>& json, uint32_t rev, std::string& 
   Config* c = new Config(gConfig);
   String err;
   bool ok = (d["sensors"].isNull() || sensorsFromJson(d["sensors"], c->sensors, err)) &&
-            (d["relays"].isNull() || relaysFromJson(d["relays"], c->relays, err)) && validateConfig(*c, err);
+            (d["relays"].isNull() || relaysFromJson(d["relays"], c->relays, err));
+  // The engine-running sensor (default bat_voltage) lives on the main board: when it
+  // isn't among this board's sensors, "engine running only" alarms here simply always
+  // apply instead of refusing the whole settings (5.2.0-beta.2: "Engine-running sensor
+  // 'bat_voltage' does not exist").
+  if (ok && c->sys.engineSensorId.length()) {
+    bool have = false;
+    for (auto& x : c->sensors) if (x.id == c->sys.engineSensorId) have = true;
+    if (!have) c->sys.engineSensorId = "";
+  }
+  ok = ok && validateConfig(*c, err);
   if (!ok) { delete c; msg = err.c_str(); return CFG_INVALID; }
   requestConfigApply(c);   // applied and saved by loop() on its next pass
   Preferences p;
@@ -585,7 +595,7 @@ void Boards::toJson(JsonObject o) {
   for (auto& f : mainS->found()) {
     JsonObject x = fa.add<JsonObject>();
     x["mac"] = macStr(f.mac); x["name"] = f.name; x["firmware"] = f.firmware; x["role"] = roleName(f.role);
-    x["chip"] = f.chip == Proto::CHIP_ESP32S3 ? "ESP32-S3" : "ESP32"; x["rssi"] = f.rssi; x["ageS"] = (now - f.lastHeard) / 1000;
+    x["chip"] = f.chip == Proto::CHIP_ESP32S3 ? "ESP32-S3" : "ESP32"; x["rssi"] = f.rssi; x["ageS"] = std::max<int32_t>(0, (int32_t)(now - f.lastHeard)) / 1000;
   }
   JsonArray ba = o["boards"].to<JsonArray>();
   for (auto& b : mainS->boards()) {
@@ -601,7 +611,7 @@ void Boards::toJson(JsonObject o) {
     x["sameChip"] = b.chip == myChip();
     x["id"] = b.id; x["name"] = b.name; x["mac"] = macStr(b.mac); x["role"] = roleName(b.role); x["firmware"] = b.firmware;
     x["chip"] = b.chip == Proto::CHIP_ESP32S3 ? "ESP32-S3" : "ESP32";
-    x["online"] = b.online; x["ageS"] = b.lastHeard ? (int32_t)((now - b.lastHeard) / 1000) : -1;
+    x["online"] = b.online; x["ageS"] = b.lastHeard ? std::max<int32_t>(0, (int32_t)(now - b.lastHeard)) / 1000 : -1;
     x["rssi"] = b.rssi; x["rssiAtBoard"] = b.rssiAtBoard; x["uptimeS"] = b.uptimeS;
     x["level"] = alertLevelStr(b.level);
     x["relaysSafe"] = (b.flags & HB_RELAYS_SAFE) != 0; x["safeMode"] = (b.flags & HB_SAFE_MODE) != 0;

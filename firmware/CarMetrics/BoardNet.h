@@ -78,7 +78,7 @@ class NodeSession {
   bool paired() const { return id != Proto::UNPAIRED; }
   // Heard the main board (any frame, even one for another board) recently:
   // the radio is on the right channel. Used for the channel search on ESP-NOW.
-  bool mainInRange(uint32_t now) const { return heardMainAt && now - heardMainAt < Proto::LINK_LOST_MS; }
+  bool mainInRange(uint32_t now) const { return heardMainAt && (int32_t)(now - heardMainAt) < (int32_t)Proto::LINK_LOST_MS; }   // signed: heardMainAt may be a few ms after now
   void sayHello() { sendHello(); }          // e.g. right after switching channel
   bool linkUp() const { return up; }
   // Display -> main board: relay, mute, set a limit. Resent until answered. -> seq, or -1 (not paired / link down)

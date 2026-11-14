@@ -39,8 +39,8 @@ uint8_t myChip() {
 }
 uint8_t chipOfImage(const uint8_t* hdr) { uint16_t id = hdr[12] | (hdr[13] << 8); return id == 0 ? CHIP_ESP32 : id == 9 ? CHIP_ESP32S3 : CHIP_OTHER; }
 
-bool espnowFresh(uint32_t now) { return node && node->linkUp() && espnowPointsAt && now - espnowPointsAt < 3500; }
-bool httpFresh(uint32_t now) { return httpValuesAt && now - httpValuesAt < 3500; }
+bool espnowFresh(uint32_t now) { return node && node->linkUp() && espnowPointsAt && (int32_t)(now - espnowPointsAt) < 3500; }
+bool httpFresh(uint32_t now) { return httpValuesAt && (int32_t)(now - httpValuesAt) < 3500; }
 
 String mainSsid() {
   if (cfg->mainSsid.length()) return cfg->mainSsid;
