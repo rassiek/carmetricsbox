@@ -61,6 +61,8 @@ muted_until = 0
 board_shares = {1: {"sensors": [dict(id="eb_coolant", name="Coolant (bay)", type="ds18b20", unit="°C", decimals=1, enabled=True, pin=4)],
                     "relays": [dict(id="fan", name="Fan", pin=26, mode="on_off", activeLow=True, defaultOn=False, blinkMs=500, enabled=True, safeState="on")]}}
 board_relay = {"fan": False}
+board_names = {}
+board_cmds = []
 board_fw = None
 found_boards = [dict(mac="24:6F:28:AA:BB:CC", name="carmetrics", firmware="5.0.0-dev", role="relay", chip="ESP32", rssi=-55, ageS=1)]
 clock_set = False   # like a freshly booted ESP32: no time until the web app sends it
@@ -181,7 +183,12 @@ class H(BaseHTTPRequestHandler):
             pts += [dict(id=r["id"], name=r["name"], unit="", relay=True, decimals=0, value=1 if board_relay.get(r["id"]) else 0, status="ok", level="ok") for r in board_shares.get(1, {}).get("relays", [])]
             boards = [dict(id=1, encrypted=True, sameChip=True, fw=board_fw, name="Engine bay", mac="24:6F:28:01:02:03", role="sensor + relay", chip="ESP32", firmware="5.0.0-dev", online=True, ageS=0,
                            rssi=-48, rssiAtBoard=-51, uptimeS=4000, level="ok", relaysSafe=False, safeMode=False, received=3990, lost=12,
-                           config=dict(pending=False, status="accepted", message="", hasShare=True, upToDate=True), points=pts)] if 1 in board_shares else []
+                           config=dict(pending=False, status="accepted", message="", hasShare=True, upToDate=True), points=pts,
+                           lossPct=0, commandsIn=0, commandsFailed=0, muted=False)] if 1 in board_shares else []
+            boards.append(dict(id=2, encrypted=False, sameChip=False, name=board_names.get(2, "Dash"), mac="34:85:18:0A:0B:0C", role="display", chip="ESP32-S3", firmware="5.1.0-beta.11",
+                               online=True, ageS=0, rssi=-40, rssiAtBoard=-42, uptimeS=600, level="ok", relaysSafe=False, safeMode=False, received=600, lost=3, lossPct=1,
+                               commandsIn=4, commandsFailed=0, muted=False, config=dict(pending=False, status="accepted", message="", hasShare=False, upToDate=True), points=[],
+                               display=dict(catalogSent=True, sensors=9, relays=2, ip="192.168.4.3")))
             return self.send_json(200, dict(role="main", firmware="5.1.0-beta.9", chip="ESP32", link=dict(type="ESP-NOW", ok=True, channel=11, rx=4000, tx=4100, txFail=0, queueDrops=0),
                                             found=found_boards, boards=boards))
         if p == "/api/v2/boards/config":
@@ -305,6 +312,14 @@ class H(BaseHTTPRequestHandler):
             global board_fw
             board_fw = dict(state="sending", version="5.1.0-beta.9", error="", percent=42, seconds=31) if j.get("source") != "cancel" else dict(state="failed", version="5.1.0-beta.9", error="cancelled", percent=0, seconds=0)
             return self.send_json(200, {"ok": True, "message": "Sending the firmware; the board restarts when it has all of it"})
+        if p == "/api/v2/boards/command":
+            if not self.authed(): return
+            board_cmds.append(j)
+            return self.send_json(200, {"ok": True, "message": "Sending the settings again" if j.get("cmd") == "resend" else "Sent"})
+        if p == "/api/v2/boards/rename":
+            if not self.authed(): return
+            board_names[j["id"]] = j["name"]
+            return self.send_json(200, {"ok": True, "message": "Renamed"})
         if p == "/api/v2/boards/relay":
             if not self.authed(): return
             rl = board_shares[j["id"]]["relays"][j["index"]]

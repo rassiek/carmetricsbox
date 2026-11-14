@@ -148,11 +148,16 @@ bool decodePoints(const uint8_t* p, size_t n, Points& m) {
 }
 
 size_t encodeCommand(uint8_t* out, const Header& h, const Command& m) {
-  return frame(out, h, COMMAND, [&](Writer& w) { w.u8(m.kind); w.u8(m.index); w.u8(m.on); w.u16(m.blinkMs); w.u16(m.minutes); });
+  return frame(out, h, COMMAND, [&](Writer& w) {
+    w.u8(m.kind); w.u8(m.index); w.u8(m.on); w.u16(m.blinkMs); w.u16(m.minutes);
+    w.u8(m.board); w.u8(m.which); w.f32(m.value); w.u16(m.rev);
+  });
 }
 bool decodeCommand(const uint8_t* p, size_t n, Command& m) {
   Reader r(p, n);
   m.kind = r.u8(); m.index = r.u8(); m.on = r.u8(); m.blinkMs = r.u16(); m.minutes = r.u16();
+  if (!r.ok) return false;
+  if (r.i + 8 <= n) { m.board = r.u8(); m.which = r.u8(); m.value = r.f32(); m.rev = r.u16(); }   // newer senders
   return r.ok;
 }
 

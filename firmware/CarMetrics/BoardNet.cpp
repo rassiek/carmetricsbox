@@ -12,11 +12,20 @@ static bool late(uint32_t now, uint32_t since, uint32_t ms) { return now - since
 NodeSession::NodeSession(Link& l, const Identity& m, uint8_t storedId, uint32_t storedRev, const Callbacks& c)
     : link(l), me(m), cb(c), id(storedId > MAX_BOARD_ID ? UNPAIRED : storedId), cfgRev(storedRev) {}
 
-void NodeSession::send(const std::function<size_t(uint8_t*, const Header&)>& enc, uint8_t dst) {
+uint16_t NodeSession::send(const std::function<size_t(uint8_t*, const Header&)>& enc, uint8_t dst, int useSeq) {
   uint8_t f[MAX_FRAME];
-  Header h; h.src = id; h.dst = dst; h.seq = seq++;
+  Header h; h.src = id; h.dst = dst; h.seq = useSeq >= 0 ? (uint16_t)useSeq : seq++;
   size_t n = enc(f, h);
   if (n) link.send(dst, f, n);
+  return h.seq;
+}
+
+int NodeSession::sendCommand(const Command& c) {
+  if (!paired() || !up) return -1;
+  OutCmd o; o.c = c; o.tries = 1; o.lastSent = nowMs;
+  o.seq = send([&](uint8_t* f, const Header& h) { return encodeCommand(f, h, c); });
+  outCmds.push_back(o);
+  return o.seq;
 }
 
 void NodeSession::sendHello() {
@@ -34,6 +43,19 @@ void NodeSession::sendConfigAck() {
 }
 
 void NodeSession::update(uint32_t now) {
+  nowMs = now;
+  for (auto it = outCmds.begin(); it != outCmds.end();) {   // commands to the main board: resend until answered
+    if (!late(now, it->lastSent, COMMAND_RESEND_MS)) { ++it; continue; }
+    if (it->tries >= COMMAND_TRIES || !paired()) {
+      if (cb.commandResult) cb.commandResult(it->seq, ACK_NO_ANSWER);
+      it = outCmds.erase(it);
+      continue;
+    }
+    it->tries++; it->lastSent = now;
+    Command c = it->c;
+    send([&](uint8_t* f, const Header& h) { return encodeCommand(f, h, c); }, MAIN_BOARD, it->seq);
+    ++it;
+  }
   if (!paired()) {
     if (!lastHello || late(now, lastHello, HELLO_UNPAIRED_MS)) { lastHello = now ? now : 1; sendHello(); }
     return;
@@ -126,7 +148,26 @@ void NodeSession::receive(const uint8_t* frame, size_t len, int8_t r, uint32_t n
       send([&](uint8_t* f, const Header& hh) { return encodeAck(f, hh, a); });
       return;
     }
-    default: return;                          // heartbeat: lastHeard already updated
+    case POINTS: {                            // display: the main board's values
+      if (!cb.mainPoints) return;
+      Points m;
+      if (decodePoints(p, n, m)) cb.mainPoints(m);
+      return;
+    }
+    case HEARTBEAT: {
+      if (!cb.mainStatus) return;
+      Heartbeat hb;
+      if (decodeHeartbeat(p, n, hb)) cb.mainStatus(hb.level, hb.flags);
+      return;
+    }
+    case ACK: {
+      Ack a;
+      if (!decodeAck(p, n, a)) return;
+      for (auto it = outCmds.begin(); it != outCmds.end(); ++it)
+        if (it->seq == a.seq) { if (cb.commandResult) cb.commandResult(a.seq, a.status); outCmds.erase(it); break; }
+      return;
+    }
+    default: return;
   }
 }
 
@@ -246,6 +287,36 @@ void MainSession::fwUpdate(BoardInfo& b, uint32_t now) {
   }
 }
 
+bool MainSession::sendPoints(uint8_t id, uint16_t rev, const std::vector<Point>& pts) {
+  BoardInfo* b = find(id);
+  if (!b || !b->online) return false;
+  size_t n = std::min<size_t>(pts.size(), 255);
+  for (size_t first = 0; first < n || first == 0; first += MAX_POINTS_PER_FRAME) {
+    Points m; m.configRev = rev; m.first = (uint8_t)first;
+    m.count = (uint8_t)std::min<size_t>(MAX_POINTS_PER_FRAME, n - first);
+    for (uint8_t i = 0; i < m.count; i++) m.points[i] = pts[first + i];
+    if (!sendOk(id, [&](uint8_t* f, const Header& h) { return encodePoints(f, h, m); })) return false;
+    if (n == 0) break;
+  }
+  return true;
+}
+
+void MainSession::resendConfig(uint8_t id) {
+  BoardInfo* b = find(id);
+  if (!b || b->tx.json.empty()) return;
+  b->ackedRev = 0; b->configPending = true; b->tx.next = 0; b->tx.roundAt = 0;
+}
+
+void MainSession::rename(uint8_t id, const std::string& name) {
+  BoardInfo* b = find(id);
+  if (!b || name.empty()) return;
+  b->name = name;
+  Assign a; memcpy(a.mac, b->mac, 6); a.board = id; copyStr(a.name, sizeof(a.name), name);
+  a.hasKey = b->hasKey; memcpy(a.key, b->key, 16);
+  send(BROADCAST, [&](uint8_t* f, const Header& h) { return encodeAssign(f, h, a); });
+  if (cb.boardsChanged) cb.boardsChanged();
+}
+
 void MainSession::restore(const BoardInfo& b) {
   if (b.id > MAX_BOARD_ID || find(b.id) || list.size() >= MAX_BOARDS) return;
   BoardInfo c;
@@ -305,15 +376,17 @@ void MainSession::update(uint32_t now) {
   nowMs = now;
   // online / offline
   for (auto& b : list)
-    if (b.online && late(now, b.lastHeard, LINK_LOST_MS)) { b.online = false; if (cb.online) cb.online(b, false); }
+    if (b.online && late(now, b.lastHeard, LINK_LOST_MS)) { b.online = false; b.cmdInSeq = -1; if (cb.online) cb.online(b, false); }
   // forget "found" boards not heard for a while
   foundList.erase(std::remove_if(foundList.begin(), foundList.end(), [&](const FoundBoard& f) { return late(now, f.lastHeard, 4 * HELLO_UNPAIRED_MS); }), foundList.end());
   // heartbeat to every paired board, plus one broadcast "beacon" so boards can find our channel
   if (!lastHeartbeat || late(now, lastHeartbeat, HEARTBEAT_MS)) {
     lastHeartbeat = now ? now : 1;
     beacon(now);
+    uint8_t lvl = 0, fl = 0;
+    if (cb.status) cb.status(lvl, fl);
     for (auto& b : list) {
-      Heartbeat hb; hb.uptimeS = now / 1000; hb.configRev = b.configRev; hb.rssi = b.rssi;
+      Heartbeat hb; hb.uptimeS = now / 1000; hb.configRev = b.configRev; hb.rssi = b.rssi; hb.level = lvl; hb.flags = fl;
       send(b.id, [&](uint8_t* f, const Header& h) { return encodeHeartbeat(f, h, hb); });
     }
   }
@@ -379,11 +452,17 @@ void MainSession::receive(const uint8_t* frame, size_t len, int8_t rssi, uint32_
       return;
     }
     b->firmware = m.firmware; b->role = m.role; b->chip = m.chip;
+    b->cmdInSeq = -1;                         // (re)started: its sequence numbers start again
     if (m.configRev != b->ackedRev) b->ackedRev = m.configRev;
   }
 
   BoardInfo* b = find(h.src);
   if (!b) return;
+  if (h.type == COMMAND && (int32_t)h.seq == b->cmdInSeq) {   // our answer was lost: answer again, don't act twice
+    Ack a; a.seq = h.seq; a.status = b->cmdInStatus;
+    send(b->id, [&](uint8_t* f, const Header& hh) { return encodeAck(f, hh, a); });
+    return;
+  }
   if (!b->online) b->seqs.reset();            // the board may have restarted
   if (!b->seqs.fresh(h.seq)) return;
   b->lastHeard = now; b->rssi = rssi;
@@ -430,6 +509,16 @@ void MainSession::receive(const uint8_t* frame, size_t len, int8_t rssi, uint32_
         else if (late(now, fw.rewoundAt, 150)) { fw.sentTo = fw.acked; fw.rewoundAt = fw.lastAckAt = now; }   // same place again: something was lost, go back (once per 150 ms: answers to frames already on their way say the same)
       } else if (a.status == FW_DONE) { fw.state = BoardInfo::Fw::DONE; fw.acked = fw.size; }
       else { fw.state = BoardInfo::Fw::FAILED; fw.error = a.message[0] ? a.message : "refused by the board"; }
+      return;
+    }
+    case COMMAND: {                           // from a display board
+      Command c;
+      if (!decodeCommand(p, n, c)) return;
+      uint8_t st = cb.boardCommand ? cb.boardCommand(*b, c) : (uint8_t)ACK_NOT_ALLOWED;
+      b->cmdInSeq = h.seq; b->cmdInStatus = st; b->commandsIn++;
+      if (st != ACK_OK) b->commandsFailed++;
+      Ack a; a.seq = h.seq; a.status = st;
+      send(b->id, [&](uint8_t* f, const Header& hh) { return encodeAck(f, hh, a); });
       return;
     }
     case ACK: {

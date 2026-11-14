@@ -5,6 +5,9 @@
 //               keeps each extra board's sensors + relays ("its share" of the
 //               settings, edited on the Sensors / Relays pages with the board
 //               selector) and sends them to it; shows their live values.
+//  display      (separate firmware, firmware/CarMetricsDisplay) gets the catalog
+//               of all sensors + relays and every value each second; can switch
+//               relays, mute and change alert limits.
 //  extra board  (role sensor / relay / sensor_relay) finds the main board's
 //               radio channel, runs the sensors and relays it is given with its
 //               own alarms (buzzer, LED, OLED), sends its values, and puts its
@@ -29,6 +32,15 @@ String accept(const String& mac, const String& name, int& id);   // "" = ok
 String forget(int id);
 String shareJson(int id, String& out);                           // that board's sensors + relays
 String setShare(int id, JsonVariantConst sensors, JsonVariantConst relays);   // either may be null = keep
+String setShareLocked(int id, JsonVariantConst sensors, JsonVariantConst relays);   // state lock already held
+String boardCommand(int id, const String& cmd, int minutes);    // identify | reboot | mute | resend
+String rename(int id, const String& name);
+
+// Touch displays over Wi-Fi (the main board's access point): the same catalog and
+// values a paired display gets over ESP-NOW, and its commands.
+String displayCatalog(uint32_t& rev);          // JSON
+void displayValues(JsonObject o);              // {rev, level, muted, v:[[value,status,level],...]}
+String displayCommand(JsonVariantConst j);     // {kind:"relay",board,index,on} | {kind:"mute",minutes} | {kind:"limit",index,which,value,rev}; "" = ok
 String relayCommand(int id, int relayIndex, bool on);
 
 // Firmware for another board, sent over the link: this board's own firmware

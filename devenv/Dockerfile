@@ -10,7 +10,7 @@ ARG WITH_WEBTEST=1
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git xz-utils bzip2 unzip zip python3 python3-pil python3-serial \
+      ca-certificates curl git xz-utils bzip2 unzip zip python3 python3-pil python3-serial g++ \
       libslirp0 libsdl2-2.0-0 libglib2.0-0 libgcrypt20 \
     && rm -rf /var/lib/apt/lists/*
 

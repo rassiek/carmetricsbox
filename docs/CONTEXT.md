@@ -2,7 +2,9 @@
 
 Give this file to Claude at the start of a new session (or say: *"Clone github.com/rassiek/carmetricsbox, branch v5, and read docs/CONTEXT.md, docs/v5-status.md and docs/v5-phase3-plan.md"*). It holds what was built, how, what has only been tested on a PC / emulator, and how to test and debug on the real boards.
 
-Last updated: 1 Nov 2026, releases **5.1.0-beta.10** and **5.2.0-beta.2**.
+Last updated: 1 Nov 2026, releases **5.1.0-beta.11**, **5.2.0-beta.3** and the touch display firmware **5.1.0-beta.11** (JC3248W535 + Cheap Yellow Display).
+
+> **Where the last session stopped (1 Nov 2026, evening)**: 5.1.0-beta.11 work is committed as one commit on top of `f73529d` (beta.10), **not yet released or pushed** (patch `5.1.0-beta.11-wip.patch`). Done and passing: protocol tests (57), display PC simulator (27 + screenshots), web tests (main app + display page), builds of 5.1 classic, 5.1 S3, 5.2, display JC3248W535 and CYD. **Still to do before releasing beta.11:** (1) run `tools/cm.sh selftest` on its own (was interrupted, not failed); (2) package the release files (main 5.1/5.2 + `carmetrics-display-*`); (3) the user deletes the four Drive test files named "(test file – safe to delete)…" / "(empty test file – safe to delete)". The guide itself is the Google Doc **CarMetrics – building the firmware from GitHub** (https://docs.google.com/document/d/1HwA0v8M2zvxNu79bEAVfYarvK5zLc69GEBsnQUMFrWA/edit); a full upload to Drive failed (size), so the Doc is a slightly shorter version of `docs/BUILDING.md` and points to it for the Linux / Arduino IDE parts.
 
 ---
 
@@ -13,7 +15,7 @@ Engine monitor for older vehicles without OBD-II (Land Rover 300Tdi). ESP32 read
 | Item | Where |
 |---|---|
 | Repository | github.com/rassiek/carmetricsbox, branch **v5** |
-| Firmware (Arduino sketch) | `firmware/CarMetrics/` |
+| Firmware (Arduino sketch) | `firmware/CarMetrics/` (main / sensor / relay boards), `firmware/CarMetricsDisplay/` (touch displays, own README) |
 | Web app (served by the board) | `web/` (gzipped into `firmware/CarMetrics/data/www/` and `littlefs.bin`) |
 | Docs | `docs/v5-design-and-backlog.md` (design), `docs/v5-status.md` (status + history), `docs/v5-phase3-plan.md` (multi-board), this file |
 | Tools | `tools/cm.sh` (build / test), `tools/build_web.py`, `tools/webtest/` (mock board + browser test), `tools/prototest/` (PC tests), `devenv/` (toolchain) |
@@ -23,7 +25,7 @@ Engine monitor for older vehicles without OBD-II (Land Rover 300Tdi). ESP32 read
 Claude sessions so far could **not push** (no write access). The routine:
 
 1. Claude commits locally, builds, and sends **release files** + a **`.patch`** named after the release.
-2. You save them in a folder per release, e.g. `Downloads\V5\5.1.0-beta.10\`.
+2. You save them in a folder per release, e.g. `Downloads\V5\5.1.0-beta.11\`.
 3. In your clone: `git am "<full path>\<file>.patch"` then `git push`.
 4. If `git am` says *patch does not apply* / *already exists in index*: the patch is probably already on GitHub. Run `git am --abort`, check `git log --oneline -3`, and only apply patches that are newer.
 5. PowerShell: give full paths; `*` and `...` are not expanded inside quotes.
@@ -37,6 +39,7 @@ The release label is `FW_RELEASE_51` / `FW_RELEASE_52` in `firmware/CarMetrics/C
 | Line | Boards | Files |
 |---|---|---|
 | **5.1** | Every board: classic ESP32 (4 MB) and ESP32-S3; any role (main / sensor / relay) | `carmetrics-5.1.x-full-flash.bin` (USB, 0x0), `-firmware.bin` + `-littlefs.bin` (Wi-Fi) |
+| **Display** | JC3248W535 (ESP32-S3) or Cheap Yellow Display (ESP32); pairs as role *display* | `carmetrics-display-jc3248w535-full-flash.bin` / `carmetrics-display-cyd-full-flash.bin` (USB, 0x0), `-firmware.bin` (its own web page, or from the main board's Boards page) |
 | **5.2** | ESP32-S3 with **8 MB+ flash and PSRAM** (N8R8, N16R8); meant for the main board; any role | `carmetrics-5.2.x-full-flash.bin` (USB once: new partition table), then Wi-Fi updates with its `-firmware.bin` / `-littlefs.bin` |
 
 - 5.1 extra boards work with a 5.2 main board (same protocol, `Proto::VERSION` 1, frames ≤ 250 B). Keep it that way: new features only as optional message fields or new message types that old boards ignore.
@@ -53,10 +56,14 @@ The release label is `FW_RELEASE_51` / `FW_RELEASE_52` in `firmware/CarMetrics/C
 | `tools/cm.sh build` | 5.1 classic ESP32 (core 2.0.17): `build/carmetrics-firmware.bin`, `carmetrics-full-flash.bin`, `littlefs.bin` |
 | `tools/cm.sh build3 esp32s3` / `esp32` | compile with core 3.x (5.1 S3 image: `carmetrics-s3-*.bin`) |
 | `tools/cm.sh build52` | 5.2 S3 8 MB: `build/carmetrics-52-*.bin` |
-| `tools/cm.sh prototest` | PC tests of the board-to-board protocol, pairing, settings, firmware transfer, CAN framing, half floats (46 checks, sanitizers) |
+| `tools/cm.sh prototest` | PC tests of the board-to-board protocol, pairing, settings, firmware transfer, CAN framing, display role (57 checks, sanitizers) |
+| `tools/cm.sh display [jc\|cyd]` | touch display firmware: `build/carmetrics-display-*.bin` (core 3.x) |
+| `tools/cm.sh dispsim` | display screens drawn on the PC with the real UI code (`build/dispsim/*.png`) + display logic checks (27) |
 | `tools/cm.sh selftest` | firmware self-test in the ESP32 emulator (64 checks, ~6 min; QEMU has no radio). QEMU's slow flash occasionally trips a watchdog mid-run and the later checks then fail: run it again on its own, without other builds in parallel |
-| `tools/cm.sh webtest` | headless browser test of every page against `tools/webtest/mock_server.py` |
-| `tools/cm.sh all` | all of the above (5.1) |
+| `tools/cm.sh webtest` | headless browser test of every page against `tools/webtest/mock_server.py`, and of the display's own page against `display_mock.py` |
+| `tools/cm.sh all` | all of the above (5.1 + display) |
+
+Step-by-step build guide for people (Docker on Windows, no prior setup): the Google Doc *CarMetrics – building the firmware from GitHub* in the owner's Drive, same content as `docs/BUILDING.md`.
 
 Release routine used so far: bump `FW_RELEASE_51` (and/or `_52`), run tests, commit, build, copy the three files renamed `carmetrics-<release>-*.bin`, `git format-patch` → `<release>.patch`.
 
@@ -106,6 +113,10 @@ Release routine used so far: bump `FW_RELEASE_51` (and/or `_52`), run tests, com
 
 **6.5 Channel coupling**: when the main board joins a network on another channel, ESP-NOW moves with it; extra boards lose it for a moment and search again. A phone connected to an extra board's own access point may drop at that moment.
 
+**6.7 Touch displays** (`firmware/CarMetricsDisplay/`, role 4 *display*): pair like any board. The main board builds a **catalog** (`Boards.cpp` `buildCatalog`: every enabled sensor here, incl. remote mirrors, with label, unit, decimals, gauge range, limits; every relay here and on paired boards) and sends it as the display's settings (revision = CRC-32; rebuilt when the config revision or the boards change). Then **every value each second** as `POINTS` main → display (sensors then relays, tagged with the catalog revision). The display sends `COMMAND`s to the main board (new direction): `CMD_RELAY` (+ `board` field: relay on another board → forwarded), `CMD_MUTE`, `CMD_SET_LIMIT` (index + `which` + `value` + catalog `rev`; stale index refused) — new optional trailing fields of `Command`, old boards ignore them. Main heartbeats now carry its alarm level + `HB_MUTED`. Only boards with role display may command the main board. Wi-Fi fallback: the display joins the main board's AP and uses `GET /api/v2/display/catalog` (header `X-Catalog-Rev`), `GET /api/v2/display/values` (`{rev, level, muted, v:[[value,status,level]…]}`), `POST /api/v2/display/command` (`{kind:"relay"|"mute"|"limit",…}`; admin password except mute). Display's own AP: `CarMetrics-Display-xxxx`, **192.168.5.1** (not 4.x, which is the main board's network). Its screen code (`Ui.*`) draws through a `Surface`: whole PSRAM canvas on the JC3248W535, one small canvas per changed tile on the CYD; only changed regions are redrawn. Layout (pages of tiles in a grid) and settings in its NVS; editor on its own web page (`web/index.html` → `WebPage.h`, gzipped).
+
+**6.8 Board control from the main board** (Boards page, `POST /api/v2/boards/command {id, cmd: identify|reboot|mute|resend, minutes}`, `POST /api/v2/boards/rename {id, name}`): identify (beep / display flashes), mute 15 min, resend settings, restart, rename (mirrors renamed too); link summary (messages, failures, drops, boards online); per board loss %, last heard, commands received (displays), the display's IP on the main board's AP with a link to its editor.
+
 **6.6 CAN**: System → Settings: *CAN link*, TX → transceiver D, RX → transceiver R, speed (500 kbit/s default, same on all boards), 120 Ω at both ends. Messages split into 8-byte frames (CAN id 0x100 + sender id from the MAC; 42 frames for 250 B). Main board: ESP-NOW + CAN together. Extra board with CAN on: CAN only (no channel search, no encryption). Bus-off is recovered automatically.
 
 ## 7. What has been tested, and how
@@ -123,6 +134,9 @@ Release routine used so far: bump `FW_RELEASE_51` (and/or `_52`), run tests, com
 | Firmware for other boards | **yes** (15 % loss) | – | yes | **no** |
 | CAN | framing | – | – | **no** |
 | 5.2 S3 build | – | – (S3 not emulated) | – | **no** |
+| Display role: catalog, values to the display, commands from it (loss 20–50 %) | **yes** | – | – | **no** |
+| Display screens, touch logic, limit editor, relay pending, alarm banner | **yes** (PC simulator, real UI code) | – | display page: **yes** | **no** (needs the boards) |
+| Board controls (identify, mute, resend, rename, restart) | – | – | yes | **no** |
 | Phase 1 hardware (ignition, RPM, GPS, INA226, MPU-6050, BME280, OTA rollback) | – | parts | – | **no** |
 
 ## 8. Bench test plan when the boards arrive
@@ -156,7 +170,15 @@ Call the boards **A** (main, the current one) and **B** (new). Flash both with t
 
 **8.5 5.2 on an ESP32-S3 N8R8/N16R8** (as main): flash `carmetrics-5.2.x-full-flash.bin` over USB. Header shows 5.2; health panel: PSRAM, *charts … in PSRAM*, Firmware slot 3072 KB. Pair a 5.1 board B with it (8.1).
 
-**8.6 Phase 1 hardware** (single board): ignition on GPIO 25 via opto (sleep after N min, wake on key), RPM from the W terminal (calibrate at idle), GPS on a free UART, INA226 / MPU-6050 / BME280, OTA rollback (install a build that crashes at boot → previous firmware comes back).
+**8.6 Touch display** (JC3248W535 and/or CYD): flash `carmetrics-display-…-full-flash.bin` over USB. Expect the dark screen with *Waiting for the main board…*; serial (115200, JC over its USB-C) `[disp]`, `[net]` lines.
+1. No picture: JC → check PSRAM is detected (`[hw] display init failed (no PSRAM?)`); CYD → backlight on? try Settings → Panel ST7789.
+2. Colours wrong / mirrored on the CYD: Panel setting. Taps in the wrong place: Settings → Touch (CYD calibration; flips).
+3. A: Boards → display under *Found*, role display → Accept. Within ~5 s the display shows A's values (status bar *ESP-NOW*). A's card: *Has the list of N sensors and M relays*.
+4. Tap a relay tile, mute, long-press a value → change *Warn high* → Save: A's Sensors page shows the new limit.
+5. Turn ESP-NOW off by moving the display out of range / forgetting it: with A's AP joined, the status bar shows *Wi-Fi* and values keep coming. Relay over Wi-Fi needs A's admin password in the display Settings.
+6. Layout editor: on the display's Wi-Fi (http://192.168.5.1/) or via the link on A's Boards page; save a layout, check the screen follows.
+
+**8.7 Phase 1 hardware** (single board): ignition on GPIO 25 via opto (sleep after N min, wake on key), RPM from the W terminal (calibrate at idle), GPS on a free UART, INA226 / MPU-6050 / BME280, OTA rollback (install a build that crashes at boot → previous firmware comes back).
 
 ## 9. Debugging help
 
@@ -170,7 +192,7 @@ Call the boards **A** (main, the current one) and **B** (new). Flash both with t
 
 ## 10. Known limitations and next work
 
-- **Touch display (phase 2)**: not started. JC3248W535 (ESP32-S3, 320×480 QSPI AXS15231B, capacitive touch) as a display-role board over ESP-NOW using this protocol; needs LVGL + the AXS15231B driver; buy the version with the case.
+- **Touch display**: built (JC3248W535 + CYD), not yet run on the hardware. Drawn with the GFX Library for Arduino (no LVGL); panel / touch settings follow that library's settings for these boards. Charts on the display: not yet.
 - ICM-42688 IMU driver (MPU-6050 works).
 - Encryption key sent in the clear once at pairing.
 - No CAN encryption (physical access needed).
@@ -184,6 +206,7 @@ Call the boards **A** (main, the current one) and **B** (new). Flash both with t
 |---|---|
 | Arduino cores | support 2.0.17 and 3.x |
 | Order | phase 3 (multi-board) before phase 2 (touch display) |
+| Touch displays | both JC3248W535 and CYD; ESP-NOW + Wi-Fi fallback; layout edited on the display's own page; separate firmware |
 | Default board link | ESP-NOW; CAN as option 2 |
 | First extra-board roles | sensor and relay together, one firmware |
 | Wi-Fi searching on the main board with boards paired | allowed; link loss only after 5 s |
@@ -192,6 +215,7 @@ Call the boards **A** (main, the current one) and **B** (new). Flash both with t
 | OLED labels | 3 characters: CLT coolant, IT intake, GBT gearbox, TCT transfer case, CT cabin, EGT, BST, OIL; marker style = original look |
 | Ignition sense pin | GPIO 25 (RTC, internal pull-up) via opto-coupler, active low |
 | Encryption | built, off by default until bench-tested |
+| Commit messages | no Claude attribution lines (no `Co-Authored-By: Claude…` / `Claude-Session:`) |
 
 ## 12. Hardware notes
 

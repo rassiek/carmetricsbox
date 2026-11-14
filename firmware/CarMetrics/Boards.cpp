@@ -11,7 +11,13 @@
 #include <esp_system.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_wifi.h>
+#include <esp_netif.h>
+#if ESP_IDF_VERSION_MAJOR >= 5
+#include <esp_wifi_ap_get_sta_list.h>
+#endif
 #include <algorithm>
+#include <math.h>
 
 using namespace Proto;
 using namespace BoardNet;
@@ -31,6 +37,23 @@ uint8_t hopChannel = 1;
 uint32_t lastHop = 0;
 
 void syncMirrors();
+
+// ---------------------------------------------------------------- display catalog (main board)
+// What a touch display can show and control: every enabled sensor here (local +
+// remote mirrors) and every relay (here and on paired boards). Sent to paired
+// displays as their "settings" (revision = CRC-32), and over Wi-Fi at
+// /api/v2/display/catalog. Values follow in the same order (sensors, then relays).
+struct CatRelay { uint8_t board, index; };
+struct Catalog {
+  String json;
+  uint32_t rev = 0;
+  std::vector<int> sensors;          // catalog index -> gConfig.sensors index
+  std::vector<CatRelay> relays;
+  uint32_t builtFor = 0xFFFFFFFF, builtAt = 0;
+} cat;
+uint32_t boardsVersion = 1;          // bumped when boards / shares change (catalog lists their relays)
+uint32_t catBoardsVersion = 0;
+uint32_t lastDisplayPush = 0;
 
 // ---------------------------------------------------------------- firmware images
 // ESP32 image header: magic 0xE9 at 0, chip id (uint16) at 12; app description
@@ -188,6 +211,164 @@ void updateMirrors(uint32_t now) {
   }
 }
 
+// ---------------------------------------------------------------- display catalog
+void addLimit(JsonObject o, const char* k, float v) { if (!isnan(v)) o[k] = v; }
+
+void buildCatalog() {   // lock held
+  cat.sensors.clear(); cat.relays.clear();
+  JsonDocument d;
+  d["v"] = 1; d["main"] = gConfig.sys.hostname; d["ap"] = gConfig.sys.apSsid; d["fw"] = FW_VERSION;
+  JsonArray sa = d["s"].to<JsonArray>();
+  for (size_t i = 0; i < gConfig.sensors.size(); i++) {
+    const SensorConfig& c = gConfig.sensors[i];
+    if (!c.enabled) continue;
+    JsonObject o = sa.add<JsonObject>();
+    o["i"] = c.id; o["n"] = c.name; o["u"] = c.unit; o["d"] = c.decimals;
+    if (c.oledLabel.length()) o["l"] = c.oledLabel;
+    o["lo"] = c.gaugeMin; o["hi"] = c.gaugeMax;
+    addLimit(o, "wl", c.warnLow); addLimit(o, "wh", c.warnHigh); addLimit(o, "cl", c.critLow); addLimit(o, "ch", c.critHigh);
+    if (c.type == SensorType::REMOTE) o["b"] = c.remoteBoard;
+    cat.sensors.push_back((int)i);
+  }
+  JsonArray ra = d["r"].to<JsonArray>();
+  for (size_t i = 0; i < gConfig.relays.size(); i++) {
+    if (!gConfig.relays[i].enabled) continue;
+    JsonObject o = ra.add<JsonObject>(); o["b"] = 0; o["x"] = i; o["n"] = gConfig.relays[i].name;
+    cat.relays.push_back({0, (uint8_t)i});
+  }
+  if (mainS)
+    for (auto& b : mainS->boards()) {
+      if (b.role == ROLE_DISPLAY || !shares[b.id].json.length()) continue;
+      JsonDocument sd;
+      if (deserializeJson(sd, shares[b.id].json)) continue;
+      uint8_t x = 0;
+      for (JsonObjectConst r : sd["relays"].as<JsonArrayConst>()) {
+        JsonObject o = ra.add<JsonObject>(); o["b"] = b.id; o["x"] = x;
+        o["n"] = String(b.name.c_str()) + " " + (const char*)(r["name"] | "relay");
+        cat.relays.push_back({b.id, x});
+        x++;
+      }
+    }
+  cat.json = ""; serializeJson(d, cat.json);
+  cat.rev = crc32((const uint8_t*)cat.json.c_str(), cat.json.length());
+  cat.builtFor = gSys.configRevision; catBoardsVersion = boardsVersion; cat.builtAt = millis();
+}
+
+void ensureCatalog() { if (cat.builtFor != gSys.configRevision || catBoardsVersion != boardsVersion || !cat.json.length()) buildCatalog(); }
+
+std::vector<Point> catalogValues() {   // lock held, catalog current
+  std::vector<Point> v;
+  for (int i : cat.sensors) {
+    Point p;
+    if (i < (int)gSensorRt.size()) { p.value = gSensorRt[i].value; p.status = gSensorRt[i].status; p.level = gSensorRt[i].level; }
+    else { p.value = NAN; p.status = ST_WAITING; }
+    v.push_back(p);
+  }
+  for (auto& r : cat.relays) {
+    Point p; p.value = NAN; p.status = ST_WAITING;
+    if (r.board == 0) { if (r.index < gRelayRt.size()) { p.value = gRelayRt[r.index].on ? 1 : 0; p.status = ST_OK; } }
+    else if (mainS) {
+      const BoardInfo* b = mainS->board(r.board);
+      size_t nSensors = 0;
+      for (auto& n : shares[r.board].names) if (!n.relay) nSensors++;
+      size_t k = nSensors + r.index;
+      if (b && b->online && b->ackedRev == b->configRev && k < b->points.size()) { p.value = b->points[k].value; p.status = ST_OK; }
+      else if (b && !b->online) p.status = ST_LINK_LOST;
+    }
+    v.push_back(p);
+  }
+  return v;
+}
+
+// Set one alert limit of a catalog sensor (from a display). Local sensor: in this
+// board's settings; remote sensor: in that board's share (then sent to it).
+uint8_t setLimit(uint8_t index, uint8_t which, float value) {
+  if (index >= cat.sensors.size() || which > LIMIT_CRIT_HIGH) return ACK_BAD_INDEX;
+  if (!isnan(value) && (value < -1e6f || value > 1e6f)) return ACK_FAILED;
+  const SensorConfig& sc = gConfig.sensors[cat.sensors[index]];
+  static const char* const keys[] = {"warnLow", "warnHigh", "critLow", "critHigh"};
+  if (sc.type == SensorType::REMOTE) {
+    uint8_t bid = sc.remoteBoard;
+    JsonDocument d;
+    if (bid > MAX_BOARD_ID || deserializeJson(d, shares[bid].json)) return ACK_FAILED;
+    JsonArray a = d["sensors"].as<JsonArray>();
+    if (sc.remoteIndex >= a.size()) return ACK_BAD_INDEX;
+    if (isnan(value)) a[sc.remoteIndex].remove(keys[which]); else a[sc.remoteIndex][keys[which]] = value;
+    String err = Boards::setShareLocked(bid, d["sensors"], d["relays"]);
+    return err.length() ? ACK_FAILED : ACK_OK;
+  }
+  Config* c = new Config(gConfig);
+  SensorConfig& t = c->sensors[cat.sensors[index]];
+  float* f[] = {&t.warnLow, &t.warnHigh, &t.critLow, &t.critHigh};
+  *f[which] = value;
+  String err;
+  if (!validateConfig(*c, err)) { delete c; return ACK_FAILED; }
+  requestConfigApply(c);
+  return ACK_OK;
+}
+
+// A command from a display (ESP-NOW) or the Wi-Fi display API. Lock held.
+uint8_t runDisplayCommand(const Command& c) {
+  switch (c.kind) {
+    case CMD_RELAY: {
+      if (c.board == 0) {
+        if (c.index >= gConfig.relays.size()) return ACK_BAD_INDEX;
+        return Relays::control(gConfig.relays[c.index].id, c.on ? 1 : 0, -1).length() ? ACK_FAILED : ACK_OK;
+      }
+      if (!mainS) return ACK_FAILED;
+      const BoardInfo* b = mainS->board(c.board);
+      if (!b || b->role == ROLE_DISPLAY) return ACK_BAD_INDEX;
+      if (!b->online) return ACK_FAILED;
+      Command r; r.kind = CMD_RELAY; r.index = c.index; r.on = c.on ? 1 : 0;
+      return mainS->command(c.board, r) < 0 ? ACK_FAILED : ACK_OK;
+    }
+    case CMD_MUTE: if (c.minutes) Alerts::mute(std::min<uint16_t>(c.minutes, 120) * 60000UL); else Alerts::unmute(); return ACK_OK;
+    case CMD_IDENTIFY: Alerts::chirp(150); return ACK_OK;
+    case CMD_SET_LIMIT:
+      ensureCatalog();
+      if (c.rev != (uint16_t)cat.rev) return ACK_STALE;   // the display's list is out of date
+      return setLimit(c.index, c.which, c.value);
+    default: return ACK_UNKNOWN;
+  }
+}
+
+// Main board, loop: keep displays' catalogs current and send them all values every second.
+void serveDisplays(uint32_t now) {
+  if (!mainS) return;
+  bool any = false;
+  for (auto& b : mainS->boards()) if (b.role == ROLE_DISPLAY) any = true;
+  if (!any) return;
+  ensureCatalog();
+  for (auto& b : mainS->boards())
+    if (b.role == ROLE_DISPLAY && b.configRev != cat.rev)
+      mainS->setConfig(b.id, cat.rev, std::vector<uint8_t>(cat.json.begin(), cat.json.end()));
+  if (now - lastDisplayPush < 1000) return;
+  lastDisplayPush = now;
+  std::vector<Point> v = catalogValues();
+  for (auto& b : mainS->boards())
+    if (b.role == ROLE_DISPLAY && b.online && b.ackedRev == cat.rev) mainS->sendPoints(b.id, (uint16_t)cat.rev, v);
+}
+
+// IP address a board got on this board's access point (displays join it as a Wi-Fi fallback).
+String apIpOf(const uint8_t mac[6]) {
+  wifi_sta_list_t sta;
+  if (esp_wifi_ap_get_sta_list(&sta) != ESP_OK) return "";
+#if ESP_IDF_VERSION_MAJOR >= 5
+  wifi_sta_mac_ip_list_t ips;
+  if (esp_wifi_ap_get_sta_list_with_ip(&sta, &ips) != ESP_OK) return "";
+#else
+  esp_netif_sta_list_t ips;
+  if (esp_netif_get_sta_list(&sta, &ips) != ESP_OK) return "";
+#endif
+  for (int i = 0; i < ips.num; i++)
+    if (!memcmp(ips.sta[i].mac, mac, 6) && ips.sta[i].ip.addr) {
+      char b[16]; uint32_t a = ips.sta[i].ip.addr;
+      snprintf(b, sizeof(b), "%u.%u.%u.%u", (unsigned)(a & 255), (unsigned)((a >> 8) & 255), (unsigned)((a >> 16) & 255), (unsigned)(a >> 24));
+      return b;
+    }
+  return "";
+}
+
 // ---------------------------------------------------------------- extra board
 uint8_t nodePoints(Point* out, uint8_t max) {
   size_t n = gConfig.sensors.size() + gConfig.relays.size();
@@ -294,7 +475,14 @@ void Boards::begin() {
     cb.configResult = [](const BoardInfo& b) {
       Serial.printf("[boards] board %u settings %s %s\n", b.id, b.configStatus == CFG_OK ? "accepted" : "REFUSED:", b.configMessage.c_str());
     };
-    cb.boardsChanged = [] { saveTable(); };
+    cb.boardsChanged = [] { saveTable(); boardsVersion++; };
+    cb.boardCommand = [](const BoardInfo& b, const Command& c) -> uint8_t {
+      if (b.role != ROLE_DISPLAY) return ACK_NOT_ALLOWED;   // only displays control the main board
+      uint8_t st = runDisplayCommand(c);
+      Serial.printf("[boards] display %u: command %u -> %u\n", b.id, c.kind, st);
+      return st;
+    };
+    cb.status = [](uint8_t& level, uint8_t& flags) { level = (uint8_t)gSys.overallLevel; flags = gSys.muted ? HB_MUTED : 0; };
     mainS = new MainSession(links, identity(), cb);
     loadMain();
   } else {
@@ -358,7 +546,7 @@ void Boards::update() {
   uint32_t now = millis();
   StateLock lk;   // web handlers use the main session too
   links.poll();
-  if (mainS) { mainS->update(now); updateMirrors(now); }
+  if (mainS) { mainS->update(now); updateMirrors(now); serveDisplays(now); }
   if (nodeS) {
     nodeS->flags = (gSys.muted ? HB_MUTED : 0) | (Health::safeMode() ? HB_SAFE_MODE : 0);
     nodeS->update(now);
@@ -418,6 +606,17 @@ void Boards::toJson(JsonObject o) {
     x["level"] = alertLevelStr(b.level);
     x["relaysSafe"] = (b.flags & HB_RELAYS_SAFE) != 0; x["safeMode"] = (b.flags & HB_SAFE_MODE) != 0;
     x["received"] = b.seqs.received(); x["lost"] = b.seqs.lost();
+    uint32_t tot = b.seqs.received() + b.seqs.lost();
+    x["lossPct"] = tot ? (int)(100.0 * b.seqs.lost() / tot + 0.5) : 0;
+    x["commandsIn"] = b.commandsIn; x["commandsFailed"] = b.commandsFailed;
+    x["muted"] = (b.flags & HB_MUTED) != 0;
+    if (b.role == ROLE_DISPLAY) {
+      JsonObject dj = x["display"].to<JsonObject>();
+      dj["catalogSent"] = b.ackedRev && b.ackedRev == cat.rev;
+      dj["sensors"] = cat.sensors.size(); dj["relays"] = cat.relays.size();
+      String ip = apIpOf(b.mac);
+      if (ip.length()) dj["ip"] = ip;
+    }
     JsonObject c = x["config"].to<JsonObject>();
     c["pending"] = b.configPending; c["status"] = b.configStatus == CFG_OK ? "accepted" : b.configStatus == CFG_INVALID ? "refused" : "error";
     c["message"] = b.configMessage; c["hasShare"] = shares[b.id].json.length() > 0;
@@ -447,6 +646,8 @@ String Boards::accept(const String& mac, const String& name, int& id) {
   id = mainS->accept(m, name.c_str(), enc ? key : nullptr);
   if (id > 0) { radio.setPeer((uint8_t)id, m); radio.setKey((uint8_t)id, enc ? key : nullptr); }
   if (id < 0) return mainS->boards().size() >= MAX_BOARDS ? "Already " + String(MAX_BOARDS) + " boards paired" : "That board is no longer in range";
+  boardsVersion++;
+  if (mainS->board((uint8_t)id)->role == ROLE_DISPLAY) return "";   // a display gets the catalog (serveDisplays), not sensors
   shares[id].json = "{\"sensors\":[],\"relays\":[]}";   // a new board starts empty: set it up on the Sensors / Relays pages
   indexShare(id); saveShare(id); pushShare(id);
   return "";
@@ -458,6 +659,7 @@ String Boards::forget(int id) {
   if (id < 1 || id > MAX_BOARD_ID || !mainS->forget((uint8_t)id)) return "Unknown board";
   radio.forget((uint8_t)id);
   shares[id] = Share(); saveShare(id);
+  boardsVersion++;
   syncMirrors();   // its sensors leave the main board's pages
   return "";
 }
@@ -476,8 +678,12 @@ String Boards::shareJson(int id, String& out) {
 }
 
 String Boards::setShare(int id, JsonVariantConst sensors, JsonVariantConst relays) {
-  if (!mainS) return "Only on the main board";
   StateLock lk;
+  return setShareLocked(id, sensors, relays);
+}
+
+String Boards::setShareLocked(int id, JsonVariantConst sensors, JsonVariantConst relays) {
+  if (!mainS) return "Only on the main board";
   if (id < 1 || id > MAX_BOARD_ID || !mainS->board((uint8_t)id)) return "Unknown board";
   JsonDocument cur;
   if (shares[id].json.length()) deserializeJson(cur, shares[id].json);
@@ -493,8 +699,10 @@ String Boards::setShare(int id, JsonVariantConst sensors, JsonVariantConst relay
   for (auto& r : rv) relayToJson(r, ra.add<JsonObject>());
   String j; serializeJson(out, j);
   if (j.length() > MAX_CONFIG) return "Too many settings for one board";
+  if (mainS->board((uint8_t)id)->role == ROLE_DISPLAY) return "A display has no sensors or relays of its own";
   shares[id].json = j;
   indexShare(id); saveShare(id); pushShare(id);
+  boardsVersion++;
   syncMirrors();   // its sensors show up on gauges, charts, alarms...
   return "";
 }
@@ -570,4 +778,66 @@ String Boards::relayCommand(int id, int index, bool on) {
   if (!b->online) return "'" + String(b->name.c_str()) + "' is offline";
   Command c; c.kind = CMD_RELAY; c.index = (uint8_t)index; c.on = on;
   return mainS->command((uint8_t)id, c) < 0 ? "Not sent" : "";
+}
+
+// ---------------------------------------------------------------- board control (main board web pages)
+String Boards::boardCommand(int id, const String& cmd, int minutes) {
+  if (!mainS) return "Only on the main board";
+  StateLock lk;
+  const BoardInfo* b = id >= 1 && id <= MAX_BOARD_ID ? mainS->board((uint8_t)id) : nullptr;
+  if (!b) return "Unknown board";
+  if (cmd == "resend") { mainS->resendConfig((uint8_t)id); return ""; }
+  if (!b->online) return "'" + String(b->name.c_str()) + "' is offline";
+  Command c;
+  if (cmd == "identify") c.kind = CMD_IDENTIFY;
+  else if (cmd == "reboot") c.kind = CMD_REBOOT;
+  else if (cmd == "mute") { c.kind = CMD_MUTE; c.minutes = (uint16_t)constrain(minutes, 0, 120); }
+  else return "Unknown command '" + cmd + "'";
+  return mainS->command((uint8_t)id, c) < 0 ? "Not sent" : "";
+}
+
+String Boards::rename(int id, const String& name) {
+  if (!mainS) return "Only on the main board";
+  String n = name; n.trim();
+  if (!n.length() || n.length() > 23) return "Name: 1 to 23 characters";
+  StateLock lk;
+  if (id < 1 || id > MAX_BOARD_ID || !mainS->board((uint8_t)id)) return "Unknown board";
+  mainS->rename((uint8_t)id, n.c_str());
+  syncMirrors();   // mirrors are named "<board> <sensor>"
+  return "";
+}
+
+// ---------------------------------------------------------------- display API over Wi-Fi
+String Boards::displayCatalog(uint32_t& rev) {
+  StateLock lk;
+  ensureCatalog();
+  rev = cat.rev;
+  return cat.json;
+}
+
+void Boards::displayValues(JsonObject o) {
+  StateLock lk;
+  ensureCatalog();
+  o["rev"] = cat.rev; o["level"] = (uint8_t)gSys.overallLevel; o["muted"] = gSys.muted;
+  JsonArray a = o["v"].to<JsonArray>();
+  for (auto& p : catalogValues()) {
+    JsonArray e = a.add<JsonArray>();
+    if (isnan(p.value)) e.add(nullptr); else e.add(p.value);
+    e.add(p.status); e.add(p.level);
+  }
+}
+
+String Boards::displayCommand(JsonVariantConst j) {
+  Command c;
+  String k = j["kind"] | "";
+  if (k == "relay") { c.kind = CMD_RELAY; c.board = j["board"] | 0; c.index = j["index"] | 0; c.on = (j["on"] | false) ? 1 : 0; }
+  else if (k == "mute") { c.kind = CMD_MUTE; c.minutes = j["minutes"] | 5; }
+  else if (k == "limit") {
+    c.kind = CMD_SET_LIMIT; c.index = j["index"] | 255; c.which = j["which"] | 255;
+    c.value = j["value"].isNull() ? NAN : j["value"].as<float>(); c.rev = (uint16_t)(j["rev"] | 0UL);
+  } else return "Unknown command";
+  StateLock lk;
+  uint8_t st = runDisplayCommand(c);
+  static const char* const msg[] = {"", "Failed", "Unknown sensor or relay", "Unknown command", "List out of date: reload", "Not allowed"};
+  return st == ACK_OK ? "" : String(st < 6 ? msg[st] : "Failed");
 }

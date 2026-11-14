@@ -65,6 +65,12 @@ class NodeSession {
     std::function<uint8_t(std::string& message)> fwEnd;
     std::function<void()> fwAbort;
     std::function<void()> fwDone;                                          // restart into the new firmware
+    // Display boards: values the main board sends (POINTS, indexed by the catalog = the
+    // settings it pushed), its overall alarm level + flags (HB_MUTED) from its heartbeat,
+    // and the answers to commands sent with sendCommand().
+    std::function<void(const Proto::Points& p)> mainPoints;
+    std::function<void(uint8_t level, uint8_t flags)> mainStatus;
+    std::function<void(uint16_t seq, uint8_t status)> commandResult;      // status ACK_*, ACK_NO_ANSWER
   };
   NodeSession(Link& link, const Identity& me, uint8_t storedId, uint32_t storedConfigRev, const Callbacks& cb);
   void update(uint32_t now);
@@ -75,13 +81,18 @@ class NodeSession {
   bool mainInRange(uint32_t now) const { return heardMainAt && now - heardMainAt < Proto::LINK_LOST_MS; }
   void sayHello() { sendHello(); }          // e.g. right after switching channel
   bool linkUp() const { return up; }
+  // Display -> main board: relay, mute, set a limit. Resent until answered. -> seq, or -1 (not paired / link down)
+  int sendCommand(const Proto::Command& c);
   uint8_t boardId() const { return id; }
   uint32_t configRev() const { return cfgRev; }
   uint32_t pointsEveryMs = 1000;
   uint8_t flags = 0;                          // extra HB_* flags (safe mode, muted...)
 
  private:
-  void send(const std::function<size_t(uint8_t*, const Proto::Header&)>& enc, uint8_t dst = Proto::MAIN_BOARD);
+  uint16_t send(const std::function<size_t(uint8_t*, const Proto::Header&)>& enc, uint8_t dst = Proto::MAIN_BOARD, int useSeq = -1);
+  struct OutCmd { uint16_t seq; Proto::Command c; uint32_t lastSent; uint8_t tries; };
+  std::vector<OutCmd> outCmds;
+  uint32_t nowMs = 0;
   void sendHello();
   void sendConfigAck();
   Link& link; Identity me; Callbacks cb;
@@ -115,6 +126,9 @@ struct BoardInfo {
   uint32_t lastHeard = 0, uptimeS = 0;
   int8_t rssi = 0, rssiAtBoard = 0;           // as heard here / as heard by the board
   uint8_t level = 0, flags = 0;
+  int32_t cmdInSeq = -1;                      // last command received from this board (display): a resend is answered, not run again
+  uint8_t cmdInStatus = 0;
+  uint32_t commandsIn = 0, commandsFailed = 0;
   // configuration
   uint32_t configRev = 0;                     // revision being / last sent
   uint32_t ackedRev = 0;                      // revision the board accepted (0 = none)
@@ -152,6 +166,10 @@ class MainSession {
     std::function<void(const BoardInfo& b)> configResult;                  // accepted / refused
     std::function<void(uint8_t board, uint16_t cmdSeq, uint8_t status)> commandResult;   // status 0 ok, 255 no answer
     std::function<void()> boardsChanged;                                    // paired / forgotten: store the table
+    // A paired board (a display) asks the main board to do something -> ACK_* status.
+    std::function<uint8_t(const BoardInfo& b, const Proto::Command& c)> boardCommand;
+    // Overall alarm level and HB_* flags sent with every heartbeat (displays show them).
+    std::function<void(uint8_t& level, uint8_t& flags)> status;
   };
   MainSession(Link& link, const Identity& me, const Callbacks& cb);
   void update(uint32_t now);
@@ -171,6 +189,10 @@ class MainSession {
   bool startFirmware(uint8_t id, uint32_t size, uint32_t crc, uint8_t chip, const std::string& version,
                      std::function<bool(uint32_t offset, uint8_t* buf, size_t len)> read);
   void cancelFirmware(uint8_t id);
+  // Main -> display: values in catalog order (several POINTS frames when > 39). false = link busy.
+  bool sendPoints(uint8_t id, uint16_t rev, const std::vector<Proto::Point>& pts);
+  void resendConfig(uint8_t id);                                // send the settings again even if acknowledged
+  void rename(uint8_t id, const std::string& name);             // also tells the board (ASSIGN)
 
   const std::vector<BoardInfo>& boards() const { return list; }
   const BoardInfo* board(uint8_t id) const;

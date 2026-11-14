@@ -30,7 +30,8 @@ Phases 2 (touch display) and 3 (multi-board) are not started.
 | 12 | Computed sensors | Done | A − B, A + B, rate per minute, minutes in warning, A − curve(B) |
 | 13 | Alarm black box | Done | 30 s before + 30 s after each new warning/critical alarm, newest 10 kept on LittleFS, Events page |
 | 14 | Other optional sensors | Done | INA226, MPU-6050 roll/pitch, switch inputs, BME280 humidity, non-linear analog curves (fuel senders). ICM-42688 not yet |
-| 15–16 | Touch display | Not started | After phase 3 |
+| 15–16 | Touch display | Built (display 5.1.0-beta.11), PC-simulated | `firmware/CarMetricsDisplay/`: JC3248W535 + Cheap Yellow Display, ESP-NOW (role display) + Wi-Fi fallback, dials / bars / numbers / markers / relays, alarm banner, limit editor, own web page with layout editor + preview. Needs the boards to try |
+| — | Board controls on the main board | Done (5.1.0-beta.11) | Identify, mute, resend settings, rename, restart; link summary, loss %, display links |
 | 17 | Board-to-board protocol | Format + exchange logic done | `Proto.*`, `Link.h`, `BoardNet.*`; PC test `tools/cm.sh prototest` (36 checks incl. two boards over a lossy simulated link); see [phase 3 plan](v5-phase3-plan.md) |
 | 19–22 | ESP-NOW, board roles, Boards page | First round built | Role setting, ESP-NOW link with channel search, Boards page (pair / status / values / relays), board selector on Sensors + Relays, relay safe state. Needs two boards to try. Remote values on gauges/charts/alarms next |
 | 22b | Remote values on gauges / charts / alarms / black box / cloud / OLED | Done (5.1.0-beta.8) | Mirrored `remote` sensors on the main board |

@@ -21,6 +21,9 @@ This is the toolchain used to develop and test CarMetrics:
 | `tools/cm.sh emu 60` | Boots the firmware in the emulator for 60 s and shows the serial log |
 | `tools/cm.sh webtest` | Runs a headless Chrome test of every web page against a mock ESP32. Screenshots go to `build/webtest/` |
 | `tools/cm.sh prototest` | Tests the board-to-board protocol on this PC (g++, a few seconds) |
+| `tools/cm.sh build52` | 5.2 for an ESP32-S3 with 8 MB+ flash (`build/carmetrics-52-*.bin`) |
+| `tools/cm.sh display` | Touch display firmware for the JC3248W535 and the Cheap Yellow Display (`build/carmetrics-display-*.bin`) |
+| `tools/cm.sh dispsim` | Draws the display's screens on this PC (`build/dispsim/*.png`) |
 | `tools/cm.sh all` | All of the above |
 
 **What the emulator can't do:** it has no Wi-Fi radio, ADC or real I2C/1-Wire devices. The self-test build fakes sensor values and skips Wi-Fi. Weather, uploads and real sensors still need the real board.
@@ -52,7 +55,7 @@ Open the folder and choose **"Reopen in Container"**; `.devcontainer/devcontaine
 
 1. Install the packages:
    ```bash
-   sudo apt install ca-certificates curl git xz-utils bzip2 unzip zip python3 python3-pil python3-serial libslirp0 libsdl2-2.0-0 libglib2.0-0 libgcrypt20
+   sudo apt install ca-certificates curl git xz-utils bzip2 unzip zip python3 python3-pil python3-serial g++ libslirp0 libsdl2-2.0-0 libglib2.0-0 libgcrypt20
    ```
 2. Install the toolchain:
    ```bash

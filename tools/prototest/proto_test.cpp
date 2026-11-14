@@ -12,6 +12,7 @@ static int passed = 0, failed = 0;
 void boardsTest();
 void fwTest();
 void canTest();
+void displayTest();
 void check(bool ok, const char* what, const std::string& detail = "") {
   (ok ? passed : failed)++;
   printf("%s %s %s\n", ok ? "PASS" : "FAIL", what, detail.c_str());
@@ -188,6 +189,7 @@ int main() {
   boardsTest();
   fwTest();
   canTest();
+  displayTest();
   printf("DONE: %d passed, %d failed\n", passed, failed);
   return failed ? 1 : 0;
 }

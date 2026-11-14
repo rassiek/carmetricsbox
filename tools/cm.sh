@@ -9,7 +9,9 @@
 #   tools/cm.sh webtest            headless browser test of the web app (mock ESP32)
 #   tools/cm.sh prototest          board-to-board protocol test on this PC (g++, a few seconds)
 #   tools/cm.sh build52            5.2 for ESP32-S3 8 MB+ (main board): build/carmetrics-52-*.bin
-#   tools/cm.sh all                prototest + build + build3 esp32 + build3 esp32s3 + selftest + webtest
+#   tools/cm.sh display [jc|cyd]   touch display firmware (JC3248W535 and/or Cheap Yellow Display): build/carmetrics-display-*.bin
+#   tools/cm.sh dispsim            display screens drawn on this PC (build/dispsim/*.png) + display model tests
+#   tools/cm.sh all                prototest + build + build3 esp32 + build3 esp32s3 + display + dispsim + selftest + webtest
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PREFIX="${CM_PREFIX:-/opt/cm}"
@@ -85,6 +87,63 @@ cmd_build52() {
   echo "5.2 (ESP32-S3, 8 MB) build OK: $OUT/carmetrics-52-*.bin"
 }
 
+# Touch display firmware (firmware/CarMetricsDisplay). The board-to-board files are
+# shared with the main firmware: copied next to the display sketch in a temp copy.
+cmd_display() {
+  local which="${1:-all}"
+  python3 "$ROOT/tools/build_display_web.py"
+  local s="$OUT/sketchDisplay/CarMetricsDisplay"
+  rm -rf "$OUT/sketchDisplay" && mkdir -p "$s"
+  cp "$ROOT/firmware/CarMetricsDisplay"/*.h "$ROOT/firmware/CarMetricsDisplay"/*.cpp "$ROOT/firmware/CarMetricsDisplay"/*.ino "$s"/
+  for f in Proto.h Proto.cpp BoardNet.h BoardNet.cpp Link.h EspNowLink.h EspNowLink.cpp; do cp "$SKETCH/$f" "$s/"; done
+  local c3=(env ARDUINO_DIRECTORIES_USER="${CM_CORE3_USER:-$PREFIX/core3/Arduino}" ARDUINO_DIRECTORIES_DATA="${CM_CORE3_DATA:-$PREFIX/core3/arduino15}")
+  if [ "$which" = all ] || [ "$which" = jc ]; then
+    local dir="$OUT/display-jc"; rm -rf "$dir"
+    "${c3[@]}" "$CLI" compile --fqbn "espressif:esp32:esp32s3:PSRAM=opi,FlashSize=4M,PartitionScheme=min_spiffs,CDCOnBoot=cdc" \
+      --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$dir" "$s" 2>&1 \
+      | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
+    [ -f "$dir/CarMetricsDisplay.ino.bin" ] || { echo "display (JC3248W535) compile failed"; exit 1; }
+    cp "$dir/CarMetricsDisplay.ino.bin" "$OUT/carmetrics-display-jc3248w535-firmware.bin"
+    $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-display-jc3248w535-full-flash.bin" --flash_mode dio --flash_freq 80m --flash_size 4MB \
+      0x0 "$dir/CarMetricsDisplay.ino.bootloader.bin" 0x8000 "$dir/CarMetricsDisplay.ino.partitions.bin" \
+      0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetricsDisplay.ino.bin" > /dev/null
+    echo "display JC3248W535 build OK"
+  fi
+  if [ "$which" = all ] || [ "$which" = cyd ]; then
+    local dir="$OUT/display-cyd"; rm -rf "$dir"
+    "${c3[@]}" "$CLI" compile --fqbn "espressif:esp32:esp32:PartitionScheme=min_spiffs" \
+      --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$dir" "$s" 2>&1 \
+      | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
+    [ -f "$dir/CarMetricsDisplay.ino.bin" ] || { echo "display (CYD) compile failed"; exit 1; }
+    cp "$dir/CarMetricsDisplay.ino.bin" "$OUT/carmetrics-display-cyd-firmware.bin"
+    $ESPTOOL --chip esp32 merge_bin -o "$OUT/carmetrics-display-cyd-full-flash.bin" --flash_mode dio --flash_freq 40m --flash_size 4MB \
+      0x1000 "$dir/CarMetricsDisplay.ino.bootloader.bin" 0x8000 "$dir/CarMetricsDisplay.ino.partitions.bin" \
+      0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetricsDisplay.ino.bin" > /dev/null
+    echo "display CYD build OK"
+  fi
+}
+
+# The display's screens on this PC: the real Ui / Model code and Arduino_GFX's drawing
+# core into a frame buffer (tools/dispsim), saved as PNGs; plus checks of the display logic.
+cmd_dispsim() {
+  local d="$OUT/dispsim" G="$ARDUINO_DIRECTORIES_USER/libraries/GFX_Library_for_Arduino/src"
+  rm -rf "$d" && mkdir -p "$d"
+  python3 "$ROOT/tools/dispsim/extract_fonts.py" "$ARDUINO_DIRECTORIES_USER/libraries/U8g2_Arduino" "$d/gen"
+  gcc -c -O1 -I "$d/gen" "$d/gen/fonts.c" -o "$d/fonts.o"
+  g++ -std=c++17 -O1 -w -fsanitize=address,undefined -DARDUINOJSON_ENABLE_ARDUINO_STRING=0 \
+    -I "$ROOT/tools/dispsim/shim" -I "$d/gen" -I "$G" -I "$ARDUINO_DIRECTORIES_USER/libraries/ArduinoJson/src" -I "$ROOT/firmware/CarMetricsDisplay" \
+    "$ROOT/tools/dispsim/sim.cpp" "$ROOT/tools/dispsim/shim/Print.cpp" "$ROOT/firmware/CarMetricsDisplay/Model.cpp" "$ROOT/firmware/CarMetricsDisplay/Ui.cpp" \
+    "$G/Arduino_GFX.cpp" "$G/Arduino_G.cpp" "$d/fonts.o" -o "$d/sim"
+  "$d/sim" "$d"
+  python3 -c "
+import sys,glob
+from PIL import Image
+for f in sorted(glob.glob(sys.argv[1]+'/*.ppm')):
+    Image.open(f).save(f[:-4]+'.png')
+" "$d" && rm -f "$d"/*.ppm
+  echo "screens: $d/*.png"
+}
+
 cmd_build() {
   web
   rm -rf "$OUT/fw" && compile "$OUT/fw" "PartitionScheme=min_spiffs"
@@ -119,7 +178,7 @@ cmd_emu() {
 cmd_prototest() {
   mkdir -p "$OUT/prototest"
   g++ -std=c++17 -Wall -Wextra -Werror -O1 -fsanitize=address,undefined -I "$SKETCH" \
-    "$ROOT/tools/prototest/proto_test.cpp" "$ROOT/tools/prototest/boards_test.cpp" "$ROOT/tools/prototest/fw_test.cpp" "$ROOT/tools/prototest/can_test.cpp" "$SKETCH/CanFrag.cpp" "$SKETCH/Proto.cpp" "$SKETCH/BoardNet.cpp" \
+    "$ROOT/tools/prototest/proto_test.cpp" "$ROOT/tools/prototest/boards_test.cpp" "$ROOT/tools/prototest/fw_test.cpp" "$ROOT/tools/prototest/can_test.cpp" "$ROOT/tools/prototest/display_test.cpp" "$SKETCH/CanFrag.cpp" "$SKETCH/Proto.cpp" "$SKETCH/BoardNet.cpp" \
     -o "$OUT/prototest/proto_test"
   "$OUT/prototest/proto_test"
 }
@@ -130,6 +189,11 @@ cmd_webtest() {
   trap 'kill ${MOCK_PID:-} 2>/dev/null || true' EXIT   # also when a test fails (set -e)
   sleep 1.5
   node "$ROOT/tools/webtest/ui_test.js" "$OUT/webtest" http://127.0.0.1:8099/
+  python3 "$ROOT/tools/webtest/display_mock.py" "$ROOT/firmware/CarMetricsDisplay/web/index.html" 8098 > "$OUT/display_mock.log" 2>&1 &
+  DMOCK_PID=$!
+  trap 'kill ${MOCK_PID:-} ${DMOCK_PID:-} 2>/dev/null || true' EXIT
+  sleep 1
+  node "$ROOT/tools/webtest/display_test.js" "$OUT/webtest" http://127.0.0.1:8098/
 }
 
 case "${1:-}" in
@@ -140,6 +204,8 @@ case "${1:-}" in
   webtest) cmd_webtest ;;
   prototest) cmd_prototest ;;
   build52) cmd_build52 ;;
-  all) cmd_prototest && cmd_build && cmd_build3 esp32 && cmd_build3 esp32s3 && cmd_selftest && cmd_webtest ;;
-  *) sed -n '2,13p' "$0"; exit 1 ;;
+  display) cmd_display "${2:-all}" ;;
+  dispsim) cmd_dispsim ;;
+  all) cmd_prototest && cmd_build && cmd_build3 esp32 && cmd_build3 esp32s3 && cmd_display && cmd_dispsim && cmd_selftest && cmd_webtest ;;
+  *) sed -n '2,15p' "$0"; exit 1 ;;
 esac

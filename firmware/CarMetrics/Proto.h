@@ -31,7 +31,8 @@ enum Type : uint8_t {
   CONFIG_CHUNK = 3,  // main -> board: its share of the configuration (JSON), split into chunks
   CONFIG_ACK = 4,    // board -> main: configuration accepted / refused
   POINTS = 5,        // board -> main: live values, by index into the board's point list
-  COMMAND = 6,       // main -> board: relay, mute, identify, reboot
+                     // main -> display: every value of the display catalog (same format)
+  COMMAND = 6,       // main -> board: relay, mute, identify, reboot; display -> main: relay, mute, set a limit
   ACK = 7,           // reply to a COMMAND
   ASSIGN = 8,        // main -> all: "the board with this MAC is now board N" (pairing; N = UNPAIRED to forget it)
   FW_OFFER = 9,      // main -> board: a firmware image is coming (size, CRC, chip, version)
@@ -100,11 +101,18 @@ struct Points {
 
 struct Command {
   uint8_t kind = 0;            // CMD_*
-  uint8_t index = 0;           // relay index on that board
-  uint8_t on = 0;
+  uint8_t index = 0;           // relay index on that board (CMD_SET_LIMIT: sensor index in the display catalog)
+  uint8_t on = 0;              // CMD_RELAY: 0 off, 1 on
   uint16_t blinkMs = 0, minutes = 0;
+  // optional trailing fields (5.1.0-beta.11; older boards ignore them)
+  uint8_t board = 0;           // display -> main CMD_RELAY: which board the relay is on (0 = main)
+  uint8_t which = 0;           // CMD_SET_LIMIT: LIMIT_*
+  float value = 0;             // CMD_SET_LIMIT: new value (NaN = off)
+  uint16_t rev = 0;            // CMD_SET_LIMIT: low 16 bits of the catalog revision the index belongs to
 };
-enum CommandKind : uint8_t { CMD_RELAY = 1, CMD_MUTE = 2, CMD_IDENTIFY = 3, CMD_REBOOT = 4 };
+enum CommandKind : uint8_t { CMD_RELAY = 1, CMD_MUTE = 2, CMD_IDENTIFY = 3, CMD_REBOOT = 4, CMD_SET_LIMIT = 5 };
+enum LimitKind : uint8_t { LIMIT_WARN_LOW = 0, LIMIT_WARN_HIGH = 1, LIMIT_CRIT_LOW = 2, LIMIT_CRIT_HIGH = 3 };
+enum AckStatus : uint8_t { ACK_OK = 0, ACK_FAILED = 1, ACK_BAD_INDEX = 2, ACK_UNKNOWN = 3, ACK_STALE = 4, ACK_NOT_ALLOWED = 5, ACK_NO_ANSWER = 255 };
 
 struct Ack {
   uint16_t seq = 0;            // seq of the COMMAND being answered

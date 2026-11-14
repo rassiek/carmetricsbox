@@ -304,6 +304,38 @@ void setupV2Routes() {
     String err = Boards::forget(j["id"] | 0);
     if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Board forgotten");
   });
+  addJsonPost("/api/v2/boards/command", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    String cmd = j["cmd"] | "";
+    String err = Boards::boardCommand(j["id"] | 0, cmd, j["minutes"] | 5);
+    if (err.length()) sendStatus(req, 400, err);
+    else sendStatus(req, 200, cmd == "resend" ? "Sending the settings again" : cmd == "reboot" ? "Restarting the board" : "Sent");
+  });
+  addJsonPost("/api/v2/boards/rename", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    if (!requireAuth(req)) return;
+    String err = Boards::rename(j["id"] | 0, j["name"] | "");
+    if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Renamed");
+  });
+  // ---- touch displays over Wi-Fi (fallback to ESP-NOW; same data)
+  server.on("/api/v2/display/catalog", HTTP_GET, [](AsyncWebServerRequest* req) {
+    uint32_t rev = 0;
+    String j = Boards::displayCatalog(rev);
+    AsyncWebServerResponse* res = req->beginResponse(200, "application/json", j);
+    res->addHeader("Cache-Control", "no-store");
+    res->addHeader("X-Catalog-Rev", String(rev));
+    req->send(res);
+  });
+  server.on("/api/v2/display/values", HTTP_GET, [](AsyncWebServerRequest* req) {
+    JsonDocument doc;
+    Boards::displayValues(doc.to<JsonObject>());
+    sendJson(req, 200, doc);
+  });
+  addJsonPost("/api/v2/display/command", [](AsyncWebServerRequest* req, JsonVariant& j) {
+    String kind = j["kind"] | "";
+    if (kind != "mute" && !requireAuth(req)) return;   // like the web app: mute is open, relays and limits need the password
+    String err = Boards::displayCommand(j);
+    if (err.length()) sendStatus(req, 400, err); else sendStatus(req, 200, "Done");
+  });
   server.on("/api/v2/boards/config", HTTP_GET, [](AsyncWebServerRequest* req) {
     String out;
     String err = Boards::shareJson(req->hasParam("id") ? req->getParam("id")->value().toInt() : 0, out);

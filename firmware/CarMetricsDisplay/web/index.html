@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#070a10">
+<title>CarMetrics Display</title>
+<style>
+:root{--bg:#070a10;--panel:#141b28;--panel2:#263042;--line:#384458;--text:#e8eef4;--muted:#8c96a2;--accent:#38bdf8;--ok:#22c55e;--warn:#f59e0b;--crit:#ef4444;--fault:#a855f7}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header b{font-size:17px}.pill{padding:2px 10px;border-radius:99px;background:var(--panel2);font-size:13px}
+.pill.ok{color:var(--ok)}.pill.warn{color:var(--warn)}.pill.crit{color:var(--crit)}
+nav{display:flex;gap:4px;padding:8px 14px;overflow-x:auto}nav a{padding:6px 12px;border-radius:8px;color:var(--muted);text-decoration:none;cursor:pointer;white-space:nowrap}
+nav a.on{background:var(--panel2);color:var(--text)}
+main{padding:0 14px 40px;max-width:1200px;margin:auto}.panel{background:var(--panel);border-radius:12px;padding:14px;margin:12px 0}
+h3{margin:0 0 10px}.muted{color:var(--muted)}.small{font-size:13px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.spacer{flex:1}
+button,select,input{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+button{cursor:pointer}button.primary{background:#0e7490;border-color:#0e7490}button.danger{color:var(--crit)}button:disabled{opacity:.5}
+input[type=number]{width:64px}input.lbl{width:70px}
+.layout{display:grid;grid-template-columns:minmax(260px,auto) 1fr;gap:16px;align-items:start}
+@media(max-width:820px){.layout{grid-template-columns:1fr}}
+canvas{background:#000;border-radius:10px;max-width:100%;touch-action:none;display:block;margin:auto}
+table{border-collapse:collapse;width:100%}td{padding:4px 3px;border-bottom:1px solid var(--line)}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}.kv div{background:var(--panel2);border-radius:10px;padding:8px 10px}
+.kv span{display:block;color:var(--muted);font-size:12px}.kv b{display:block}
+label.f{display:grid;grid-template-columns:200px 1fr;gap:8px;align-items:center;margin:6px 0}@media(max-width:600px){label.f{grid-template-columns:1fr}}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel2);padding:10px 16px;border-radius:10px;display:none;max-width:90%}
+#toast.err{color:var(--crit)}.hidden{display:none}
+.ptabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}.ptabs button.on{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<header><b id="name">CarMetrics Display</b><span class="pill" id="link">…</span><span class="pill" id="lvl">…</span><span class="spacer"></span><span class="muted small" id="fw"></span></header>
+<nav><a data-t="layout" class="on">Layout</a><a data-t="settings">Settings</a><a data-t="status">Status</a><a data-t="firmware">Firmware</a></nav>
+<main>
+<section id="t-layout">
+  <div class="layout">
+    <div class="panel">
+      <div class="ptabs" id="pageTabs"></div>
+      <canvas id="cv"></canvas>
+      <p class="muted small">Preview with live values, at the screen's size (<span id="dim"></span>). On the display: swipe or tap the tabs to change page, tap a relay to switch it, long-press a value to change its alarm limits.</p>
+    </div>
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">Page</h3><span class="spacer"></span>
+        <button id="pgLeft" title="Move page left">◀</button><button id="pgRight" title="Move page right">▶</button>
+        <button id="pgAdd">Add page</button><button id="pgDel" class="danger">Delete page</button></div>
+      <div class="row" style="margin:10px 0">
+        <label>Name <input id="pgName" maxlength="12" style="width:120px"></label>
+        <label>Columns <input id="pgCols" type="number" min="1" max="4"></label>
+        <label>Rows <input id="pgRows" type="number" min="1" max="6"></label>
+      </div>
+      <table id="tiles"></table>
+      <div class="row" style="margin-top:8px"><button id="tileAdd">Add tile</button><span class="muted small">Tiles fill the grid left to right, top to bottom; "cols"/"rows" make a tile bigger.</span></div>
+      <div class="row" style="margin-top:14px">
+        <label><input type="checkbox" id="optAlarm"> Alarm banner when something goes critical</label>
+        <label><input type="checkbox" id="optRelays"> Relays page</label>
+      </div>
+      <div class="row" style="margin-top:14px"><button class="primary" id="save">Save to the display</button><button id="revert">Undo changes</button>
+        <span class="spacer"></span><button id="reset" class="danger">Automatic layout</button></div>
+      <p class="muted small" id="layoutNote"></p>
+    </div>
+  </div>
+</section>
+<section id="t-settings" class="hidden">
+  <div class="panel"><h3>This display</h3>
+    <label class="f">Name (shown on the main board) <input id="sName" maxlength="23"></label>
+    <label class="f">Brightness % <input id="sBright" type="number" min="5" max="100"></label>
+    <label class="f">Rotation <select id="sRot"><option value="255">board default</option><option value="0">0</option><option value="1">1 (90°)</option><option value="2">2 (180°)</option><option value="3">3 (270°)</option></select></label>
+    <label class="f">Dim after (minutes without a touch, 0 = never) <input id="sDim" type="number" min="0" max="240"></label>
+    <label class="f" id="panelRow">Panel (Cheap Yellow Display) <select id="sPanel"><option value="ili9341">ILI9341 (1 USB port)</option><option value="st7789">ST7789 (2 USB ports)</option></select></label>
+  </div>
+  <div class="panel"><h3>Main board's Wi-Fi (fallback when ESP-NOW is silent)</h3>
+    <label class="f">Join it <input type="checkbox" id="sWifi"></label>
+    <label class="f">Network name (empty = the one the main board says) <input id="sSsid" placeholder="CarMetrics"></label>
+    <label class="f">Its password (empty = unchanged) <input id="sMpass" type="password" placeholder="unchanged"></label>
+    <label class="f">Main board admin password (relays, limits over Wi-Fi) <input id="sMadmin" type="password" placeholder="unchanged"></label>
+  </div>
+  <div class="panel"><h3>Access</h3>
+    <label class="f">This display's access point password <input id="sAppass" type="password" placeholder="unchanged"></label>
+    <label class="f">This page's admin password <input id="sAdmin" type="password" placeholder="unchanged"></label>
+  </div>
+  <div class="panel" id="touchPanel"><h3>Touch</h3>
+    <div class="row"><label>x min <input id="tXmin" type="number" style="width:80px"></label><label>x max <input id="tXmax" type="number" style="width:80px"></label>
+      <label>y min <input id="tYmin" type="number" style="width:80px"></label><label>y max <input id="tYmax" type="number" style="width:80px"></label></div>
+    <div class="row" style="margin-top:8px"><label><input type="checkbox" id="tSwap"> swap x/y</label><label><input type="checkbox" id="tFx"> flip x</label><label><input type="checkbox" id="tFy"> flip y</label>
+      <span class="spacer"></span><span class="muted small" id="rawTouch">touch the screen: raw position shows here</span></div>
+    <p class="muted small">Cheap Yellow Display: touch the four corners and put the smallest / largest raw numbers in min / max. If a tap lands in the wrong place on either board, try the flips.</p>
+  </div>
+  <div class="row"><button class="primary" id="sSave">Save settings</button></div>
+</section>
+<section id="t-status" class="hidden">
+  <div class="panel"><div class="kv" id="kv"></div>
+    <div class="row" style="margin-top:12px"><button id="ident">Identify (flash the screen)</button><button id="reboot" class="danger">Restart</button></div></div>
+</section>
+<section id="t-firmware" class="hidden">
+  <div class="panel"><h3>Firmware</h3>
+    <p class="small">Choose <b>carmetrics-display-…-firmware.bin</b> for this board (<span id="chip"></span>). The display restarts with it; if it doesn't run properly for a minute it goes back to the previous one.
+      It can also be sent from the main board's Boards page.</p>
+    <div class="row"><input type="file" id="fwFile" accept=".bin"><button class="primary" id="fwSend">Install</button><span id="fwProg" class="muted small"></span></div>
+  </div>
+</section>
+</main>
+<div id="toast"></div>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const h = (t, a = {}, ...c) => { const e = document.createElement(t); for (const [k, v] of Object.entries(a)) { if (k.startsWith('on')) e[k] = v; else if (v !== false && v != null) e.setAttribute(k, v === true ? '' : v); } for (const x of c.flat()) if (x != null) e.append(x); return e; };
+function toast(m, err) { const t = $('#toast'); t.textContent = m; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 4000); }
+async function api(url, body, raw) {
+  const o = body === undefined ? {} : { method: 'POST', headers: raw ? { 'Content-Type': 'application/octet-stream' } : { 'Content-Type': 'application/json' }, body: raw ? body : JSON.stringify(body) };
+  const r = await fetch(url, o);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || r.statusText);
+  return d;
+}
+let st = {}, cat = { sensors: [], relays: [] }, vals = { v: [] }, lay = { pages: [] }, saved = '', page = 0;
+const LV = ['ok', 'warn', 'fault', 'crit'];
+// ---------------------------------------------------------------- data
+async function loadState() {
+  st = await api('/api/state');
+  $('#name').textContent = st.name; $('#fw').textContent = `${st.profile} · ${st.firmware}`; $('#chip').textContent = st.chip;
+  const l = st.net.link; $('#link').textContent = l === 'espnow' ? 'ESP-NOW' : l === 'wifi' ? 'Wi-Fi' : 'no link'; $('#link').className = 'pill ' + (l === 'espnow' ? 'ok' : l === 'wifi' ? 'warn' : 'crit');
+  const lv = LV[[0, 1, 2, 3][st.level] || 0]; $('#lvl').textContent = (st.main || 'main board') + ': ' + lv.toUpperCase() + (st.muted ? ' (muted)' : ''); $('#lvl').className = 'pill ' + (lv === 'ok' ? 'ok' : lv === 'warn' ? 'warn' : 'crit');
+  $('#panelRow').classList.toggle('hidden', !/CYD/.test(st.profile));
+}
+async function loadCatalog() { cat = await api('/api/catalog'); }
+async function loadLayout() { lay = await api('/api/layout'); saved = JSON.stringify(lay); if (page >= lay.pages.length) page = 0; renderEditor(); }
+async function loadValues() { try { vals = await api('/api/values'); if (vals.rev !== cat.rev) await loadCatalog(); } catch (e) {} draw(); }
+// ---------------------------------------------------------------- editor
+const sensorOpts = () => [...cat.sensors.map(s => [s.id, `${s.label} – ${s.name}`]), ...cat.relays.map(r => [r.ref, `Relay – ${r.name}`])];
+function renderEditor() {
+  $('#pageTabs').replaceChildren(...lay.pages.map((p, i) => h('button', { class: i === page ? 'on' : '', onclick: () => { page = i; renderEditor(); } }, p.name || `Page ${i + 1}`)),
+    ...(lay.relaysPage && cat.relays.length ? [h('button', { disabled: true }, 'Relays')] : []), h('button', { disabled: true }, 'Setup'));
+  const p = lay.pages[page];
+  $('#optAlarm').checked = lay.alarmPopup !== false; $('#optRelays').checked = lay.relaysPage !== false;
+  $('#layoutNote').textContent = lay.default ? 'This is the automatic layout (made from the main board\'s list); saving it makes it yours.' : '';
+  if (!p) { $('#tiles').replaceChildren(); draw(); return; }
+  $('#pgName').value = p.name || ''; $('#pgCols').value = p.cols; $('#pgRows').value = p.rows;
+  const opts = sensorOpts();
+  $('#tiles').replaceChildren(h('tr', { class: 'muted small' }, h('td', {}, 'Shows'), h('td', {}, 'As'), h('td', {}, 'Label'), h('td', {}, 'cols'), h('td', {}, 'rows'), h('td')),
+    ...p.tiles.map((t, i) => {
+      const sel = h('select', { onchange: () => { t.ref = sel.value; if (t.ref.startsWith('r:')) t.w = 'relay'; else if (t.w === 'relay') t.w = 'number'; renderEditor(); } },
+        ...(opts.some(o => o[0] === t.ref) ? [] : [h('option', { value: t.ref, selected: true }, `${t.ref} (not on the main board)`)]),
+        ...opts.map(([v, n]) => h('option', { value: v, selected: v === t.ref }, n)));
+      const w = h('select', { disabled: t.ref.startsWith('r:'), onchange: () => { t.w = w.value; draw(); } },
+        ...(t.ref.startsWith('r:') ? ['relay'] : ['number', 'bar', 'dial', 'marker']).map(x => h('option', { value: x, selected: x === t.w }, x)));
+      const l = h('input', { class: 'lbl', maxlength: 5, value: t.l || '', placeholder: 'auto', oninput: () => { t.l = l.value; draw(); } });
+      const cs = h('input', { type: 'number', min: 1, max: 4, value: t.cs || 1, oninput: () => { t.cs = +cs.value || 1; draw(); } });
+      const rs = h('input', { type: 'number', min: 1, max: 6, value: t.rs || 1, oninput: () => { t.rs = +rs.value || 1; draw(); } });
+      const mv = d => { const j = i + d; if (j < 0 || j >= p.tiles.length) return; [p.tiles[i], p.tiles[j]] = [p.tiles[j], p.tiles[i]]; renderEditor(); };
+      return h('tr', {}, h('td', {}, sel), h('td', {}, w), h('td', {}, l), h('td', {}, cs), h('td', {}, rs),
+        h('td', { style: 'white-space:nowrap' }, h('button', { onclick: () => mv(-1) }, '↑'), h('button', { onclick: () => mv(1) }, '↓'), h('button', { class: 'danger', onclick: () => { p.tiles.splice(i, 1); renderEditor(); } }, '✕')));
+    }));
+  draw();
+}
+function bindEditor() {
+  const p = () => lay.pages[page];
+  $('#pgName').oninput = () => { if (p()) { p().name = $('#pgName').value; renderTabsOnly(); draw(); } };
+  $('#pgCols').oninput = () => { if (p()) { p().cols = Math.max(1, Math.min(4, +$('#pgCols').value || 1)); draw(); } };
+  $('#pgRows').oninput = () => { if (p()) { p().rows = Math.max(1, Math.min(6, +$('#pgRows').value || 1)); draw(); } };
+  $('#pgAdd').onclick = () => { if (lay.pages.length >= 8) return toast('At most 8 pages', true); lay.pages.push({ name: 'Page ' + (lay.pages.length + 1), cols: 2, rows: 3, tiles: [] }); page = lay.pages.length - 1; renderEditor(); };
+  $('#pgDel').onclick = () => { if (!p() || !confirm(`Delete page "${p().name}"?`)) return; lay.pages.splice(page, 1); page = Math.max(0, page - 1); renderEditor(); };
+  $('#pgLeft').onclick = () => { if (page > 0) { [lay.pages[page - 1], lay.pages[page]] = [lay.pages[page], lay.pages[page - 1]]; page--; renderEditor(); } };
+  $('#pgRight').onclick = () => { if (page < lay.pages.length - 1) { [lay.pages[page + 1], lay.pages[page]] = [lay.pages[page], lay.pages[page + 1]]; page++; renderEditor(); } };
+  $('#tileAdd').onclick = () => { if (!p()) return toast('Add a page first', true); const o = sensorOpts()[0]; if (!o) return toast('Nothing received from the main board yet', true); p().tiles.push({ ref: o[0], w: o[0].startsWith('r:') ? 'relay' : 'number' }); renderEditor(); };
+  $('#optAlarm').onchange = () => { lay.alarmPopup = $('#optAlarm').checked; draw(); };
+  $('#optRelays').onchange = () => { lay.relaysPage = $('#optRelays').checked; renderEditor(); };
+  $('#save').onclick = async () => { try { const l = JSON.parse(JSON.stringify(lay)); delete l.default; toast((await api('/api/layout', l)).message); await loadLayout(); } catch (e) { toast(e.message, true); } };
+  $('#revert').onclick = () => { lay = JSON.parse(saved); renderEditor(); };
+  $('#reset').onclick = async () => { if (!confirm('Replace your layout by the automatic one?')) return; try { toast((await api('/api/layout-reset', {})).message); await loadLayout(); } catch (e) { toast(e.message, true); } };
+}
+function renderTabsOnly() { [...$('#pageTabs').children].forEach((b, i) => { if (i < lay.pages.length) b.textContent = lay.pages[i].name || `Page ${i + 1}`; }); }
+// ---------------------------------------------------------------- preview (same geometry as the display)
+const C = { bg: '#070a10', panel: '#141b28', panel2: '#263042', line: '#384458', text: '#e8eef4', muted: '#8c96a2', accent: '#38bdf8', ok: '#22c55e', warn: '#f59e0b', crit: '#ef4444', fault: '#a855f7', on: '#0e7490' };
+const LVC = { 1: C.warn, 2: C.fault, 3: C.crit }, LVBG = { 1: '#402a06', 2: '#301646', 3: '#4e1010' };
+const STS = ['OFF', '--', '', 'SETUP', 'N/F', 'FAULT', 'LINK'];
+function place(p) {
+  const cols = Math.max(1, p.cols), rows = Math.max(1, p.rows), used = Array.from({ length: rows }, () => Array(cols).fill(false));
+  return p.tiles.map(t => {
+    const cs = Math.min(Math.max(1, t.cs || 1), cols), rs = Math.min(Math.max(1, t.rs || 1), rows);
+    for (let r = 0; r <= rows - rs; r++) for (let c = 0; c <= cols - cs; c++) {
+      let free = true;
+      for (let y = r; y < r + rs && free; y++) for (let x = c; x < c + cs && free; x++) if (used[y][x]) free = false;
+      if (!free) continue;
+      for (let y = r; y < r + rs; y++) for (let x = c; x < c + cs; x++) used[y][x] = true;
+      return { col: c, row: r, cs, rs };
+    }
+    return null;
+  });
+}
+function fmt(s, v) { if (!v || v[1] !== 2) return STS[v ? v[1] : 1] || '?'; if (v[0] == null) return '--'; return Number(v[0]).toFixed(Math.min(3, s.decimals || 0)); }
+function frac(s, x) { if (x == null) return 0; return Math.max(0, Math.min(1, (x - s.lo) / (s.hi - s.lo || 1))); }
+function zones(s) {
+  const z = [], add = (a, b, c) => { if (a != null && b != null && b > a) z.push([frac(s, a), frac(s, b), c]); };
+  if (s.cl != null) add(s.lo, s.cl, C.crit); if (s.wl != null) add(s.cl ?? s.lo, s.wl, C.warn);
+  if (s.wh != null) add(s.wh, s.ch ?? s.hi, C.warn); if (s.ch != null) add(s.ch, s.hi, C.crit);
+  return z;
+}
+function rr(g, x, y, w, hh, r, c) { g.fillStyle = c; g.beginPath(); g.roundRect(x, y, w, hh, Math.min(r, hh / 4)); g.fill(); }
+function txt(g, s, x, y, w, hh, c, size, align = 'left', bold = true, mono = false) {
+  if (!s) return; g.fillStyle = c; g.textBaseline = 'middle';
+  let f = size; g.font = `${bold ? 'bold ' : ''}${f}px ${mono ? 'Oswald,Impact,sans-serif' : 'Helvetica,Arial,sans-serif'}`;
+  while (f > 8 && g.measureText(s).width > w) { f--; g.font = `${bold ? 'bold ' : ''}${f}px ${mono ? 'Oswald,Impact,sans-serif' : 'Helvetica,Arial,sans-serif'}`; }
+  g.textAlign = align; g.fillText(s, align === 'center' ? x + w / 2 : align === 'right' ? x + w : x, y + hh / 2);
+}
+function draw() {
+  const cv = $('#cv'), W = st.width || 320, H = st.height || 480, g = cv.getContext('2d');
+  cv.width = W; cv.height = H; cv.style.width = Math.min(W, 480) + 'px'; $('#dim').textContent = `${W}×${H}`;
+  const small = H <= 240 || W <= 240, SH = small ? 28 : 36, NH = small ? 34 : 48;
+  g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  // status bar
+  g.fillStyle = C.line; g.fillRect(0, SH - 1, W, 1);
+  txt(g, st.main || st.name, 8, 0, W / 2, SH, C.text, small ? 13 : 16);
+  const mw = small ? 58 : 76; rr(g, W - mw - 4, 3, mw, SH - 6, 6, vals.muted ? '#402a06' : C.panel2); txt(g, vals.muted ? 'MUTED' : 'MUTE', W - mw - 4, 3, mw, SH - 6, vals.muted ? C.warn : C.text, 12, 'center');
+  // nav
+  const tabs = [...lay.pages.map((p, i) => p.name || `Page ${i + 1}`), ...(lay.relaysPage !== false && cat.relays.length ? ['Relays'] : []), 'Setup'];
+  g.fillStyle = C.panel; g.fillRect(0, H - NH, W, NH); g.fillStyle = C.line; g.fillRect(0, H - NH, W, 1);
+  const tw = W / tabs.length;
+  tabs.forEach((t, i) => { if (i === page) { rr(g, i * tw + 3, H - NH + 5, tw - 6, NH - 10, 8, C.panel2); g.fillStyle = C.accent; g.fillRect(i * tw + 10, H - 6, tw - 20, 3); } txt(g, t, i * tw + 4, H - NH, tw - 8, NH, i === page ? C.text : C.muted, small ? 10 : 12, 'center'); });
+  // page
+  const p = lay.pages[page]; if (!p) return;
+  const pad = 4, gap = 4, cy = SH, ch = H - SH - NH, cw = (W - 2 * pad - gap * (p.cols - 1)) / p.cols, rh = (ch - 2 * pad - gap * (p.rows - 1)) / p.rows;
+  const cells = place(p);
+  p.tiles.forEach((t, i) => {
+    const c = cells[i]; if (!c) return;
+    const x = pad + c.col * (cw + gap), y = cy + pad + c.row * (rh + gap), w = c.cs * cw + (c.cs - 1) * gap, hh = c.rs * rh + (c.rs - 1) * gap;
+    if (t.ref.startsWith('r:')) {
+      const ri = cat.relays.findIndex(r => r.ref === t.ref), v = ri >= 0 ? vals.v[cat.sensors.length + ri] : null, on = v && v[1] === 2 && v[0] > 0.5;
+      rr(g, x, y, w, hh, 8, on ? C.on : C.panel);
+      txt(g, ri >= 0 ? cat.relays[ri].name : 'relay not found', x + 8, y + 4, w - 16, Math.min(hh / 3, 22), on ? C.text : C.muted, 12);
+      txt(g, v && v[1] !== 2 ? STS[v[1]] : on ? 'ON' : 'OFF', x + 8, y + hh / 3, w - 16, hh * 2 / 3 - 6, on ? C.text : C.muted, Math.min(hh / 2, 40), 'center');
+      return;
+    }
+    const si = cat.sensors.findIndex(s => s.id === t.ref), s = cat.sensors[si];
+    if (!s) { rr(g, x, y, w, hh, 8, C.panel); txt(g, 'not on the main board', x, y, w, hh, C.muted, 11, 'center'); return; }
+    const v = vals.v[si] || [null, 1, 0], lvl = v[2] || 0, val = fmt(s, v), vc = v[1] !== 2 ? C.muted : lvl ? LVC[lvl] : C.text, fc = lvl ? LVC[lvl] : C.accent;
+    const label = t.l || s.label, lh = Math.max(14, Math.min(hh / 5, small ? 16 : 22));
+    rr(g, x, y, w, hh, 8, lvl ? LVBG[lvl] : C.panel);
+    const f = frac(s, v[1] === 2 ? v[0] : null);
+    if (t.w === 'dial') {
+      const r0 = Math.min(w / 2 - 6, (hh - lh - 6) / 2 + (hh - lh) / 10), cx = x + w / 2, cyy = y + 4 + r0 + 2, th = Math.max(6, r0 / 5), a0 = 0.75 * Math.PI, sweep = 1.5 * Math.PI;
+      const arc = (r1, r2, a, b, c) => { g.strokeStyle = c; g.lineWidth = r1 - r2; g.beginPath(); g.arc(cx, cyy, (r1 + r2) / 2, a0 + sweep * a, a0 + sweep * b); g.stroke(); };
+      arc(r0, r0 - th, 0, 1, C.panel2); zones(s).forEach(z => arc(r0, r0 - 3, z[0], z[1], z[2])); if (f > 0.004) arc(r0 - 4, r0 - th, 0, f, fc);
+      const iw = (r0 - th) * 1.25, ih = (r0 - th) * 0.8;
+      txt(g, val, cx - iw / 2, cyy - ih / 2 - ih / 8, iw, ih * 0.8, vc, ih * 0.8, 'center', true, true);
+      txt(g, s.unit, cx - iw / 2, cyy + ih / 2 - ih / 8, iw, Math.max(12, ih / 3), C.muted, 11, 'center', false);
+      txt(g, label, x + 4, y + hh - lh - 2, w - 8, lh, lvl ? LVC[lvl] : C.muted, lh * 0.7, 'center');
+    } else if (t.w === 'bar' || t.w === 'marker') {
+      const barH = t.w === 'bar' ? Math.max(6, Math.min(hh / 5, 16)) : Math.max(10, Math.min(hh / 4, 20)), by = y + hh - barH - 8, bx = x + 10, bw = w - 20, top = y + 4, avail = by - top - 4;
+      txt(g, label, x + 10, top, w / 3, Math.min(avail, lh + 4), lvl ? LVC[lvl] : C.muted, lh * 0.7);
+      txt(g, val, x + w / 3, top, w * 2 / 3 - 40, avail, vc, avail * 0.85, 'right', true, true);
+      txt(g, s.unit, x + w - 38, top, 28, avail, C.muted, 11, 'right', false);
+      if (t.w === 'bar') { rr(g, bx, by, bw, barH, barH / 2, C.panel2); if (f > 0) rr(g, bx, by, Math.max(barH, bw * f), barH, barH / 2, fc); zones(s).forEach(z => { g.fillStyle = z[2]; g.fillRect(bx + bw * z[0], by + barH + 2, Math.max(1, bw * (z[1] - z[0])), 3); }); }
+      else {
+        const ly = by + barH / 2; g.fillStyle = C.line; g.fillRect(bx, ly, bw, 1); zones(s).forEach(z => { g.fillStyle = z[2]; g.fillRect(bx + bw * z[0], ly - 1, Math.max(1, bw * (z[1] - z[0])), 3); });
+        [['wl', C.warn], ['wh', C.warn], ['cl', C.crit], ['ch', C.crit]].forEach(([k, c]) => { if (s[k] != null) { g.fillStyle = c; g.fillRect(bx + bw * frac(s, s[k]) - 1, by, 3, barH); } });
+        if (v[1] === 2) { const nx = bx + bw * f; g.fillStyle = fc; g.beginPath(); g.moveTo(nx - barH / 2, by - 2); g.lineTo(nx + barH / 2, by - 2); g.lineTo(nx, by + barH - 2); g.fill(); }
+      }
+    } else {
+      txt(g, label, x + 8, y + 4, w / 2, lh, lvl ? LVC[lvl] : C.muted, lh * 0.7);
+      txt(g, s.unit, x + w / 2, y + 4, w / 2 - 8, lh, C.muted, 11, 'right', false);
+      txt(g, val, x + 6, y + lh + 6, w - 12, hh - lh - 12, vc, (hh - lh - 12) * 0.85, 'center', true, true);
+    }
+  });
+}
+// ---------------------------------------------------------------- settings / status / firmware
+async function loadSettings() {
+  const s = await api('/api/settings');
+  $('#sName').value = s.name; $('#sBright').value = s.brightness; $('#sRot').value = s.rotation; $('#sDim').value = s.dimAfterMin; $('#sPanel').value = s.panel;
+  $('#sWifi').checked = s.wifi; $('#sSsid').value = s.mainSsid;
+  $('#tXmin').value = s.touch.xMin; $('#tXmax').value = s.touch.xMax; $('#tYmin').value = s.touch.yMin; $('#tYmax').value = s.touch.yMax;
+  $('#tSwap').checked = s.touch.swapXY; $('#tFx').checked = s.touch.flipX; $('#tFy').checked = s.touch.flipY;
+}
+$('#sSave').onclick = async () => {
+  const b = { name: $('#sName').value, brightness: +$('#sBright').value, rotation: +$('#sRot').value, dimAfterMin: +$('#sDim').value, panel: $('#sPanel').value,
+    wifi: $('#sWifi').checked, mainSsid: $('#sSsid').value, mainPass: $('#sMpass').value, mainAdmin: $('#sMadmin').value, apPass: $('#sAppass').value, adminPass: $('#sAdmin').value,
+    touch: { xMin: +$('#tXmin').value, xMax: +$('#tXmax').value, yMin: +$('#tYmin').value, yMax: +$('#tYmax').value, swapXY: $('#tSwap').checked, flipX: $('#tFx').checked, flipY: $('#tFy').checked } };
+  try { toast((await api('/api/settings', b)).message + (b.panel !== undefined ? ' (panel / name changes apply after a restart)' : '')); loadSettings(); loadState(); } catch (e) { toast(e.message, true); }
+};
+function renderStatus() {
+  const n = st.net || {}, e = n.espnow || {}, w = n.wifi || {}, a = n.ap || {};
+  const tiles = [['Link now', n.link === 'espnow' ? 'ESP-NOW' : n.link === 'wifi' ? 'Wi-Fi (fallback)' : 'none', ''],
+    ['ESP-NOW', e.paired ? `paired, board ${e.id}` : 'not paired', e.paired ? (e.up ? 'linked' : e.inRange ? 'main board in range' : 'searching…') + `, channel ${e.channel}${e.encrypted ? ', encrypted' : ''}` : 'press Accept on the main board\'s Boards page'],
+    ['Main board Wi-Fi', w.connected ? `${w.ssid}, ${w.ip}` : w.enabled ? `joining ${w.ssid}…` : 'off', w.connected ? `${w.rssi} dBm` : ''],
+    ['Own access point', a.name, `http://${a.ip}/, ${a.clients} connected`],
+    ['Main board', st.main || '–', st.mainFirmware || ''], ['Screen', `${st.profile}, ${st.width}×${st.height}`, `brightness ${st.brightness}%`],
+    ['Firmware', st.firmware, `${st.chip}, up ${Math.round(st.uptimeS / 60)} min`], ['Memory', `${Math.round(st.heap / 1024)} KB free`, st.psram ? `PSRAM ${Math.round(st.psram / 1024)} KB free` : 'no PSRAM']];
+  $('#kv').replaceChildren(...tiles.map(([k, v, s]) => h('div', {}, h('span', {}, k), h('b', {}, v), h('span', {}, s))));
+}
+$('#ident').onclick = async () => { try { toast((await api('/api/identify', {})).message); } catch (e) { toast(e.message, true); } };
+$('#reboot').onclick = async () => { if (!confirm('Restart the display?')) return; try { toast((await api('/api/reboot', {})).message); } catch (e) { toast(e.message, true); } };
+$('#fwSend').onclick = async () => {
+  const f = $('#fwFile').files[0]; if (!f) return toast('Choose the firmware file first', true);
+  if (/full-flash/i.test(f.name)) return toast('That is the USB image; choose the …-firmware.bin file', true);
+  $('#fwProg').textContent = 'Uploading…';
+  try { toast((await api('/api/update', f, true)).message); $('#fwProg').textContent = 'Done: reconnect in about 20 s'; } catch (e) { toast(e.message, true); $('#fwProg').textContent = ''; }
+};
+// ---------------------------------------------------------------- tabs, start
+let tab = 'layout';
+document.querySelectorAll('nav a').forEach(a => a.onclick = () => {
+  tab = a.dataset.t; document.querySelectorAll('nav a').forEach(x => x.classList.toggle('on', x === a));
+  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 't-' + tab));
+  if (tab === 'settings') loadSettings().catch(e => toast(e.message, true));
+  if (tab === 'status') renderStatus();
+});
+bindEditor();
+(async () => {
+  try { await loadState(); await loadCatalog(); await loadLayout(); await loadValues(); } catch (e) { toast(e.message, true); }
+  setInterval(loadValues, 1000);
+  setInterval(() => loadState().then(() => { if (tab === 'status') renderStatus(); }).catch(() => {}), 3000);
+  setInterval(async () => { if (tab !== 'settings') return; try { const t = await api('/api/touch'); if (t.touched) $('#rawTouch').textContent = `raw x ${t.x}, y ${t.y}`; } catch (e) {} }, 300);
+})();
+</script>
+</body>
+</html>

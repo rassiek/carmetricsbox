@@ -145,6 +145,15 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await p.locator('#boards').innerText()).includes('42%'), 'firmware update of another board: progress shown');
   await p.locator('#boards button', { hasText: 'Fan: OFF' }).click(); await p.waitForTimeout(2500);
   check((await p.locator('#boards').innerText()).includes('Fan: ON'), 'remote relay switched from the Boards page');
+  const bt = await p.locator('#boards').innerText();
+  check(bt.includes('touch display') && bt.includes('9 sensors and 2 relays') && bt.includes('http://192.168.4.3/'), 'touch display card: list sent, link to its layout editor');
+  check((await p.locator('#linkKv').innerText()).includes('2 of 2 online'), 'link summary panel');
+  await p.locator('#boards .panel').first().locator('button', { hasText: 'Identify' }).click(); await p.waitForTimeout(600);
+  check((await toast()).includes('Sent'), 'identify command sent to a board', await toast());
+  p.once('dialog', dlg => dlg.accept('Dash 2'));
+  await p.locator('#boards .panel').nth(1).locator('button', { hasText: 'Rename' }).click(); await p.waitForTimeout(2600);
+  check((await p.locator('#boards').innerText()).includes('Dash 2'), 'board renamed');
+  check(await p.locator('nav a', { hasText: 'Layout' }).count() > 0, 'Layout tab in the menu');
   await p.locator('#found input').fill('Trailer'); await p.locator('#found button', { hasText: 'Accept' }).click(); await p.waitForTimeout(800);
   check((await toast()).includes('Paired as board 2'), 'board accepted', await toast());
   await p.screenshot({ path: `${OUT}/boards.png`, fullPage: true });
