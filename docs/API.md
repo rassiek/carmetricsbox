@@ -75,7 +75,7 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `GET /points?meta=1` | adds `name`, `label`, `unit`, `decimals`, `min`, `max`, `limits` `{wl,wh,cl,ch}`, `kind` (`sensor` / `actuator` / `system`), `board` |
 | `GET /points?a=local.coolant_temp,b1.oil_pressure` | only those |
 | `GET /points/{address}` | one point with meta |
-| `GET /points/{address}/history?minutes=30&step=5` | `{"step":5,"from":<epoch or t>,"v":[...]}` (nulls where no data) |
+| `GET /history` | recent history of every sensor (streamed in pieces): `{"interval":5,"ageMs":..,"series":{"coolant_temp":[...]}}` |
 
 ### 2.3 Alerts
 
@@ -93,8 +93,8 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `POST /sensors?board=` | add one (body = settings). Returns it with its id |
 | `PATCH /sensors/{id}?board=` | change fields, e.g. `{"limits":{"wh":98}}` or `{"name":"Oil temp"}`. Scope `control` for limits, `admin` otherwise |
 | `DELETE /sensors/{id}?board=` | remove |
-| `GET /schema/sensors` | every sensor type: fields, units, ranges, choices, presets, which boards support it |
-| `POST /sensors/discover?board=` | start a scan; `GET /sensors/discover?board=` → `{"running":false,"i2c":[{"addr":"0x48","driver":"ads1115"}],"onewire":[{"address":"28FF…","tempC":21.5}],"analog":[{"source":"ads1115@0x48/0","volts":1.82}]}` |
+| `POST /sensors/discover` | start a scan of this board; `GET /sensors/discover` → `{"running":false,"i2c":[{"addr":"0x48","driver":"ads1115"}],"onewire":{"devices":[{"address":"28FF…","tempC":21.5,"assignedTo":""}]},"analog":[{"source":"ads1115@0x48/0","volts":1.82,"assignedTo":"oil_pressure"}]}`. Other boards: run it on their own page |
+| `POST /sensors/{id}/calibrate` `{"rpm":850}` | RPM sensor: pulses per revolution from the speed you see now |
 
 ### 2.5 Actuators
 
@@ -103,7 +103,6 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `GET /actuators?board=` | settings + state of each: `{"id":"fan","type":"pwm","state":{"duty":40,"by":"rule"}}` |
 | `POST`, `PATCH`, `DELETE /actuators/{id}?board=` | as sensors |
 | `POST /actuators/{id}/command?board=` | `{"on":true}`, `{"duty":60}`, `{"direction":"reverse","speed":30}`, `{"angle":45}`, `{"auto":true}` (back to its rule); optional `"forMinutes": 10` for a timed override. Scope `control` |
-| `GET /schema/actuators`, `GET /schema/rules` | types and their fields |
 
 ### 2.6 Boards (other boards and displays)
 
@@ -114,18 +113,19 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `PATCH /boards/{id}` `{"name":".."}` | rename |
 | `DELETE /boards/{id}` | forget |
 | `POST /boards/{id}/command` | `{"cmd":"identify"|"reboot"|"mute"|"resend","minutes":15}` |
-| `POST /boards/{id}/firmware` `{"source":"self"}` / `PUT /boards/firmware-file` (raw file body) then `{"source":"file"}` / `{"source":"cancel"}` | update another board; progress in `GET /boards/{id}` → `firmware` |
+| `POST /boards/{id}/firmware` `{"source":"self"}` / `PUT /boards/firmware-file` (raw file body) then `{"source":"file"}` / `{"source":"cancel"}` | update another board; progress in `GET /boards` |
+| `GET /displays/catalog`, `GET /displays/values`, `POST /displays/command` | what the touch displays use over Wi-Fi (same data as over ESP-NOW) |
 
 ### 2.7 Settings
 
 | Request | Reply / effect |
 |---|---|
-| `GET /settings` | all sections (passwords blank) |
-| `GET` / `PATCH /settings/{section}` | `ui` (names, units, theme, preset), `network`, `hardware` (profile, buses, OLED, RGB, buzzer, ignition, GPS), `alarms` (running detection, turbo timer), `data` (cloud, weather, altitude), `dashboard` (pages and tiles), `oled` (pages) |
-| `GET /schema/settings` | fields of every section |
+| `GET /settings` | all sections (passwords blank) + `rev` |
+| `GET` / `PATCH /settings/{section}` | `ui` (names, units, preset), `system` (network, passwords, pins, buses, OLED, status light, buzzer, ignition, GPS, running detection), `weather`, `cloud`, `turbo`, `layout` (dashboard pages and tiles, OLED pages), `blackbox`. PATCH merges: send only what changes; a blank password keeps the old one |
 | `GET /backup` / `POST /backup` | export / import everything (JSON) |
-| `POST /settings/reset` `{"keep":["network"]}` | back to defaults |
-| `GET /presets`, `POST /presets/apply` `{"preset":"boat"}` | presets (`docs/DESIGN.md` §7) |
+| `POST /settings/reset` `{"keep":["system"]}` | back to defaults (default: keep `system`) |
+| `POST /settings/restore` `{"slot":"previous"|"good"}` | one-step undo / the last settings that ran well |
+| `GET /presets`, `POST /presets/apply` `{"preset":"boat"}` | presets: JSON files in the web app (`web/presets/*.json`), merged into the settings (`docs/DESIGN.md` §7) |
 
 ### 2.8 Hardware and pins
 
@@ -133,7 +133,10 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 |---|---|
 | `GET /pins` | the board profile's pins with abilities, limits and what each is assigned to, plus warnings |
 | `POST /pins/{gpio}/test` `{"mode":"blink"}` / `{"mode":"read"}` | bench test: blink an output for 5 s / read an input (reply has the level) |
+| `GET /hardware/profiles` | board profiles for this chip, the current one and the detected one |
+| `POST /hardware/profile` `{"board":"relay_x8","applyPins":true}` | choose the board profile (optionally move pins to its defaults) |
 | `POST /hardware/status-light/test` `{"which":"builtin"|"external"}` | cycle red, green, blue |
+| `POST /hardware/altitude` `{"altitudeM":1661}` | sea-level pressure reference from a known altitude |
 
 ### 2.9 Network
 
@@ -142,14 +145,16 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `GET /network` | access point, joined network, IP, signal, saved networks, last scan results, join log |
 | `POST /network/scan` | scan now (results in `GET /network` a few seconds later) |
 | `POST /network/join` `{"ssid":"..","pass":".."}` | save and join |
-| `DELETE /network/saved/{ssid}` | forget a network |
+| `DELETE /network/saved/{ssid}` | forget a network (URL-encoded name) |
 
 ### 2.10 Events, firmware, keys
 
 | Request | Reply / effect |
 |---|---|
 | `GET /events` / `GET /events/{id}` / `DELETE /events` | black box: list / one event with the minute of data around it / clear |
-| `PUT /firmware?target=app` / `?target=webapp` | raw file body (`application/octet-stream`) → installs, restarts |
+| `GET /weather`, `POST /weather/refresh` | weather card data |
+| `GET /cloud`, `POST /cloud/flush`, `DELETE /cloud/backlog` | metrics upload status / send now / drop what is waiting |
+| `PUT /firmware` / `PUT /firmware?target=webapp` | raw file body (`application/octet-stream`) → installs, restarts |
 | `GET /keys`, `POST /keys` `{"name":"Grafana","scope":"read"}` (the key is shown once), `DELETE /keys/{id}` | API keys. Scope `admin` |
 
 ---
@@ -160,25 +165,25 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 
 ```json
 → {"type":"auth","key":"…"}                       (optional: control / admin over the socket)
-→ {"type":"subscribe","topics":["points","alerts","events","config"],"a":["local.coolant_temp"]}
-← {"type":"points","t":123456,"v":{"local.coolant_temp":[92.4,"ok","ok"]}}   (every second, changed points only after the first)
+← {"type":"hello","api":1,"firmware":"5.3.0","rev":12,"appName":"CarMetrics"}
+← {"type":"points","t":123456,"level":"ok","muted":false,"v":{"local.coolant_temp":[92.4,"ok","ok"]}}   (every second)
 ← {"type":"alerts","level":"crit","muted":false,"items":[...]}               (on change)
 ← {"type":"config","rev":"a1b2c3d4"}                                          (settings changed: reload what you show)
-→ {"type":"command","id":7,"path":"/actuators/fan/command","body":{"duty":60}}
+→ {"type":"command","id":7,"path":"/actuators/fan/command","body":{"duty":60}}   (this board; also "/alerts/mute")
 ← {"type":"ack","id":7,"ok":true}
 ```
 
 Server-Sent Events at `/api/v1/events-stream` carry the same `points` / `alerts` /
-`config` messages for clients without WebSocket.
+`config` messages (as the event names) for clients without WebSocket.
+When reading needs a key, send `{"type":"auth","key":"…"}` first.
 
 ---
 
 ## 4. Touch displays
 
 Over ESP-NOW nothing changes (catalog as settings, values each second, commands).
-Over Wi-Fi a display uses `GET /points?meta=1`, `GET /actuators`, the WebSocket
-and `POST /actuators/{id}/command`, `POST /alerts/mute`, `PATCH /sensors/{id}` with
-a key of scope `control`. The old `/api/v2/display/*` addresses are removed.
+Over Wi-Fi a display uses `GET /displays/catalog`, `GET /displays/values` and
+`POST /displays/command` (mute is open; actuators and limits need scope `control`).
 
 ---
 
@@ -207,10 +212,12 @@ curl -X PATCH -u admin:<password> -H "Content-Type: application/json" \
 | `/api/config`, `/api/config/sensors`, `/api/config/relays`, `/api/config/system`… | `/sensors`, `/actuators`, `/settings/{section}` |
 | `/api/relays/control`, `/api/v2/command` | `/actuators/{id}/command`, `/alerts/mute` |
 | `/api/v2/boards/*` | `/boards/*` |
-| `/api/v2/display/*` | `/points?meta=1`, WebSocket, `/actuators/{id}/command` |
+| `/api/v2/display/*` | `/displays/*` |
 | `/api/v2/wifi`, `/api/v2/wifi/search` | `/network`, `/network/scan`, `/network/join` |
 | `/api/blackbox*` | `/events*` |
 | `/api/update` (multipart) | `PUT /firmware` (raw body) |
+| `/api/history` | `/history` |
+| `/api/rpm/calibrate`, `/api/altitude/calibrate` | `/sensors/{id}/calibrate`, `/hardware/altitude` |
 | `/ws`, `/events` | `/api/v1/ws`, `/api/v1/events-stream` |
 
 The old addresses are removed in 5.3.0; the bundled web app and the touch display
