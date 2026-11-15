@@ -22,16 +22,17 @@ fi
 (cd "$ARD/hardware/espressif/esp32/tools" && python3 get.py > /dev/null)
 rm -rf "$ARD/hardware/espressif/esp32/tools/dist"   # downloaded archives, no longer needed
 
-echo "== ESP32 Arduino core $ESP32_CORE3_TAG (ESP32 + ESP32-S3 only, in $PREFIX/core3)"
+echo "== ESP32 Arduino core $ESP32_CORE3_TAG (ESP32, ESP32-S3, ESP32-C3, ESP32-C6, in $PREFIX/core3)"
 ARD3="$PREFIX/core3/Arduino"
 mkdir -p "$ARD3/hardware/espressif" "$PREFIX/core3/arduino15"
 if [ ! -d "$ARD3/hardware/espressif/esp32" ]; then
   git clone -q --depth 1 -b "$ESP32_CORE3_TAG" https://github.com/espressif/arduino-esp32.git "$ARD3/hardware/espressif/esp32"
 fi
 (cd "$ARD3/hardware/espressif/esp32/tools" && python3 get.py > /dev/null)
-# keep only what ESP32 / ESP32-S3 builds need (saves ~5 GB)
-(cd "$ARD3/hardware/espressif/esp32/tools" && rm -rf dist riscv32-esp-elf riscv32-esp-elf-gdb xtensa-esp-elf-gdb openocd-esp32 \
-   esp32-arduino-libs/esp32c* esp32-arduino-libs/esp32h* esp32-arduino-libs/esp32p* esp32-arduino-libs/esp32s2)
+# keep only what ESP32 / S3 / C3 / C6 builds need (saves ~4 GB); the RISC-V
+# compiler is for the C3 / C6 worker builds
+(cd "$ARD3/hardware/espressif/esp32/tools" && rm -rf dist riscv32-esp-elf-gdb xtensa-esp-elf-gdb openocd-esp32 \
+   esp32-arduino-libs/esp32c5 esp32-arduino-libs/esp32h* esp32-arduino-libs/esp32p* esp32-arduino-libs/esp32s2)
 ln -sfn "$ARD/libraries" "$ARD3/libraries"
 
 echo "== libraries"

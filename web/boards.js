@@ -15,8 +15,8 @@
       fw ? h('div', { class: 'row' }, [`Firmware ${fw.version}: ${fw.state}`, fw.state === 'sending' ? h('div', { class: 'progress' }, h('div', { style: `width:${fw.percent}%` })) : null,
         fw.state === 'sending' ? `${fw.percent} %` : null, fw.error ? h('span', { class: 'bad' }, fw.error) : null,
         ['offering', 'sending'].includes(fw.state) ? h('button', { class: 'small', onclick: () => act(() => api(`${q}/firmware`, { body: { source: 'cancel' } })) }, 'Cancel') : null]) : null,
-      b.sameChip ? h('button', { class: 'small', onclick: () => act(() => api(`${q}/firmware`, { body: { source: 'self' } })) }, `Send this board's firmware (${S.info.firmware})`) : h('span', { class: 'muted' }, `A ${b.chip}: needs its own file. `),
-      h('label', {}, 'Or send a firmware file (…-firmware.bin):'),
+      h('label', {}, b.role === 'display' ? `Send its firmware file (carmetrics-display-…-firmware.bin, ${b.chip}):`
+                                          : `Send its firmware file (carmetrics-worker-… or the relay board's …-firmware.bin, ${b.chip}):`),
       h('input', { type: 'file', accept: '.bin', onchange: async e => {
         const f = e.target.files[0]; if (!f) return;
         toast('Uploading…', false, 60000);

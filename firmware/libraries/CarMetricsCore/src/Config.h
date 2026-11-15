@@ -18,18 +18,27 @@
 // same label baked in (tools/build_web.py) and warns when the two don't match.
 // One version for every board type since 5.3 (docs/DESIGN.md section 1). The build
 // variant (which board family the file is for) is separate: CM_VARIANT.
-#define FW_VERSION "5.3.0-beta.2"
-#if defined(CM_RELAY_X8) && !defined(CM_VARIANT)
-#define CM_VARIANT "relay-x8"     // tools/cm.sh relayx8: starts as a relay worker on the ESP32 Relay X8
+#define FW_VERSION "5.4.0-beta.1"
+// Build variant (tools/cm.sh): which firmware and board this binary is for.
+#if !defined(CM_VARIANT) && defined(CM_RELAY_X8)
+#define CM_VARIANT "relay-x8"
+#elif !defined(CM_VARIANT) && defined(CM_KC868_A4)
+#define CM_VARIANT "kc868-a4"
+#elif !defined(CM_VARIANT) && defined(CM_T_RELAY)
+#define CM_VARIANT "t-relay"
+#elif !defined(CM_VARIANT) && defined(CM_WORKER_PLUS)
+#define CM_VARIANT "worker-s3"
+#elif !defined(CM_VARIANT) && defined(CM_WORKER) && defined(CONFIG_IDF_TARGET_ESP32C3)
+#define CM_VARIANT "worker-c3"
+#elif !defined(CM_VARIANT) && defined(CM_WORKER) && defined(CONFIG_IDF_TARGET_ESP32C6)
+#define CM_VARIANT "worker-c6"
+#elif !defined(CM_VARIANT) && defined(CM_WORKER)
+#define CM_VARIANT "worker-esp32"
+#elif !defined(CM_VARIANT) && defined(CM_V52)
+#define CM_VARIANT "main-s3"
 #endif
 #ifndef CM_VARIANT
-#ifdef CM_V52
-#define CM_VARIANT "s3-8mb"      // main board: ESP32-S3 with 8/16 MB + PSRAM (bigger buffers)
-#elif defined(CONFIG_IDF_TARGET_ESP32S3)
-#define CM_VARIANT "s3-4mb"
-#else
-#define CM_VARIANT "esp32"
-#endif
+#define CM_VARIANT "test"         // emulator / self-test builds
 #endif
 #define CONFIG_SCHEMA 2   // bumped when the stored layout changes; older configs are upgraded on load
 #define MAX_SENSORS 24
@@ -141,7 +150,7 @@ struct WifiNetwork { String ssid, pass; uint8_t priority = 5; };   // priority 1
 
 struct SystemConfig {
   String board = "auto";             // board profile id (see Board.cpp); "auto" = detect
-  String role = "main";              // main | sensor | relay | sensor_relay (extra boards, phase 3); change = reboot
+  String role = "main";              // main | worker: from the firmware (setFirmwareRole)
   bool boardEncrypt = false;
   bool canEnabled = false;           // CAN link (built-in controller + 3.3 V transceiver, e.g. SN65HVD230)
   int canTx = -1, canRx = -1;        // to the transceiver's D (TX) and R (RX) pins
@@ -289,6 +298,19 @@ BmpField bmpFieldFromStr(const String& s);
 const char* oledStyleToStr(OledStyle s);
 OledStyle oledStyleFromStr(const String& s);
 
+// "main" or "worker": set by the firmware first thing in setup(); every loaded or
+// imported configuration gets this role (it is not a setting any more).
+void setFirmwareRole(const char* role);
+extern String gFirmwareRole;
+// Every build carries a role tag ("main" or "worker") in its image, so a firmware file
+// can be checked before it is installed or sent to another board. Feed it the file in
+// pieces; role stays "" for files without a tag (5.3 and older, touch displays).
+struct RoleScan {
+  String role;
+  void feed(const uint8_t* d, size_t n);
+ private:
+  uint8_t m = 0, g = 0; char got[8] = {0};
+};
 void configDefaults(Config& c);                          // for the detected board
 void configDefaults(Config& c, const BoardProfile& b);
 void applyBoardPins(Config& c, const BoardProfile& b);   // move bus/output/sensor pins to the board defaults
@@ -326,7 +348,9 @@ bool validateConfig(const Config& c, String& err);
 // Persistence (NVS). Every save keeps the previous config ("prev") for a one-step
 // undo; after a healthy run the current config is also kept as "good" (used by safe mode).
 enum class CfgSlot : uint8_t { CURRENT, PREVIOUS, GOOD };
-bool loadConfig(Config& c, CfgSlot slot = CfgSlot::CURRENT);   // false = defaults were used
+bool loadConfig(Config& c, CfgSlot slot = CfgSlot::CURRENT);
+bool loadCustomBoard(String& json);          // custom board definition (Board::setCustom), "" = none
+bool saveCustomBoard(const String& json);    // "" removes it   // false = defaults were used
 bool saveConfig(const Config& c);
 bool hasConfigSlot(CfgSlot slot);
 bool markConfigGood();          // copy current -> good (only writes if different)

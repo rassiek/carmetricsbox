@@ -20,7 +20,6 @@ struct BoardFixed {     // parts soldered on the board
   int8_t rgb;           // built-in addressable RGB LED (WS2812), -1 none
   uint8_t nRelays; int8_t relays[8]; bool relaysActiveLow;
   uint8_t nInputs; int8_t inputs[4]; bool inputsActiveLow;   // opto-isolated inputs
-  const char* role;     // role a fresh board starts in: main | sensor | relay | sensor_relay
 };
 
 struct BoardProfile {
@@ -50,5 +49,12 @@ String pinList(uint64_t mask);
 // Any board of this firmware's chip: can the pin exist / drive an output? (checks for another board of the same chip)
 bool chipHasPin(int pin);
 bool chipCanOutput(int pin);              // "1-10, 12" style
+// Custom board (worker firmware only): a profile the user writes for a board that is not
+// built in. Same JSON as profileToJson (pin lists as arrays or "1-5, 12" text), id "custom".
+// Kept on its own in NVS; checked against this chip's GPIOs (flash pins can never be used).
+bool customAllowed();                       // worker firmware
+const BoardProfile* custom();               // nullptr when there is none
+bool setCustom(JsonVariantConst v, String& err);   // check, use and save (checks the settings in use against it)
+bool clearCustom(String& err);              // refused while the settings use it
 inline bool has(uint64_t mask, int pin) { return pin >= 0 && pin < 64 && (mask & CM_BIT(pin)); }
 }

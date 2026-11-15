@@ -10,6 +10,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 WEB = sys.argv[1] if len(sys.argv) > 1 else 'web'
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8099
+ROLE = sys.argv[3] if len(sys.argv) > 3 else 'main'   # main | worker (5.4 worker firmware)
 T0 = time.time()
 LOCK = threading.RLock()
 
@@ -32,7 +33,7 @@ CFG = {
         S('cabin_temp', 'Cabin', 'bmp', '°C', gaugeMax=50, bmpField='temperature'),
         S('intake_temp', 'Intake', 'ds18b20', '°C', gaugeMax=80, warnHigh=60, critHigh=70),
         S('altitude', 'Altitude', 'bmp', 'm', gaugeMax=3000, bmpField='altitude', decimals=0),
-        dict(S('b1_gearbox_temp', 'Engine bay Gearbox', 'remote', '°C', warnHigh=110), board=1, remoteId='gearbox_temp', remoteIndex=0),
+        dict(S('b1_gearbox_temp', 'Engine bay Gearbox', 'remote', '°C', warnHigh=110), board=1, remoteId='gearbox_temp', remoteIndex=0, mockSt='not_found'),
     ],
     'relays': [
         dict(id='fan', name='Fan', pin=13, type='pwm', mode='on_off', activeLow=False, defaultOn=False, blinkMs=500, enabled=True, safeState='off',
@@ -56,7 +57,16 @@ CFG = {
     'layout': {'tiles': [], 'oled': [], 'oledColumns': 0},
     'blackbox': {'enabled': True, 'keepEvents': 10},
 }
+if ROLE == 'worker':   # a pump board on its own: its own sensors and actuators only
+    CFG['ui'].update(machineName='Borehole', runningWord='pump', preset='')
+    CFG['sensors'] = [S('tank_temp', 'Tank', 'ds18b20', '°C', warnHigh=60, critHigh=70, oledLabel='TNK'),
+                      S('motor_temp', 'Motor', 'ds18b20', '°C', warnHigh=80, critHigh=95, mockSt='not_found'),
+                      S('line_pressure', 'Line pressure', 'adc', 'bar', gaugeMax=10, warnLow=1, pin=34)]
+    CFG['relays'] = [CFG['relays'][1]]
+    CFG['system'].update(role='worker', i2cSda=21, i2cScl=22, oledType='none', engineSensorId='')
 REV = [1]
+CUSTOM = [None]   # worker: custom board definition
+CORE_CAPS = ['sensors', 'actuators', 'pwm', 'discover', 'pins', 'keys']
 ACT = {'fan': {'value': 0, 'on': False, 'by': 'rule', 'manual': False}, 'lights': {'value': 0, 'on': False, 'by': 'manual', 'manual': False}}
 STATE = {'muted': False, 'level': 'ok'}
 KEYS = []
@@ -101,6 +111,7 @@ def points(meta=False, only=None):
         lv = level(s, v)
         if order[lv] > order[worst]: worst = lv
         x = {'a': addr(s), 'v': v, 'st': 'ok' if s['enabled'] else 'disabled', 'lvl': lv}
+        if s.get('mockSt') and s['enabled']: x.update(v=None, st=s['mockSt'], lvl='fault')
         if meta: x.update(kind='sensor', name=s['name'], label=s.get('oledLabel', ''), unit=s['unit'], decimals=s['decimals'], min=s['gaugeMin'], max=s['gaugeMax'],
                           board=f"b{s['board']}" if s['type'] == 'remote' else 'local',
                           limits={'wl': s.get('warnLow'), 'wh': s.get('warnHigh'), 'cl': s.get('critLow'), 'ch': s.get('critHigh')})
@@ -114,7 +125,7 @@ def points(meta=False, only=None):
     if only: items = [i for i in items if i['a'] in only]
     STATE['level'] = worst
     d = {'t': int(t * 1000), 'epoch': int(time.time()), 'level': worst, 'muted': STATE['muted'], 'running': True, 'rev': REV[0], 'items': items,
-         'turbo': {'phase': 'cooling', 'leftS': 42}}
+         'turbo': {'phase': 'cooling', 'leftS': 42} if ROLE == 'main' else None}
     return d
 
 def find(lst, id):
@@ -149,7 +160,9 @@ def route(m, path, q, body, scope):
     need = lambda s: None if scope >= s else (_ for _ in ()).throw(Err(401, 'password needed'))
     if m == 'GET' and path == 'info':
         return {'appName': CFG['ui']['appName'], 'machineName': CFG['ui']['machineName'], 'firmware': '5.3.0-beta.1', 'build': 'mock', 'variant': 's3-8mb',
-                'api': [1], 'protocol': 1, 'role': 'main', 'board': {'id': 'esp32s3_n16r8', 'name': 'ESP32-S3 N16R8'}, 'chip': 'esp32s3', 'capabilities': ['actuators', 'boards'],
+                'api': [1], 'protocol': 1, 'role': ROLE, 'board': {'id': 'esp32s3_n16r8', 'name': 'ESP32-S3 N16R8'} if ROLE == 'main' else {'id': 'esp32_devkit', 'name': 'ESP32 DevKit'},
+                'chip': 'esp32s3' if ROLE == 'main' else 'esp32',
+                'capabilities': CORE_CAPS + (['boards', 'displays', 'history', 'events', 'cloud', 'weather', 'presets'] if ROLE == 'main' else ['standalone', 'customBoard']),
                 'uptimeS': int(time.time() - T0), 'epoch': int(time.time()), 'hostname': 'carmetrics', 'ip': '192.168.1.50', 'apIp': '192.168.4.1'}
     if m == 'GET' and path == 'points':
         only = q.get('a', [''])[0]; return points(q.get('meta', ['0'])[0] == '1', only.split(',') if only else None)
@@ -202,6 +215,11 @@ def route(m, path, q, body, scope):
             elif 'direction' in body: st.update(value={'forward': 1, 'reverse': -1}.get(body['direction'], 0) * body.get('speed', 100), manual=True, by='manual')
             else: raise Err(400, 'Nothing to do')
             return ok('Done')
+    if ROLE == 'worker' and p[:1] in (['boards'], ['events'], ['history'], ['cloud'], ['weather'], ['presets']): raise Err(404, 'Not on a worker')
+    if ROLE == 'worker' and m == 'GET' and path == 'node':
+        return {'role': 'worker', 'link': {'type': 'espnow', 'ok': True, 'channel': 6, 'rx': 50, 'tx': 52, 'txFail': 0, 'queueDrops': 0}, 'firmware': '5.4.0-beta.1', 'chip': 'ESP32',
+                'node': {'paired': True, 'id': 3, 'linkUp': True, 'mainInRange': True, 'configRev': 7, 'encrypted': True}}
+    if ROLE == 'worker' and m == 'POST' and path == 'node/unpair': need(3); return ok('Forgot the main board: restarting')
     if m == 'GET' and path == 'boards':
         return {'role': 'main', 'link': {'type': 'espnow', 'channel': 6, 'ok': True, 'rx': 1200, 'tx': 1300, 'txFail': 2, 'queueDrops': 0}, 'found': FOUND, 'items': BOARDS}
     if p[:1] == ['boards'] and m != 'GET':
@@ -241,8 +259,31 @@ def route(m, path, q, body, scope):
         return {'board': 'esp32s3_n16r8', 'boardName': 'ESP32-S3 N16R8', 'chip': 'esp32s3', 'notes': '', 'pins': pins, 'warnings': []}
     if m == 'POST' and re.fullmatch(r'pins/\d+/test', path): return {'gpio': int(p[1]), 'level': 1, 'volts': 3.3} if body.get('mode') == 'read' else {'gpio': int(p[1]), 'seconds': 5}
     if m == 'GET' and path == 'hardware/profiles':
+        if ROLE == 'worker':
+            dev = {'id': 'esp32_devkit', 'name': 'ESP32 DevKit (WROOM-32, 4 MB)', 'chip': 'esp32', 'flashMB': 4, 'psramMB': 0, 'notes': 'GPIO34-39 are input only.',
+                   'valid': [0, 1, 2, 3, 4, 5] + list(range(12, 20)) + [21, 22, 23, 25, 26, 27] + list(range(32, 40)), 'output': [1, 2, 3, 4, 5, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33],
+                   'adc1': list(range(32, 40)), 'caution': [1, 2, 3, 5, 15], 'rtc': [0, 2, 4, 12, 13, 14, 15, 25, 26, 27] + list(range(32, 40)),
+                   'defaults': {'i2cSda': 21, 'i2cScl': 22, 'oneWirePin': 4, 'buzzerPin': 18, 'ledPin': 19}, 'fixed': {'relays': [], 'relaysActiveLow': False, 'inputs': [], 'inputsActiveLow': True}}
+            items = [dev] + ([CUSTOM[0]] if CUSTOM[0] else [])
+            cur = CUSTOM[0] if CFG['system']['board'] == 'custom' and CUSTOM[0] else dev
+            return {'chip': 'esp32', 'setting': CFG['system']['board'], 'detected': 'esp32_devkit', 'current': cur, 'items': items}
         prof = {'id': 'esp32s3_n16r8', 'name': 'ESP32-S3 N16R8 (16 MB flash, 8 MB PSRAM)', 'notes': 'Same pins as N8R8.'}
         return {'chip': 'esp32s3', 'setting': 'auto', 'detected': 'esp32s3_n16r8', 'current': prof, 'items': [prof, {'id': 'esp32s3_n8r8', 'name': 'ESP32-S3 DevKitC-1 N8R8', 'notes': ''}]}
+    if path == 'hardware/custom-board':
+        if ROLE != 'worker': raise Err(400 if m != 'GET' else 404, 'Custom boards are for worker firmware')
+        if m == 'GET':
+            if not CUSTOM[0]: raise Err(404, 'No custom board defined')
+            return CUSTOM[0]
+        need(3)
+        if m == 'DELETE':
+            if CFG['system']['board'] == 'custom': raise Err(400, 'The board in use: choose another board type first')
+            CUSTOM[0] = None; return ok('Board definition removed')
+        if not (body.get('name') or '').strip(): raise Err(400, 'name: 1-60 characters')
+        rng = lambda t: [] if not t else [i for x in str(t).split(',') if x.strip() for i in (range(int(x.split('-')[0]), int(x.split('-')[1]) + 1) if '-' in x else [int(x)])]
+        bad = [g for g in rng(body.get('valid')) if 6 <= g <= 11]
+        if bad: raise Err(400, f"valid: GPIO {bad[0]} can't be used on esp32 (flash, PSRAM or missing)")
+        CUSTOM[0] = dict(body, id='custom', chip='esp32', valid=rng(body.get('valid')), output=rng(body.get('output')), adc1=rng(body.get('adc1')), rtc=rng(body.get('rtc')), caution=rng(body.get('caution')))
+        return ok('Board definition saved: choose "custom" as the board type to use it')
     if m == 'GET' and path == 'keys': need(3); return {'items': KEYS}
     if m == 'POST' and path == 'keys':
         need(3); KEYS.append({'id': '%04x' % random.randint(0, 65535), 'name': body['name'], 'scope': body['scope']}); return ok('Copy the key now', key='cm_' + '%032x' % random.getrandbits(128))

@@ -1,0 +1,10 @@
+# CarMetrics worker (5.4), 4 MB: two 1.875 MB firmware slots, no file system (the
+# web app is inside the firmware; workers keep no recordings). "cfg" (settings)
+# and the crash dump sit where the 5.3 layout had them, so settings survive.
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x5000
+otadata,  data, ota,     0xE000,   0x2000
+app0,     app,  ota_0,   0x10000,  0x1E0000
+app1,     app,  ota_1,   0x1F0000, 0x1E0000
+cfg,      data, nvs,     0x3E0000, 0x10000
+coredump, data, coredump,0x3F0000, 0x10000

@@ -45,7 +45,6 @@ String actuatorCommand(int id, int index, JsonVariantConst body);   // body as R
 
 // Firmware for another board, sent over the link: this board's own firmware
 // (same chip), or a file uploaded into this board's spare firmware slot.
-String firmwareFromSelf(int id);
 bool uploadChunk(size_t index, const uint8_t* data, size_t len, bool final, String& err);
 String firmwareFromUpload(int id);
 String firmwareCancel(int id);

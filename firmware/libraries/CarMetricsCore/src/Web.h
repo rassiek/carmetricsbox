@@ -28,6 +28,12 @@ struct Remote {
   String (*command)(int board, int index, JsonVariantConst body);          // actuator command
 };
 
+// The web app, built into the firmware (WebApp.h, made by tools/build_web.py)
+struct File { const char* path; const char* type; const uint8_t* data; size_t len; bool gz; };
+const File* file(const String& path);                // "/index.html", "/presets/boat.json"; nullptr if none
+size_t fileCount();
+const File& fileAt(size_t i);
+
 void addRoutes(const Route* routes, size_t count);   // before begin()
 void setRemote(const Remote* r);
 void setInfo(void (*fn)(JsonObject info));           // adds "role" and capabilities to GET /info

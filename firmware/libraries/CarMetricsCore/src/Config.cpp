@@ -1,5 +1,7 @@
 #include "Config.h"
 #include "Board.h"
+#include "Pwm.h"
+#include "State.h"
 #include <Preferences.h>
 #include <nvs_flash.h>
 #include <map>
@@ -163,6 +165,31 @@ void defaultRelays(std::vector<RelayConfig>& v, const BoardProfile& b) {
   v.push_back(r1); v.push_back(r2);
 }
 
+String gFirmwareRole = "main";
+// The build's role tag (see RoleScan): worker builds are compiled with -DCM_WORKER.
+#ifdef CM_WORKER
+static const char kRoleTag[] = "CMROLE:worker";
+#else
+static const char kRoleTag[] = "CMROLE:main";
+#endif
+void setFirmwareRole(const char* role) {
+  gFirmwareRole = role; gConfig.sys.role = role;
+  if (strcmp(role, kRoleTag + 7)) Serial.printf("[cfg] role %s set on a %s build\n", role, kRoleTag + 7);
+}
+
+void RoleScan::feed(const uint8_t* d, size_t n) {
+  static const char pat[] = "CMROLE:";
+  for (size_t i = 0; i < n && !role.length(); i++) {
+    char c = (char)d[i];
+    if (m < 7) { m = c == pat[m] ? m + 1 : (c == 'C' ? 1 : 0); continue; }
+    if (c >= 'a' && c <= 'z' && g < 7) { got[g++] = c; continue; }
+    got[g] = 0;
+    if (!strcmp(got, "main") || !strcmp(got, "worker")) role = got;
+    m = g = 0;
+    if (c == 'C') m = 1;
+  }
+}
+
 void configDefaults(Config& c) { configDefaults(c, Board::detected()); }
 
 static void sysPins(SystemConfig& s, const BoardProfile& b) {
@@ -178,9 +205,9 @@ void configDefaults(Config& c, const BoardProfile& b) {
   WeatherTown nbo; nbo.name = "Nairobi"; nbo.lat = -1.2864f; nbo.lon = 36.8172f;
   c.weather.towns.push_back(nbo);
   c.cloud = CloudConfig();
-  c.sys.role = b.fixed.role;
-  if (strcmp(b.fixed.role, "main") == 0) defaultSensors(c.sensors, b);
-  else { c.sensors.clear(); c.sys.engineSensorId = ""; }   // worker boards get their sensors from the main board
+  c.sys.role = gFirmwareRole;
+  if (c.sys.role == "main") defaultSensors(c.sensors, b);
+  else { c.sensors.clear(); c.sys.engineSensorId = ""; }   // a worker starts empty: its sensors come from the main board or its own page
   defaultRelays(c.relays, b);
 }
 
@@ -480,12 +507,12 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   JsonObjectConst o = v.as<JsonObjectConst>();
   s.board = getS(o, "board", s.board); s.board.trim();
   if (s.board != "auto" && !Board::find(s.board)) { err = "Unknown board '" + s.board + "' for this firmware (" + Board::chip() + ")"; return false; }
-  s.role = getS(o, "role", s.role); s.role.trim();
+  s.role = gFirmwareRole;   // decided by the firmware (main or worker), not a setting
   s.boardEncrypt = getB(o, "boardEncrypt", s.boardEncrypt);
   s.canEnabled = getB(o, "canEnabled", s.canEnabled); s.canTx = getI(o, "canTx", s.canTx); s.canRx = getI(o, "canRx", s.canRx);
   s.canKbps = getI(o, "canKbps", s.canKbps);
   if (s.canKbps != 125 && s.canKbps != 250 && s.canKbps != 500 && s.canKbps != 1000) { err = "CAN speed must be 125, 250, 500 or 1000 kbit/s"; return false; }
-  if (s.role != "main" && s.role != "sensor" && s.role != "relay" && s.role != "sensor_relay") { err = "Unknown board role '" + s.role + "'"; return false; }
+
   s.apSsid = getS(o, "apSsid", s.apSsid);
   String p = getS(o, "apPass", ""); if (p.length()) s.apPass = p;
   if (o["networks"].is<JsonArrayConst>()) {
@@ -874,7 +901,7 @@ bool validateConfig(const Config& c, String& err) {
   int pwmCount = 0;
   for (auto& r : c.relays) if (r.enabled && r.type != ActType::RELAY) pwmCount += r.type == ActType::HBRIDGE ? 2 : 1;
   if (s.rgbExternal) pwmCount += 3;
-  if (pwmCount > 8) { err = "At most 8 PWM channels (PWM / motor / servo outputs and the external RGB light together)"; return false; }
+  if (pwmCount > CM_PWM_MAX) { err = "At most " + String(CM_PWM_MAX) + " PWM channels on this chip (PWM / motor / servo outputs and the external RGB light together)"; return false; }
   if (s.rgbExternal) {
     if (s.rgbR < 0 || s.rgbG < 0 || s.rgbB < 0) { err = "RGB light: choose the red, green and blue pins"; return false; }
     if (!needOut(s.rgbR, "RGB light red") || !needOut(s.rgbG, "RGB light green") || !needOut(s.rgbB, "RGB light blue")) return false;
@@ -923,6 +950,23 @@ static String readSlot(Preferences& prefs, const char* key) {
   prefs.getBytes(key, buf.get(), len);
   buf[len] = 0;
   return String(buf.get());
+}
+
+// Custom board definition (workers): its own key, so a settings reset or restore keeps it.
+bool loadCustomBoard(String& json) {
+  Preferences prefs;
+  if (!initCfgPartition() || !prefs.begin(NVS_NS, true, NVS_PART)) return false;
+  json = readSlot(prefs, "board");
+  prefs.end();
+  return json.length() > 0;
+}
+bool saveCustomBoard(const String& json) {
+  Preferences prefs;
+  if (!initCfgPartition() || !prefs.begin(NVS_NS, false, NVS_PART)) return false;
+  bool ok = json.length() ? prefs.putBytes("board", json.c_str(), json.length()) == json.length() : prefs.remove("board");
+  prefs.end();
+  if (ok) sWrites++;
+  return ok;
 }
 
 bool hasConfigSlot(CfgSlot slot) {

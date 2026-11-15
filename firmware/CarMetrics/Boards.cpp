@@ -52,7 +52,7 @@ uint32_t lastDisplayPush = 0;
 // (version string at +16) right after the first segment header, at 32.
 // Main board: an image for another board, uploaded into this board's spare
 // firmware slot (raw: no boot change; that slot's old "previous firmware" is lost).
-struct Uploaded { const esp_partition_t* part = nullptr; uint32_t size = 0, crc = 0; uint8_t chip = 0; String version; bool ok = false; String error; } upload;
+struct Uploaded { const esp_partition_t* part = nullptr; uint32_t size = 0, crc = 0; uint8_t chip = 0; String version; bool ok = false; String error; RoleScan roles; } upload;
 
 struct PointName { String id, name, unit; uint8_t decimals; bool relay; };
 struct Share { String json; std::vector<PointName> names; };
@@ -538,26 +538,6 @@ String Boards::setShareLocked(int id, JsonVariantConst sensors, JsonVariantConst
 }
 
 // ---------------------------------------------------------------- firmware for other boards
-String Boards::firmwareFromSelf(int id) {
-  if (!mainS) return "Only on the main board";
-  StateLock lk;
-  const BoardInfo* b = id >= 1 && id <= MAX_BOARD_ID ? mainS->board((uint8_t)id) : nullptr;
-  if (!b) return "Unknown board";
-  if (b->chip != myChip()) return String("That board is an ") + chipName(b->chip) + ": upload a firmware file for it instead";
-  const esp_partition_t* run = esp_ota_get_running_partition();
-  uint32_t size = ESP.getSketchSize();
-  if (!run || !size) return "Can't read this board's firmware";
-  uint8_t buf[512]; uint32_t crc = 0;
-  for (uint32_t off = 0; off < size; off += sizeof(buf)) {
-    size_t n = std::min<uint32_t>(sizeof(buf), size - off);
-    if (esp_partition_read(run, off, buf, n) != ESP_OK) return "Can't read this board's firmware";
-    crc = crc32(buf, n, crc);
-  }
-  mainS->startFirmware((uint8_t)id, size, crc, myChip(), FW_VERSION,
-    [run](uint32_t off, uint8_t* out, size_t len) { return esp_partition_read(run, off, out, len) == ESP_OK; });
-  return "";
-}
-
 bool Boards::uploadChunk(size_t index, const uint8_t* data, size_t len, bool final, String& err) {
   if (!mainS) { err = "Only on the main board"; return false; }
   if (index == 0) {
@@ -575,6 +555,7 @@ bool Boards::uploadChunk(size_t index, const uint8_t* data, size_t len, bool fin
     if (esp_partition_erase_range(upload.part, sec, 4096) != ESP_OK) { err = "Erase failed"; upload.part = nullptr; return false; }
   if (esp_partition_write(upload.part, index, data, len) != ESP_OK) { err = "Write failed"; upload.part = nullptr; return false; }
   upload.crc = crc32(data, len, upload.crc);
+  upload.roles.feed(data, len);
   upload.size = index + len;
   if (final) upload.ok = true;
   return true;
@@ -587,6 +568,9 @@ String Boards::firmwareFromUpload(int id) {
   if (!b) return "Unknown board";
   if (!upload.ok || !upload.part) return "No firmware file uploaded";
   if (upload.chip != b->chip) return String("That file is for an ") + chipName(upload.chip) + ", the board is an " + chipName(b->chip);
+  // 5.4: the main firmware never goes to another board; worker files never to a touch display.
+  if (upload.roles.role == "main") return "That is the main board firmware: choose the board's own file (carmetrics-worker-…, relay board or display)";
+  if (upload.roles.role == "worker" && b->role == ROLE_DISPLAY) return "That is a worker firmware: a display needs carmetrics-display-…-firmware.bin";
   const esp_partition_t* part = upload.part;
   mainS->startFirmware((uint8_t)id, upload.size, upload.crc, upload.chip, upload.version.c_str(),
     [part](uint32_t off, uint8_t* out, size_t len) { return esp_partition_read(part, off, out, len) == ESP_OK; });

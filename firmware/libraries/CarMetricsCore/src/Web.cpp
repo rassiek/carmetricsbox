@@ -11,8 +11,9 @@
 #include "Pins.h"
 #include "Discover.h"
 #include "Route.h"
+#include "History.h"
+#include "WebApp.h"
 #include <ESPAsyncWebServer.h>
-#include <LittleFS.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <sys/time.h>
@@ -417,6 +418,15 @@ void hPoint(Ctx& c) {
   if (d["items"].size() == 0) { sendError(c.req, 404, "No point '" + c.p[0] + "'"); return; }
   JsonDocument one; one.set(d["items"][0]); sendJson(c.req, 200, one);
 }
+void hHistory(Ctx& c) {
+  std::shared_ptr<History::Reader> rd;
+  { StateLock lk; rd = std::make_shared<History::Reader>(); }
+  AsyncWebServerResponse* res = c.req->beginChunkedResponse("application/json",
+    [rd](uint8_t* buf, size_t max, size_t) -> size_t { return rd->read(buf, max); });
+  res->addHeader("Cache-Control", "no-store");
+  c.req->send(res);
+}
+
 void hAlerts(Ctx& c) { JsonDocument d; { StateLock lk; alertsToJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
 void hMute(Ctx& c) {
   int m = c.body["minutes"] | 15;
@@ -538,6 +548,21 @@ void hProfileSet(Ctx& c) {   // {"board":"relay_x8","applyPins":true}
     return true;
   }, applyPins ? "Board saved, pins moved to its defaults" : "Board saved");
 }
+// Custom board definition (worker firmware): GET shows it (404 none), POST checks and saves, DELETE removes.
+void hCustomGet(Ctx& c) {
+  JsonDocument d;
+  const BoardProfile* p = Board::custom();
+  if (!p) { sendError(c.req, 404, Board::customAllowed() ? "No custom board defined" : "Custom boards are for worker firmware"); return; }
+  { StateLock lk; Board::profileToJson(*p, d.to<JsonObject>()); }
+  sendJson(c.req, 200, d);
+}
+void hCustomSet(Ctx& c) {
+  String err;
+  if (!Board::setCustom(c.body, err)) { sendError(c.req, 400, err); return; }
+  bool inUse; { StateLock lk; inUse = gConfig.sys.board == "custom"; }
+  sendOk(c.req, inUse ? "Board definition saved and in use" : "Board definition saved: choose \"custom\" as the board type to use it");
+}
+void hCustomDelete(Ctx& c) { String err; sendResult(c.req, Board::clearCustom(err) ? String() : err, "Board definition removed"); }
 void hNetwork(Ctx& c) { JsonDocument d; { StateLock lk; WifiMgr::toJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
 void hScan(Ctx& c) { WifiMgr::searchNow(); sendOk(c.req, "Searching for networks", 202); }
 void hJoin(Ctx& c) {
@@ -572,10 +597,10 @@ void hKeyAdd(Ctx& c) {
 void hKeyDelete(Ctx& c) { if (Keys::remove(c.p[0])) sendOk(c.req, "Key deleted"); else sendError(c.req, 404, "No such key"); }
 
 // ---- raw uploads (body streamed straight to flash, never held in RAM)
-struct Upload { bool active = false, ok = false; String err; };
+struct Upload { bool active = false, ok = false; String err; RoleScan roles; };
 Upload up;
 void hFirmwareDone(Ctx& c) {
-  if (!up.ok) { { StateLock lk; gSys.otaProgress = -1; } if (!LittleFS.begin()) LittleFS.begin(true); sendError(c.req, 400, "Update failed: " + up.err); return; }
+  if (!up.ok) { { StateLock lk; gSys.otaProgress = -1; } sendError(c.req, 400, "Update failed: " + up.err); return; }
   { StateLock lk; gSys.otaProgress = 100; }
   sendOk(c.req, "Installed: restarting");
   requestReboot(1500);
@@ -594,6 +619,7 @@ const Route kRoutes[] = {
   {HTTP_POST, "system/time", SCOPE_READ, hTime, nullptr},
   {HTTP_GET, "points", SCOPE_READ, hPoints, nullptr},
   {HTTP_GET, "points/*", SCOPE_READ, hPoint, nullptr},
+  {HTTP_GET, "history", SCOPE_READ, hHistory, nullptr},   // empty unless the firmware keeps history ("history" capability)
   {HTTP_GET, "alerts", SCOPE_READ, hAlerts, nullptr},
   {HTTP_POST, "alerts/mute", SCOPE_READ, hMute, nullptr},   // one tap away, like the button on the box
   {HTTP_GET, "sensors", SCOPE_READ, hSensors, nullptr},
@@ -621,6 +647,9 @@ const Route kRoutes[] = {
   {HTTP_POST, "pins/*/test", SCOPE_ADMIN, hPinTest, nullptr},
   {HTTP_GET, "hardware/profiles", SCOPE_READ, hProfiles, nullptr},
   {HTTP_POST, "hardware/profile", SCOPE_ADMIN, hProfileSet, nullptr},
+  {HTTP_GET, "hardware/custom-board", SCOPE_READ, hCustomGet, nullptr},
+  {HTTP_POST, "hardware/custom-board", SCOPE_ADMIN, hCustomSet, nullptr},
+  {HTTP_DELETE, "hardware/custom-board", SCOPE_ADMIN, hCustomDelete, nullptr},
   {HTTP_POST, "hardware/status-light/test", SCOPE_ADMIN, hLightTest, nullptr},
   {HTTP_GET, "network", SCOPE_READ, hNetwork, nullptr},
   {HTTP_POST, "network/scan", SCOPE_ADMIN, hScan, nullptr},
@@ -672,27 +701,18 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
       if (!up.active) { up.err = "admin password or key needed"; return; }
       up.ok = true;
       if (fw) {
-        bool webapp = req->hasParam("target") && req->getParam("target")->value() == "webapp";
-        Serial.printf("[ota] %s upload, %u bytes\n", webapp ? "web app" : "firmware", (unsigned)total);
+        Serial.printf("[ota] firmware upload, %u bytes\n", (unsigned)total);
         // Say which file was wrong instead of the library's "Bad Size Given".
-        const esp_partition_t* slot = webapp ? esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr)
-                                             : esp_ota_get_next_update_partition(nullptr);
+        const esp_partition_t* slot = esp_ota_get_next_update_partition(nullptr);
         size_t room = slot ? slot->size : 0;
         String fit = String(room / 1024) + " KB";
-        if (!webapp && len > 0 && data[0] != 0xE9) { up.ok = false; up.err = "Not a firmware file: choose the …-firmware.bin file (…-full-flash.bin is for USB only)"; return; }
-        if (!webapp && total > room) {
+        if (len > 0 && data[0] != 0xE9) { up.ok = false; up.err = "Not a firmware file: choose the …-firmware.bin file (…-full-flash.bin is for USB only)"; return; }
+        if (total > room) {
           up.ok = false;
           up.err = "File too big for this board's firmware slot (" + fit + "): choose the …-firmware.bin made for this board (…-full-flash.bin is for USB only)";
           return;
         }
-        if (webapp && total > room) {
-          up.ok = false;
-          up.err = "Web app file too big for this board (" + fit + "): use the …-webapp.bin made for this board";
-          return;
-        }
-        if (webapp && len > 0 && data[0] == 0xE9) { up.ok = false; up.err = "That is a firmware file: choose the …-webapp.bin file here"; return; }
-        if (webapp) LittleFS.end();
-        if (!Update.begin(total ? total : UPDATE_SIZE_UNKNOWN, webapp ? U_SPIFFS : U_FLASH)) { up.ok = false; up.err = Update.errorString(); return; }
+        if (!Update.begin(total ? total : UPDATE_SIZE_UNKNOWN, U_FLASH)) { up.ok = false; up.err = Update.errorString(); return; }
         StateLock lk; gSys.otaProgress = 0;
       }
     }
@@ -704,7 +724,14 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
     }
     if (fw) {
       if (Update.write(data, len) != len) { up.ok = false; up.err = Update.errorString(); Update.abort(); return; }
+      up.roles.feed(data, len);
       if (total) { StateLock lk; gSys.otaProgress = std::min(99, (int)((index + len) * 100 / total)); }
+      if (final && up.roles.role.length() && up.roles.role != gFirmwareRole) {   // a main firmware on a worker or the other way round
+        up.ok = false; Update.abort();
+        up.err = "That is a " + up.roles.role + " board firmware; this board runs the " + gFirmwareRole + " firmware: choose carmetrics-" +
+                 (gFirmwareRole == "main" ? String("main-…") : String("worker-… (or the relay board's file)")) + "-firmware.bin";
+        return;
+      }
       if (final && !Update.end(true)) { up.ok = false; up.err = Update.errorString(); }
     } else {
       String err;
@@ -821,17 +848,16 @@ void setupServer() {
   events.onConnect([](AsyncEventSourceClient* client) { client->send(livePoints().c_str(), "points", ++eventId, 3000); });
   server.addHandler(&events);
   // Web app (only /www is served: settings never live on the file system)
-  server.serveStatic("/", LittleFS, "/www/").setDefaultFile("index.html").setCacheControl("no-cache");
+  // The web app from the firmware itself (gzipped; the browser unpacks it).
   server.onNotFound([](AsyncWebServerRequest* req) {
     if (req->url().startsWith("/api/")) { sendError(req, 404, "No such address: the API is at " API); return; }
-    if (!LittleFS.exists("/www/index.html") && !LittleFS.exists("/www/index.html.gz")) {
-      req->send(200, "text/html",
-                "<h3>" FW_VERSION "</h3><p>The web app is not installed. Choose the <b>…-webapp.bin</b> file:</p>"
-                "<input type=file id=f><button onclick=\"fetch('" API "/firmware?target=webapp',{method:'PUT',body:f.files[0]})"
-                ".then(r=>r.text()).then(t=>document.body.append(t))\">Upload</button>");
-      return;
-    }
-    req->redirect("/");
+    String path = req->url() == "/" ? String("/index.html") : req->url();
+    const Web::File* f = Web::file(path);
+    if (!f) { req->redirect("/"); return; }
+    AsyncWebServerResponse* r = req->beginResponse(200, f->type, f->data, f->len);
+    if (f->gz) r->addHeader("Content-Encoding", "gzip");
+    r->addHeader("Cache-Control", "no-cache");
+    req->send(r);
   });
 }
 }  // namespace
@@ -849,6 +875,9 @@ void Web::setRemote(const Remote* r) { remote = r; }
 void Web::setInfo(void (*fn)(JsonObject)) { infoHook = fn; }
 void Web::setAfterPatch(void (*fn)(const String&)) { afterPatch = fn; }
 bool Web::uploadResult(String& err) { err = up.err; return up.ok; }
+const Web::File* Web::file(const String& path) { for (size_t i = 0; i < kWebFileCount; i++) if (path == kWebFiles[i].path) return &kWebFiles[i]; return nullptr; }
+size_t Web::fileCount() { return kWebFileCount; }
+const Web::File& Web::fileAt(size_t i) { return kWebFiles[i]; }
 
 // Live channel subscribers that may read.
 void sendLive(const String& msg, const char* event) {

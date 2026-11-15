@@ -14,6 +14,7 @@
 #include "Gps.h"
 #include "BlackBox.h"
 #include <LittleFS.h>
+#include <esp_ota_ops.h>
 
 static int passed = 0, failed = 0;
 static void check(bool ok, const char* what, const String& detail = "") {
@@ -48,6 +49,18 @@ void selftestFakeSensors() {
   }
 }
 
+
+// The firmware image carries its role tag (checked before a file is installed or sent on).
+static String __attribute__((noinline)) ownImageRole() {
+  const esp_partition_t* run = esp_ota_get_running_partition();
+  RoleScan rs; uint8_t buf[512];
+  for (uint32_t off = 0; run && off < ESP.getSketchSize() && !rs.role.length(); off += sizeof(buf)) {
+    if (esp_partition_read(run, off, buf, sizeof(buf)) != ESP_OK) break;
+    rs.feed(buf, sizeof(buf));
+  }
+  return rs.role;
+}
+
 static String cfgJson(const Config& c) {
   JsonDocument d; configToJson(c, d.to<JsonObject>(), true);
   String s; serializeJson(d, s); return s;
@@ -74,13 +87,15 @@ static void __attribute__((noinline)) actuatorSetup() {
   // Ready-made relay boards
   {
     const BoardProfile* x8 = Board::find("relay_x8");
+    setFirmwareRole("worker");   // what the worker firmware does
     Config c; configDefaults(c, *x8); c.sys.board = "relay_x8";
-    check(x8 && c.relays.size() == 8 && c.relays[6].pin == 12 && c.relays[6].enabled && c.sensors.empty() && c.sys.role == "relay",
-          "Relay X8 defaults: 8 relays (relay 7 on GPIO12), relay role, no sensors", String(c.relays.size()) + " " + c.sys.role);
+    check(x8 && c.relays.size() == 8 && c.relays[6].pin == 12 && c.relays[6].enabled && c.sensors.empty() && c.sys.role == "worker",
+          "Relay X8 defaults (worker): 8 relays (relay 7 on GPIO12), no sensors", String(c.relays.size()) + " " + c.sys.role);
     check(validateConfig(c, err), "Relay X8 defaults valid (GPIO12 allowed as an output there)", err);
     const BoardProfile* kc = Board::find("kc868_a4");
     Config k; configDefaults(k, *kc); k.sys.board = "kc868_a4";
     check(kc && k.relays.size() == 4 && k.relays[0].pin == 2 && validateConfig(k, err), "KC868-A4 defaults valid", err);
+    setFirmwareRole("main");
   }
   { JsonDocument j; StateLock lk; Pins::toJson(j.to<JsonObject>());
     bool ok = j["pins"].size() > 20; for (JsonObject p : j["pins"].as<JsonArray>()) if (p["gpio"] == 18) ok = ok && String((const char*)(p["usedBy"] | "")) == "buzzer";
@@ -368,6 +383,7 @@ void selftestLoop() {
       JsonDocument e; bool parsed = ok && !deserializeJson(e, ev);
       check(parsed && e["rows"].size() >= 25 && e["rows"].size() <= 61 && String(e["reason"] | "").indexOf("warn") > 0, "alarm black box recorded 30 s before/after", String((int)e["rows"].size()) + " rows");
     }
+    { String r = ownImageRole(); check(r == "main", "this firmware's image is tagged main", r); }
     Serial.printf("[test] DONE: %d passed, %d failed\n", passed, failed);
   }
 }

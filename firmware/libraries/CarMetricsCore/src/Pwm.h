@@ -3,6 +3,14 @@
 // gets its own timer on core 2 (even channels), so frequencies don't clash.
 #pragma once
 #include <Arduino.h>
+#include <soc/soc_caps.h>
+
+// PWM outputs this chip can run at once (ESP32 / S3: 8 used here, C3 / C6: 6).
+#if SOC_LEDC_CHANNEL_NUM < 8
+#define CM_PWM_MAX SOC_LEDC_CHANNEL_NUM
+#else
+#define CM_PWM_MAX 8
+#endif
 
 namespace Pwm {
 // (Re)attach a pin. Keeps running without a glitch when freq and bits are unchanged.

@@ -119,6 +119,7 @@ static void applyConfig(Config* next) {
 }
 
 void setup() {
+  setFirmwareRole("main");
   Serial.begin(115200);
   delay(50);
   Serial.printf("\n\nCarMetrics %s booting on %s\n", FW_VERSION, ESP.getChipModel());

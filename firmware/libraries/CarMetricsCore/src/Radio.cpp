@@ -42,10 +42,15 @@ void Radio::toJson(JsonObject o) {
 // ESP32 image header: magic 0xE9 at 0, chip id (uint16) at 12.
 uint8_t Radio::chipOfImage(const uint8_t* hdr) {
   uint16_t id = hdr[12] | (hdr[13] << 8);
-  return id == 0 ? Proto::CHIP_ESP32 : id == 9 ? Proto::CHIP_ESP32S3 : Proto::CHIP_OTHER;
+  return id == 0 ? Proto::CHIP_ESP32 : id == 9 ? Proto::CHIP_ESP32S3 : id == 5 ? Proto::CHIP_ESP32C3 : id == 13 ? Proto::CHIP_ESP32C6 : Proto::CHIP_OTHER;
 }
-uint8_t Radio::myChip() { return String(Board::chip()) == "esp32s3" ? Proto::CHIP_ESP32S3 : Proto::CHIP_ESP32; }
-const char* Radio::chipName(uint8_t c) { return c == Proto::CHIP_ESP32S3 ? "ESP32-S3" : c == Proto::CHIP_ESP32 ? "ESP32" : "other chip"; }
+uint8_t Radio::myChip() {
+  String c = Board::chip();
+  return c == "esp32s3" ? Proto::CHIP_ESP32S3 : c == "esp32c3" ? Proto::CHIP_ESP32C3 : c == "esp32c6" ? Proto::CHIP_ESP32C6 : Proto::CHIP_ESP32;
+}
+const char* Radio::chipName(uint8_t c) {
+  return c == Proto::CHIP_ESP32S3 ? "ESP32-S3" : c == Proto::CHIP_ESP32 ? "ESP32" : c == Proto::CHIP_ESP32C3 ? "ESP32-C3" : c == Proto::CHIP_ESP32C6 ? "ESP32-C6" : "other chip";
+}
 
 BoardNet::Identity Radio::identity(uint8_t role) {
   BoardNet::Identity me;

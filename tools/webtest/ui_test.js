@@ -34,6 +34,18 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check(order[0] === 'Coolant' && order[1] === 'Oil pressure' && order[2] === 'EGT', 'most important gauges first', order.join(' | '));
   check((await p.locator('.tile.w-bars .thermo').count()) >= 2, 'other temperatures as one thermometer group', String(await p.locator('.tile.w-bars .thermo').count()));
   check((await p.locator('.tile.w-bars .zone').count()) >= 1 && (await p.locator('.tile.w-bars .tkl').count()) >= 1, 'each thermometer shows its own limits', await p.locator('.tile.w-bars .tkl').allTextContents().then(t => t.join(',')));
+  const none = await p.$$eval('.tile.w-bars .thermo.none .tv', e => e.map(x => x.textContent));
+  const why = await p.locator('.tile.w-bars .why').textContent();
+  check(none.length === 1 && none[0] === '--' && why.length <= 30 && /no sensor/.test(why), 'thermometer without a sensor: "--" and one short reason', `${none} | ${why}`);
+  const tilesAll = await p.locator('.tiles .tile').count();
+  check(await p.locator('.gtools select').isVisible(), 'gauge board filter shown (sensors from more than one board)');
+  await p.selectOption('.gtools select', 'local'); await p.waitForTimeout(400);
+  const localNames = await p.$$eval('.tiles .thermo .tl', e => e.map(x => x.textContent));
+  check((await p.locator('.tiles .tile').count()) <= tilesAll && !localNames.includes('Engine bay Gearbox'), 'filter "This board": other boards\' gauges hidden', localNames.join(','));
+  await p.selectOption('.gtools select', 'b1'); await p.waitForTimeout(400);
+  check((await p.locator('.tiles .tile').count()) === 1, 'filter one board: only its gauges', String(await p.locator('.tiles .tile').count()));
+  await p.selectOption('.gtools select', 'all'); await p.waitForTimeout(400);
+  check((await p.locator('.tiles .tile').count()) === tilesAll, 'filter back to all boards');
   await p.screenshot({ path: `${OUT}/dashboard-phone.png`, fullPage: true });
   await p.click('text=Full screen'); await p.waitForTimeout(800);
   const fs = await p.evaluate(() => ({ fs: document.body.classList.contains('fs'), header: getComputedStyle(document.querySelector('header')).display, sh: document.documentElement.scrollHeight, ih: innerHeight }));

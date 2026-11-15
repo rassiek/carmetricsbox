@@ -104,10 +104,16 @@ void readCrash() {
   if (esp_core_dump_get_summary(s) == ESP_OK) {
     crash.have = true;
     strlcpy(crash.task, s->exc_task, sizeof(crash.task));
-    crash.pc = s->exc_pc; crash.cause = s->ex_info.exc_cause; crash.vaddr = s->ex_info.exc_vaddr;
+    crash.pc = s->exc_pc;
+#ifdef __XTENSA__
+    crash.cause = s->ex_info.exc_cause; crash.vaddr = s->ex_info.exc_vaddr;
     crash.depth = s->exc_bt_info.depth > 16 ? 16 : s->exc_bt_info.depth;
     crash.corrupted = s->exc_bt_info.corrupted;
     memcpy(crash.bt, s->exc_bt_info.bt, sizeof(crash.bt));
+#else   // RISC-V (C3 / C6): no backtrace in the summary; the core dump has the stack
+    crash.cause = s->ex_info.mcause; crash.vaddr = s->ex_info.mtval;
+    crash.depth = 0; crash.corrupted = false;
+#endif
     // Same firmware as now? (then the addresses can be looked up in this build)
 #if ESP_IDF_VERSION_MAJOR >= 5
     const esp_app_desc_t* app = esp_app_get_description();
@@ -373,8 +379,10 @@ void Health::refreshStorage(bool force) {
 #endif
   if (!force && storage.valid && millis() - storage.at < 60000) return;
   Storage s;
-  s.fsTotal = LittleFS.totalBytes(); s.fsUsed = LittleFS.usedBytes();
-  s.www = dirBytes("/www"); s.bb = dirBytes("/bb"); s.queue = dirBytes("/q");
+  if (esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr)) {   // workers have no file system
+    s.fsTotal = LittleFS.totalBytes(); s.fsUsed = LittleFS.usedBytes();
+    s.bb = dirBytes("/bb"); s.queue = dirBytes("/q");
+  }
   nvs_stats_t ns;
   if (nvs_get_stats("cfg", &ns) == ESP_OK) { s.nvsUsed = ns.used_entries; s.nvsTotal = ns.total_entries; }
   s.valid = true; s.at = millis();

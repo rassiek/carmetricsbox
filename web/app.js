@@ -131,16 +131,20 @@ const CM = (() => {
   const pages = {};
   let current = null;
   function page(name, def) { pages[name] = def; }
+  // What this firmware offers (GET /info "capabilities"). Firmware before 5.4 sends none: a main board then.
+  const has = cap => !S.info.capabilities || S.info.capabilities.includes(cap);
+  const isWorker = () => S.info.role === 'worker';
+  const tabShown = id => id !== 'boards' || has('boards');
   function applyNames() {
     const u = ui();
     document.title = (u.machineName ? u.machineName + ' · ' : '') + (u.appName || 'CarMetrics');
     $('#brand').textContent = u.appName || 'CarMetrics';
     $('#machine').textContent = u.machineName || '';
-    for (const [id, def] of TABS) { const a = $(`#tab-${id}`); if (a) a.textContent = (u.pages && u.pages[id]) || def; }
+    for (const [id, def] of TABS) { const a = $(`#tab-${id}`); if (a) { a.textContent = (u.pages && u.pages[id]) || def; a.classList.toggle('hidden', !tabShown(id)); } }
   }
   function show() {
     const [name, sub] = (location.hash.slice(1) || 'dashboard').split('/');
-    const n = pages[name] ? name : 'dashboard';
+    const n = pages[name] && tabShown(name) ? name : 'dashboard';
     for (const [id] of TABS) $(`#tab-${id}`).classList.toggle('active', id === n);
     if (current && pages[current].leave) pages[current].leave();
     current = n;
@@ -245,6 +249,6 @@ const CM = (() => {
     return out;
   }
 
-  return { autoTiles, $, $$, h, api, get, patch, del, toast, act, err, live, S, ui, fmt, conv, page, form, reloadSettings, loadPins,
+  return { has, isWorker, autoTiles, $, $$, h, api, get, patch, del, toast, act, err, live, S, ui, fmt, conv, page, form, reloadSettings, loadPins,
            pins: () => pinInfo, sensorChoices, go: hash => { location.hash = hash; } };
 })();

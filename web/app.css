@@ -221,3 +221,9 @@ body.fs .tiles .tval { margin-top: 0; } body.fs .thermos { min-height: 0; } body
 .thermo .tkl { position: absolute; left: 22px; transform: translateY(50%); font-size: 10px; line-height: 1; white-space: nowrap; }
 .thermo .tkl.w { color: var(--warn); } .thermo .tkl.c { color: var(--crit); }
 .thermo .tube { margin-right: 18px; } .thermo .fill { z-index: 1; opacity: .9; } .thermo .tk { z-index: 2; }
+
+/* 5.4: no reading -> "--" and one short reason under the tile */
+.tile .why { font-size: 12px; color: var(--muted); min-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+.tile .why:empty { min-height: 0; }
+.thermo.none .tv { color: var(--muted); } .thermo.none .tube { opacity: .4; }
+.gtools select { margin: 0; }

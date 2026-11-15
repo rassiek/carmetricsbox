@@ -1,8 +1,10 @@
 'use strict';
 // Dashboard tab: Gauges (dials), Charts, Events; weather card; tap a dial to change its limits.
 (() => {
-  const { $, h, api, get, patch, toast, act, err, S, fmt, conv, page, ui } = CM;
+  const { $, h, api, get, patch, toast, act, err, S, fmt, conv, page, ui, has } = CM;
   let view = 'gauges', el = null;
+  // Gauges of all boards, or one board only: 'all' | 'local' | 'b<id>' (kept for this browser tab)
+  let only = (() => { try { return sessionStorage.getItem('cmGauges') || 'all'; } catch { return 'all'; } })();
   const spark = {};   // address -> recent values (for "spark" tiles)
 
   const sensorsCfg = () => (S.settings && S.settings.sensors) || [];
@@ -10,9 +12,12 @@
   function tiles() {
     const lay = (S.settings.layout && S.settings.layout.tiles) || [];
     const byId = Object.fromEntries(sensorsCfg().map(s => [s.id, s]));
-    const list = (lay.length ? lay : CM.autoTiles(sensorsCfg())).filter(t => byId[t.id]);
+    const boardOf = s => s.type === 'remote' ? 'b' + s.board : 'local';
+    const keep = s => only === 'all' || boardOf(s) === only;
+    const list = (lay.length ? lay : CM.autoTiles(sensorsCfg())).filter(t => byId[t.id] && (t.widget === 'bars'
+      ? [t.id].concat((t.with || '').split(',')).some(id => byId[id] && keep(byId[id])) : keep(byId[t.id])));
     return list.map(t => ({ ...t, s: byId[t.id], a: addrOf(byId[t.id]),
-      group: t.widget === 'bars' ? [t.id].concat((t.with || '').split(',').filter(x => byId[x])).map(id => byId[id]) : null }));
+      group: t.widget === 'bars' ? [t.id].concat((t.with || '').split(',').filter(x => byId[x])).map(id => byId[id]).filter(keep) : null }));
   }
 
   // ---- dial: 240° arc with the warning / critical zones, needle and value
@@ -56,7 +61,7 @@
           ticks.push(h('i', { class: 'tk ' + c, style: `bottom:${f(v)}` }), h('span', { class: 'tkl ' + c, style: `bottom:${f(v)}` }, fmt(v, s.unit, 0)[0]));
         return h('div', { class: 'thermo', 'data-a': addrOf(s), onclick: e => { e.stopPropagation(); if (!document.body.classList.contains('fs')) editLimits(s); } }, [
           h('div', { class: 'tv' }, '--'), h('div', { class: 'tube' }, [h('div', { class: 'fill' }), ...ticks]), h('div', { class: 'tl' }, s.oledLabel || s.name)]);
-      }))]);
+      })), h('div', { class: 'why' })]);
     return tile;
   }
   function renderGauges(box) {
@@ -66,7 +71,7 @@
       const tile = h('div', { class: `tile size${t.size || 1} w-${t.widget}`, 'data-a': t.a, onclick: () => { if (!document.body.classList.contains('fs')) editLimits(t.s); } }, [
         h('div', { class: 'tname' }, t.s.name), t.widget === 'bar' ? h('div', { html: dialSvg(t.s) }) : null,
         t.widget === 'spark' ? h('canvas', { class: 'spark', width: 300, height: 60 }) : null,
-        h('div', { class: 'tval' }, [h('span', { class: 'num' }, '--'), ' ', h('span', { class: 'unit' }, '')])]);
+        h('div', { class: 'tval' }, [h('span', { class: 'num' }, '--'), ' ', h('span', { class: 'unit' }, '')]), h('div', { class: 'why' })]);
       grid.append(tile);
     }
     if (!grid.children.length) grid.append(h('p', { class: 'muted' }, 'No sensors to show yet: add some on the Sensors tab.'));
@@ -74,7 +79,11 @@
     updateGauges();
     fitTiles();
   }
-  function valueText(s, v) { const [txt, u] = fmt(v.v, s.unit, s.decimals); return [v.st === 'ok' || v.st === undefined ? txt : v.st.replace('_', ' '), u]; }
+  // A value, or "--" with a short reason (the tile stays readable when nothing is connected)
+  const SHORT = { waiting: 'waiting', not_found: 'no sensor', unassigned: 'not set up', fault: 'wiring fault', disabled: 'off', offline: 'board offline', stale: 'no data' };
+  const okSt = v => v.st === 'ok' || v.st === undefined;
+  function valueText(s, v) { const [txt, u] = fmt(v.v, s.unit, s.decimals); return okSt(v) ? [txt, u] : ['--', '']; }
+  const whyNot = v => okSt(v) ? '' : (SHORT[v.st] || String(v.st).replace(/_/g, ' '));
   function updateGauges() {
     if (!el) return;
     const tbWas = $('#turbo') && $('#turbo').classList.contains('hidden');
@@ -85,6 +94,7 @@
       const [txt, u] = valueText(s, v);
       tile.querySelector('.num').textContent = txt;
       tile.querySelector('.unit').textContent = u;
+      const why = tile.querySelector('.why'); if (why) why.textContent = whyNot(v);
       tile.className = tile.className.replace(/ lvl-\w+/g, '') + ' lvl-' + (v.lvl || 'ok');
       setDial(tile, s, v);
       const c = tile.querySelector('canvas.spark');
@@ -97,13 +107,17 @@
         const a = th.dataset.a, s = sensorsCfg().find(x => addrOf(x) === a); if (!s) continue;
         const v = S.values[a] || { v: null, st: 'waiting', lvl: 'ok' };
         const [txt, u] = valueText(s, v);
-        th.querySelector('.tv').textContent = v.st === 'ok' ? `${txt}${u.startsWith('°') ? '°' : ' ' + u}` : txt;
+        th.querySelector('.tv').textContent = okSt(v) ? `${txt}${u.startsWith('°') ? '°' : ' ' + u}` : '--';
+        th.title = whyNot(v);
         const lo = s.gaugeMin ?? 0, hi = s.gaugeMax ?? 100;
         th.querySelector('.fill').style.height = v.v == null ? '0' : `${Math.max(0, Math.min(100, (v.v - lo) / ((hi - lo) || 1) * 100))}%`;
-        th.className = 'thermo lvl-' + (v.lvl || 'ok');
+        th.className = 'thermo lvl-' + (v.lvl || 'ok') + (okSt(v) ? '' : ' none');
         if (order[v.lvl] > order[worst]) worst = v.lvl;
       }
       tile.className = tile.className.replace(/ lvl-\w+/g, '') + ' lvl-' + worst;
+      const why = tile.querySelector('.why');   // one short line for the tubes without a reading
+      if (why) { const none = [...tile.querySelectorAll('.thermo.none')]; why.textContent = !none.length ? ''
+        : none.length === 1 ? `${none[0].querySelector('.tl').textContent}: ${none[0].title}` : `${none.length} without a reading`; }
     }
     const tb = $('#turbo'); if (tb) { const t = S.turbo; tb.classList.toggle('hidden', !t); if (t) tb.textContent = t.phase === 'cooling' ? `Turbo cooling: ${t.leftS} s before switching off` : 'Turbo cool: OK to switch off'; if (tbWas !== tb.classList.contains('hidden')) fitTiles(); }
   }
@@ -267,20 +281,34 @@
     } catch {}
   }
 
+  // Board filter: shown when gauges come from more than one board (main board with workers)
+  function boardFilter() {
+    const ids = [...new Set(sensorsCfg().filter(s => s.type === 'remote').map(s => 'b' + s.board))].sort();
+    if (!ids.length) { only = 'all'; return null; }
+    const sel = h('select', { class: 'small', style: 'width:auto', title: 'Show the gauges of', onchange: e => {
+      only = e.target.value; try { sessionStorage.setItem('cmGauges', only); } catch {} show(el); } },
+      [['all', 'All boards'], ['local', 'This board']].concat(ids.map(b => [b, b])).map(([v, t]) => h('option', { value: v, selected: v === only }, t)));
+    if (![...sel.options].some(o => o.value === only)) { only = 'all'; sel.value = 'all'; }
+    get('/boards').then(r => { for (const x of r.items || []) { const o = [...sel.options].find(o => o.value === 'b' + x.id); if (o) o.textContent = x.name; } }).catch(() => {});
+    return sel;
+  }
+
   function show(main, sub) {
     el = main;
     if (sub === 'layout') return CM.layoutEditor(main);
-    if (['gauges', 'charts', 'events'].includes(sub)) view = sub;
+    const VIEWS = [['gauges', 'Gauges'], ['charts', 'Charts', 'history'], ['events', 'Events', 'events']].filter(x => !x[2] || has(x[2]));
+    if (VIEWS.some(x => x[0] === sub)) view = sub;
+    if (!VIEWS.some(x => x[0] === view)) view = 'gauges';
     main.innerHTML = '';
     main.append(h('div', { id: 'turbo', class: 'turbo hidden' }));
-    const views = h('div', { class: 'seg' }, [['gauges', 'Gauges'], ['charts', 'Charts'], ['events', 'Events']].map(([k, t]) =>
-      h('a', { href: `#dashboard/${k}`, class: view === k ? 'active' : '' }, t)));
+    const views = VIEWS.length > 1 ? h('div', { class: 'seg' }, VIEWS.map(([k, t]) =>
+      h('a', { href: `#dashboard/${k}`, class: view === k ? 'active' : '' }, t))) : null;
     const box = h('div');
-    const tools = view === 'gauges' ? h('div', { class: 'row gtools' }, [h('button', { class: 'small', onclick: () => fullScreen(true) }, '⛶ Full screen'),
+    const tools = view === 'gauges' ? h('div', { class: 'row gtools' }, [boardFilter(), h('button', { class: 'small', onclick: () => fullScreen(true) }, '⛶ Full screen'),
       h('a', { class: 'btn small', href: '#dashboard/layout' }, 'Edit layout')]) : null;
     main.append(h('div', { class: 'row' }, [views, h('span', { class: 'spacer' }), tools]), box,
       h('button', { class: 'fsexit', onclick: () => fullScreen(false), title: 'Leave full screen' }, '✕'));
-    if (view === 'gauges') { renderGauges(box); weatherCard(box); }
+    if (view === 'gauges') { renderGauges(box); if (has('weather')) weatherCard(box); }
     else if (view === 'charts') renderCharts(box);
     else renderEvents(box);
   }

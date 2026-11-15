@@ -1,7 +1,7 @@
 'use strict';
 // System tab: Status, Network, Hardware, Data.
 (() => {
-  const { h, api, get, patch, del, toast, act, err, S, page, form, loadPins } = CM;
+  const { h, api, get, patch, del, toast, act, err, S, page, form, loadPins, has, isWorker } = CM;
   const SECTIONS = [['status', 'Status'], ['network', 'Network'], ['hardware', 'Hardware'], ['data', 'Data']];
   const copy = o => JSON.parse(JSON.stringify(o || {}));
   const kv = rows => h('table', { class: 'kv' }, rows.filter(Boolean).map(([k, v]) => h('tr', {}, [h('th', {}, k), h('td', {}, v ?? '')])));
@@ -24,9 +24,10 @@
       ['Running for', `${Math.floor(d.uptime.s / 3600)} h ${Math.floor(d.uptime.s / 60) % 60} min · last restart: ${d.uptime.resetReason}`],
       ['Memory free', `${Math.round(m.free / 1024)} KB (lowest ${Math.round(m.min / 1024)} KB, largest block ${Math.round(m.largest / 1024)} KB)${m.psramFree ? ` · PSRAM ${Math.round(m.psramFree / 1024)} KB` : ''}`],
       ['CPU', (d.cpu || []).map(c => `${Math.round(c)} %`).join(' / ')], ['Loop', `${d.loop?.avgUs} µs average, ${d.loop?.maxUs} µs max`],
-      ['Storage', `${Math.round(st.fsUsed / 1024)} of ${Math.round(st.fsTotal / 1024)} KB used`],
+      st.fsTotal ? ['Storage', `${Math.round(st.fsUsed / 1024)} of ${Math.round(st.fsTotal / 1024)} KB used`] : null,
       ['Viewers', `${d.clients?.websocket || 0} live, ${d.clients?.events || 0} on events`],
     ])));
+    if (isWorker()) await mainBoardPanel(box);
     if (d.safeMode) box.append(panel('Safe mode', h('p', {}, `The board restarted after crashes (${d.safeReason}). Outputs are off, internet features stopped.`),
       h('button', { class: 'primary', onclick: () => act(() => api('/system/safe-mode/leave', { body: {} })) }, 'Leave safe mode')));
     if (d.crash) {
@@ -41,6 +42,18 @@
       h('button', { onclick: () => confirm('Restart the board?') && act(() => api('/system/reboot', { body: {} })) }, 'Restart'),
       h('button', { onclick: () => confirm('Go back to the settings before the last change?') && act(() => api('/settings/restore', { body: { slot: 'previous' } })) }, 'Undo last settings change'),
       h('button', { onclick: () => confirm('Go back to the last settings that ran without problems?') && act(() => api('/settings/restore', { body: { slot: 'good' } })) }, 'Last good settings')])));
+  }
+
+  // A worker: its main board, if it has one (it also runs on its own)
+  async function mainBoardPanel(box) {
+    let n; try { n = await get('/node'); } catch { return; }
+    const nd = n.node || {}, l = n.link || {};
+    box.append(panel('Main board', kv([
+      ['Paired', nd.paired ? `yes, as board b${nd.id}${nd.encrypted ? ' (encrypted)' : ''}` : 'no: this board runs on its own until a main board adds it'],
+      nd.paired ? ['Link', nd.linkUp ? `up over ${l.type === 'can' ? 'CAN' : 'ESP-NOW'}` : (nd.mainInRange ? 'main board in range, link down' : 'main board out of reach: outputs in their safe state')] : null,
+      nd.paired ? ['Settings', nd.configRev ? `from the main board (revision ${nd.configRev})` : 'not received yet'] : null,
+    ]), nd.paired ? h('p', { class: 'muted small' }, 'While paired, the main board sets this board\'s sensors and actuators.') : null,
+      nd.paired ? h('button', { class: 'danger small', onclick: () => confirm('Forget the main board? It can add this board again.') && act(() => api('/node/unpair', { body: {} })) }, 'Forget the main board') : null));
   }
 
   // ================================================================ Network
@@ -111,6 +124,7 @@
     box.append(panel('Board', form(p, [{ k: 'board', label: 'Board type', type: 'select', opts: [['auto', `Detect (${(prof.items.find(x => x.id === prof.detected) || { name: prof.detected }).name})`]].concat(prof.items.map(x => [x.id, x.name])) },
       { k: 'applyPins', label: 'Move the bus and default sensor pins to this board\'s defaults', type: 'bool' }]),
       h('p', { class: 'muted small' }, prof.current.notes), h('button', { class: 'primary', onclick: () => act(() => api('/hardware/profile', { body: p })) }, 'Save')));
+    if (has('customBoard')) box.append(await customBoard(prof));
     const table = h('table', {}, [h('tr', {}, ['GPIO', 'Can do', 'Used by', ''].map(t => h('th', {}, t)))]);
     for (const x of pins.pins) table.append(h('tr', {}, [h('td', {}, x.gpio), h('td', { class: 'small' }, x.abilities.join(', ') + (x.fixed ? ` · ${x.fixed}` : '')), h('td', { class: 'small' }, x.usedBy || ''),
       h('td', {}, [x.abilities.includes('output') && !x.usedBy ? h('button', { class: 'small', onclick: () => act(() => api(`/pins/${x.gpio}/test`, { body: { mode: 'blink' } }), `GPIO ${x.gpio} blinking for 5 s`) }, 'Blink') : null,
@@ -134,7 +148,7 @@
       { k: 'buzzerPin', label: 'Buzzer pin', type: 'pin' }, { k: 'buzzerActiveLow', label: 'Buzzer sounds on LOW', type: 'bool' },
       { k: 'ledPin', label: 'Warning LED pin', type: 'pin' }, { k: 'ledActiveLow', label: 'LED on when LOW', type: 'bool' }],
       sysPick(['i2cSda', 'i2cScl', 'i2cKhz', 'oneWirePin', 'oneWireResolution', 'buzzerPin', 'buzzerActiveLow', 'ledPin', 'ledActiveLow']), 'Bus changes restart the board.')));
-    box.append(panel('OLED', ...sectionForm('system', [
+    if (!isWorker()) box.append(panel('OLED', ...sectionForm('system', [
       { k: 'oledType', label: 'Screen', type: 'select', opts: [['none', 'None'], ['ssd1306_128x64', '0.96" SSD1306 128×64'], ['sh1106_128x64', '1.3" SH1106 128×64'], ['ssd1327_128x128', '1.5" SSD1327 128×128'], ['ssd1327_ws_128x128', '1.5" SSD1327 (Waveshare)']] },
       { k: 'oledFlip', label: 'Upside down', type: 'bool' }, { k: 'oledClock', label: 'Show the clock', type: 'bool' }, num('oledPageSeconds', 'Seconds per page'), num('oledContrast', 'Contrast (0-255)')],
       sysPick(['oledType', 'oledFlip', 'oledClock', 'oledPageSeconds', 'oledContrast'])), h('a', { class: 'btn small', href: '#dashboard/layout' }, 'OLED pages and dashboard tiles')));
@@ -147,13 +161,54 @@
     box.append(panel('Turbo timer', ...sectionForm('turbo', [{ k: 'enabled', label: 'On', type: 'bool' }, { k: 'egtId', label: 'EGT sensor', type: 'sensor' }, num('safeEgt', 'Safe to stop below'),
       num('minIdleSeconds', 'Idle at least (s)'), { k: 'rpmId', label: 'RPM sensor', type: 'sensor' }, num('idleRpm', 'Idle below RPM'), { k: 'speedId', label: 'Speed sensor', type: 'sensor' }, { k: 'beep', label: 'Beep when OK', type: 'bool' }])));
     const alt = { altitudeM: null };
-    box.append(panel('Altitude', form(alt, [num('altitudeM', 'Where you are now (m)')]), h('button', { class: 'small', onclick: () => act(() => api('/hardware/altitude', { body: alt })) }, 'Calibrate')));
+    if (!isWorker()) box.append(panel('Altitude', form(alt, [num('altitudeM', 'Where you are now (m)')]), h('button', { class: 'small', onclick: () => act(() => api('/hardware/altitude', { body: alt })) }, 'Calibrate')));
+  }
+
+  // Custom board (worker firmware): the specs and pinout of a board that is not built in.
+  // Pins are typed as text ("2, 4, 13-19"); the board checks them against its chip.
+  const ranges = a => { const v = [...new Set(a || [])].sort((x, y) => x - y), out = []; for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++; out.push(j > i ? `${v[i]}-${v[j]}` : `${v[i]}`); i = j; } return out.join(', '); };
+  const pinsOf = t => String(t || '').split(',').map(x => x.trim()).filter(Boolean).flatMap(x => { const m = x.match(/^(\d+)\s*-\s*(\d+)$/); if (m) { const r = []; for (let i = +m[1]; i <= +m[2] && r.length < 64; i++) r.push(i); return r; } return [+x]; });
+  function toForm(p) {
+    const d = p.defaults || {}, f = p.fixed || {};
+    return { name: p.id === 'custom' ? p.name : `My ${p.name.split(' (')[0]}`, flashMB: p.flashMB, psramMB: p.psramMB, valid: ranges(p.valid), output: ranges(p.output), adc1: ranges(p.adc1),
+             rtc: ranges(p.rtc), caution: ranges(p.caution), i2cSda: d.i2cSda ?? -1, i2cScl: d.i2cScl ?? -1, oneWirePin: d.oneWirePin ?? -1, buzzerPin: d.buzzerPin ?? -1, ledPin: d.ledPin ?? -1,
+             relays: ranges(f.relays), relaysActiveLow: !!f.relaysActiveLow, inputs: ranges(f.inputs), inputsActiveLow: f.inputsActiveLow !== false, rgb: f.rgb ?? -1, notes: p.id === 'custom' ? p.notes : '' };
+  }
+  const fromForm = o => ({ name: o.name, flashMB: o.flashMB, psramMB: o.psramMB, valid: o.valid, output: o.output, adc1: o.adc1, rtc: o.rtc, caution: o.caution, notes: o.notes,
+    defaults: { i2cSda: o.i2cSda, i2cScl: o.i2cScl, oneWirePin: o.oneWirePin, buzzerPin: o.buzzerPin, ledPin: o.ledPin },
+    fixed: { relays: pinsOf(o.relays), relaysActiveLow: o.relaysActiveLow, inputs: pinsOf(o.inputs), inputsActiveLow: o.inputsActiveLow, rgb: o.rgb } });
+  async function customBoard(prof) {
+    let cur = null; try { cur = await get('/hardware/custom-board'); } catch {}
+    const o = toForm(cur || prof.current);
+    const pinNote = 'GPIO numbers, e.g. 2, 4, 13-19';
+    const f = form(o, [{ k: 'name', label: 'Name', wide: true }, num('flashMB', 'Flash (MB)'), num('psramMB', 'PSRAM (MB)'),
+      { k: 'valid', label: 'Pins the board brings out', wide: true, placeholder: pinNote, help: 'Leave out pins that are wired to something on the board you can\'t use' },
+      { k: 'output', label: 'Pins that can drive an output', wide: true, placeholder: pinNote }, { k: 'adc1', label: 'Analog inputs (ADC1)', wide: true, placeholder: pinNote },
+      { k: 'rtc', label: 'Pins that can wake the board', wide: true, placeholder: pinNote }, { k: 'caution', label: 'Pins to use with care (boot, USB, serial)', wide: true, placeholder: pinNote },
+      num('i2cSda', 'Default I2C SDA (-1 none)'), num('i2cScl', 'Default I2C SCL'), num('oneWirePin', 'Default 1-Wire'), num('buzzerPin', 'Buzzer'), num('ledPin', 'Warning LED'), num('rgb', 'RGB status LED (WS2812)'),
+      { k: 'relays', label: 'Relays on the board', placeholder: 'e.g. 16, 17' }, { k: 'relaysActiveLow', label: 'Relays switch on LOW', type: 'bool' },
+      { k: 'inputs', label: 'Inputs on the board', placeholder: 'e.g. 36, 39' }, { k: 'inputsActiveLow', label: 'Inputs active LOW', type: 'bool' },
+      { k: 'notes', label: 'Notes', wide: true }]);
+    const save = async () => { if (await act(() => api('/hardware/custom-board', { body: fromForm(o) }))) setTimeout(() => show(el, 'hardware'), 300); };
+    const file = h('input', { type: 'file', accept: '.json', class: 'hidden', onchange: async e => {
+      const x = e.target.files[0]; if (!x) return;
+      let j; try { j = JSON.parse(await x.text()); } catch { return toast('Not a board definition file', true); }
+      Object.assign(o, toForm({ ...j, id: 'custom', valid: pinsOf(Array.isArray(j.valid) ? j.valid.join(',') : j.valid), output: pinsOf(Array.isArray(j.output) ? j.output.join(',') : j.output),
+        adc1: pinsOf(Array.isArray(j.adc1) ? j.adc1.join(',') : j.adc1), rtc: pinsOf(Array.isArray(j.rtc) ? j.rtc.join(',') : j.rtc), caution: pinsOf(Array.isArray(j.caution) ? j.caution.join(',') : j.caution) })); f.redraw(); } });
+    const download = () => { const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify({ chip: prof.chip, ...fromForm(o) }, null, 1)], { type: 'application/json' })), download: `${(o.name || 'board').replace(/\W+/g, '-').toLowerCase()}.json` }); a.click(); };
+    return panel('Custom board', h('p', { class: 'muted small' }, cur
+        ? `Defined: ${cur.name}.${prof.setting === 'custom' ? ' In use.' : ' Choose "' + cur.name + '" above to use it.'}`
+        : `For a board that is not in the list: its pins, filled in from "${prof.current.name}". The board refuses pins its ${prof.chip} chip can't use.`),
+      h('details', {}, [h('summary', {}, cur ? 'Edit the definition' : 'Define a board'), f,
+      h('div', { class: 'row', style: 'margin-top:10px' }, [h('button', { class: 'primary', onclick: save }, 'Save definition'), h('button', { class: 'small', onclick: download }, 'Download'),
+        h('label', { class: 'btn small' }, ['Load from file', file]), h('span', { class: 'spacer' }),
+        cur ? h('button', { class: 'small danger', onclick: () => confirm('Remove the custom board definition?') && act(() => del('/hardware/custom-board')).then(r => r && show(el, 'hardware')) }, 'Remove') : null])]));
   }
 
   // ================================================================ Data
   async function data(box) {
     const u = copy(S.settings.ui);
-    let pr = { items: [] }; try { pr = await get('/presets'); } catch {}
+    let pr = { items: [] }; if (has('presets')) try { pr = await get('/presets'); } catch {}
     const pick = { preset: pr.current || '' };
     box.append(panel('Names and units', form(u, [
       { k: 'appName', label: 'App name' }, { k: 'machineName', label: 'Machine name' }, { k: 'runningWord', label: 'What runs (engine, pump, generator)' },
@@ -162,15 +217,15 @@
       { k: 'units.pressure', label: 'Pressure', type: 'select', opts: [['', 'as each sensor'], ['bar', 'bar'], ['psi', 'psi'], ['kPa', 'kPa']] },
       { k: 'units.speed', label: 'Speed', type: 'select', opts: [['', 'as each sensor'], ['km/h', 'km/h'], ['mph', 'mph'], ['kn', 'knots']] }]),
       h('button', { class: 'primary', onclick: () => act(() => patch('/settings/ui', u), 'Saved') }, 'Save'),
-      h('div', { class: 'row', style: 'margin-top:10px' }, [form(pick, [{ k: 'preset', label: 'Start from a preset', type: 'select', opts: [['', '(choose)']].concat(pr.items.map(x => [x, x])) }]),
+      !has('presets') ? null : h('div', { class: 'row', style: 'margin-top:10px' }, [form(pick, [{ k: 'preset', label: 'Start from a preset', type: 'select', opts: [['', '(choose)']].concat(pr.items.map(x => [x, x])) }]),
         h('button', { onclick: () => pick.preset && confirm(`Apply the ${pick.preset} preset? Names and units change.`) && act(() => api('/presets/apply', { body: pick })) }, 'Apply')])));
     const towns = copy(S.settings.weather);
     const wf = form(towns, [{ k: 'enabled', label: 'Show the weather (needs internet)', type: 'bool' }, num('refreshMinutes', 'Refresh every (min)'),
       { k: 'autoSeaLevel', label: 'Correct the altitude with the weather', type: 'bool' },
       { k: 'refTown', label: 'Town used for that', type: 'select', opts: o => (o.towns || []).map(t => [t.name, t.name]) }]);
-    box.append(panel('Weather', wf, townsEditor(towns, () => wf.redraw()), h('button', { class: 'primary', onclick: () => act(() => patch('/settings/weather', towns), 'Saved') }, 'Save')));
-    let cs = {}; try { cs = await get('/cloud'); } catch {}
-    box.append(panel('Metrics upload (Zabbix / InfluxDB)', ...sectionForm('cloud', [
+    if (has('weather')) box.append(panel('Weather', wf, townsEditor(towns, () => wf.redraw()), h('button', { class: 'primary', onclick: () => act(() => patch('/settings/weather', towns), 'Saved') }, 'Save')));
+    let cs = {}; if (has('cloud')) try { cs = await get('/cloud'); } catch {}
+    if (has('cloud')) box.append(panel('Metrics upload (Zabbix / InfluxDB)', ...sectionForm('cloud', [
       { k: 'enabled', label: 'On', type: 'bool' }, { k: 'protocol', label: 'Send to', type: 'select', opts: [['zabbix', 'Zabbix'], ['influx', 'InfluxDB']], redraw: true },
       num('intervalMs', 'Sample every (ms)'), num('uploadEverySec', 'Upload every (s)'), num('bufferKB', 'Keep offline (KB)'),
       { k: 'onlyEngineRunning', label: 'Only while running', type: 'bool' }, { k: 'sendSystem', label: 'Include board health', type: 'bool' },
@@ -182,8 +237,9 @@
       h('pre', { class: 'small' }, JSON.stringify(cs, null, 1).slice(0, 600)),
       h('div', { class: 'row' }, [h('button', { class: 'small', onclick: () => act(() => api('/cloud/flush', { body: {} })) }, 'Upload now'),
         h('button', { class: 'small danger', onclick: () => confirm('Delete data waiting to be uploaded?') && act(() => del('/cloud/backlog')) }, 'Delete waiting data')])));
-    box.append(panel('Alarm recordings and history', ...sectionForm('blackbox', [{ k: 'enabled', label: 'Record 30 s before and after each alarm', type: 'bool' }, num('keepEvents', 'Keep the last')]),
+    if (has('events')) box.append(panel('Alarm recordings and history', ...sectionForm('blackbox', [{ k: 'enabled', label: 'Record 30 s before and after each alarm', type: 'bool' }, num('keepEvents', 'Keep the last')]),
       ...sectionForm('system', [num('historyIntervalSeconds', 'Chart history: a point every (s)'), num('tzOffsetMinutes', 'Time zone (minutes from UTC)')], sysPick(['historyIntervalSeconds', 'tzOffsetMinutes']))));
+    else if (has('history')) box.append(panel('Chart history', ...sectionForm('system', [num('historyIntervalSeconds', 'A point every (s)'), num('tzOffsetMinutes', 'Time zone (minutes from UTC)')], sysPick(['historyIntervalSeconds', 'tzOffsetMinutes']))));
     box.append(panel('Backup', h('div', { class: 'row' }, [
       h('a', { class: 'btn', href: '/api/v1/backup' }, 'Download settings'),
       h('label', { class: 'btn' }, ['Restore from file', h('input', { type: 'file', accept: '.json', class: 'hidden', onchange: async e => {
@@ -192,15 +248,14 @@
         if (confirm('Replace all settings with this file?')) act(() => api('/backup', { body: j }));
       } })]),
       h('button', { class: 'danger', onclick: () => confirm('Sensors, actuators and layout back to defaults? Network and passwords are kept.') && act(() => api('/settings/reset', { body: { keep: ['system'] } })) }, 'Reset to defaults')])));
-    const fwIn = (target, label) => h('label', { class: 'btn' }, [label, h('input', { type: 'file', accept: '.bin', class: 'hidden', onchange: async e => {
+    const fwIn = label => h('label', { class: 'btn' }, [label, h('input', { type: 'file', accept: '.bin', class: 'hidden', onchange: async e => {
       const f = e.target.files[0]; if (!f) return;
       toast('Uploading ' + f.name + '…', false, 120000);
-      await act(() => api('/firmware' + (target ? '?target=' + target : ''), { method: 'PUT', raw: f }));
+      await act(() => api('/firmware', { method: 'PUT', raw: f }));
     } })]);
-    box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'First the firmware (…-firmware.bin), then the web app (…-webapp.bin) from the same release. The …-full-flash.bin file is for USB only.'),
-      h('div', { class: 'row' }, [fwIn('', 'Firmware file'), fwIn('webapp', 'Web app file')])));
+    box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'Choose the …-firmware.bin file for this board (the web app is inside it). The …-full-flash.bin file is for USB only.'),
+      h('div', { class: 'row' }, [fwIn('Firmware file')])));
   }
-  // Weather towns: up to 12, from the list or any place by its coordinates.
   function townsEditor(w, changed) {
     const box = h('div');
     const add = (name, lat, lon) => { (w.towns ||= []).push({ name, lat, lon }); if (!w.refTown) w.refTown = name; draw(); changed(); };

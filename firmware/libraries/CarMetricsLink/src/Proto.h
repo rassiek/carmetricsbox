@@ -41,7 +41,7 @@ enum Type : uint8_t {
 };
 
 enum Role : uint8_t { ROLE_MAIN = 0, ROLE_SENSOR = 1, ROLE_RELAY = 2, ROLE_SENSOR_RELAY = 3, ROLE_DISPLAY = 4 };
-enum Chip : uint8_t { CHIP_ESP32 = 0, CHIP_ESP32S3 = 1, CHIP_OTHER = 255 };
+enum Chip : uint8_t { CHIP_ESP32 = 0, CHIP_ESP32S3 = 1, CHIP_ESP32C3 = 2, CHIP_ESP32C6 = 3, CHIP_OTHER = 255 };   // C3 / C6: 5.4 workers
 
 constexpr uint32_t HEARTBEAT_MS = 1000;
 constexpr uint32_t LINK_LOST_MS = 5000;      // > a 2-3 s Wi-Fi search on the main board

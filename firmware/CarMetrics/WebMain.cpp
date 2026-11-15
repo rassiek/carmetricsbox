@@ -4,7 +4,6 @@
 #include "WebMain.h"
 #include "Web.h"
 #include "Boards.h"
-#include "History.h"
 #include "BlackBox.h"
 #include "Cloud.h"
 #include "Health.h"
@@ -13,14 +12,6 @@
 using namespace Web;
 
 namespace {
-void hHistory(Ctx& c) {
-  std::shared_ptr<History::Reader> rd;
-  { StateLock lk; rd = std::make_shared<History::Reader>(); }
-  AsyncWebServerResponse* res = c.req->beginChunkedResponse("application/json",
-    [rd](uint8_t* buf, size_t max, size_t) -> size_t { return rd->read(buf, max); });
-  res->addHeader("Cache-Control", "no-store");
-  c.req->send(res);
-}
 
 
 int boardId(Ctx& c) { return c.p[0].toInt(); }
@@ -43,8 +34,8 @@ void hBoardCommand(Ctx& c) {
 }
 void hBoardFirmware(Ctx& c) {
   int id = boardId(c);
-  String src = c.body["source"] | "self";
-  String err = src == "cancel" ? Boards::firmwareCancel(id) : src == "file" ? Boards::firmwareFromUpload(id) : Boards::firmwareFromSelf(id);
+  String src = c.body["source"] | "file";   // 5.4: always a file (the main firmware is not a worker's)
+  String err = src == "cancel" ? Boards::firmwareCancel(id) : src == "file" ? Boards::firmwareFromUpload(id) : String("source: file or cancel");
   sendResult(c.req, err, src == "cancel" ? "Cancelled" : "Sending the firmware; the board restarts when it has all of it");
 }
 void hDispCatalog(Ctx& c) {
@@ -62,31 +53,25 @@ void hDispCommand(Ctx& c) {
 }
 
 
+// Presets: plain JSON files of the web app (web/presets), merged into the settings.
 void hPresets(Ctx& c) {
   JsonDocument d; JsonArray a = d["items"].to<JsonArray>();
-  File dir = LittleFS.open("/www/presets");
-  if (dir && dir.isDirectory())
-    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
-      String n = f.name();
-      if (n.endsWith(".gz")) n.remove(n.length() - 3);
-      if (n.endsWith(".json")) a.add(n.substring(0, n.length() - 5));
-    }
+  for (size_t i = 0; i < Web::fileCount(); i++) {
+    String n = Web::fileAt(i).path;
+    if (n.startsWith("/presets/") && n.endsWith(".json")) a.add(n.substring(9, n.length() - 5));
+  }
   { StateLock lk; d["current"] = gConfig.ui.preset; }
   sendJson(c.req, 200, d);
 }
 void hPresetApply(Ctx& c) {
   String p = c.body["preset"] | "";
-  for (char ch : p) if (!isalnum((unsigned char)ch) && ch != '_' && ch != '-') { sendError(c.req, 400, "Unknown preset", "preset"); return; }
-  File f = LittleFS.open("/www/presets/" + p + ".json");
-  if (!f) { sendError(c.req, 404, "Unknown preset '" + p + "'", "preset"); return; }
+  const Web::File* f = Web::file("/presets/" + p + ".json");
+  if (!f || f->gz) { sendError(c.req, 404, "Unknown preset '" + p + "'", "preset"); return; }
   JsonDocument preset;
-  DeserializationError e = deserializeJson(preset, f);
-  f.close();
-  if (e) { sendError(c.req, 409, "Preset file is damaged"); return; }
+  if (deserializeJson(preset, (const char*)f->data, f->len)) { sendError(c.req, 409, "Preset file is damaged"); return; }
   preset["ui"]["preset"] = p;
   patchSettings(c.req, preset.as<JsonVariantConst>(), "Preset '" + p + "' applied");
 }
-
 
 void hAltitude(Ctx& c) {   // known altitude -> sea-level pressure reference
   if (c.body["altitudeM"].isNull()) { sendError(c.req, 400, "altitudeM: where you are now, in metres", "altitudeM"); return; }
@@ -126,7 +111,6 @@ void hBoardFileDone(Ctx& c) { String err; if (uploadResult(err)) sendOk(c.req, "
 
 
 const Route kMainRoutes[] = {
-  {HTTP_GET, "history", SCOPE_READ, hHistory, nullptr},
   {HTTP_GET, "boards", SCOPE_READ, hBoards, nullptr},
   {HTTP_POST, "boards", SCOPE_ADMIN, hBoardPair, nullptr},
   {HTTP_PATCH, "boards/*", SCOPE_ADMIN, hBoardRename, nullptr},

@@ -1,9 +1,14 @@
 #include "Gps.h"
 #include "State.h"
 #include <sys/time.h>
+#include <soc/soc_caps.h>
 
 namespace {
+#if SOC_UART_NUM > 2
 HardwareSerial& port = Serial2;
+#else
+HardwareSerial& port = Serial1;   // C3 / C6 have two UARTs: 0 is the console
+#endif
 bool portOpen = false;
 int openRx = -2, openTx = -2; uint32_t openBaud = 0;
 char line[100]; uint8_t len = 0;
