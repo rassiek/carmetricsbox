@@ -29,7 +29,12 @@ LINK="$LIBS/CarMetricsLink/src"; CORELIB="$LIBS/CarMetricsCore/src"
 OUT="$ROOT/build"
 mkdir -p "$OUT"
 
+# arduino-cli copies a sketch into its build cache and never deletes files that left
+# the sketch (they would still compile): clear that copy before each build.
+fresh() { rm -rf "$HOME"/.cache/arduino/sketches/*/sketch 2>/dev/null || true; }
+
 compile() {   # compile <outdir> <fqbn-options> [extra cpp flags]
+  fresh
   local args=(--libraries "$LIBS" --fqbn "espressif:esp32:esp32:$2" --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$1")
   [ -n "${3:-}" ] && args+=(--build-property "compiler.cpp.extra_flags=$3")
   "$CLI" compile "${args[@]}" "$SKETCH" 2>&1 | grep -vE "^Error initializing instance" | grep -E "error|warning: unused|Sketch uses|Global variables" || true
@@ -61,7 +66,7 @@ cmd_build3() {
     *) echo "chip must be esp32 or esp32s3"; exit 1 ;;
   esac
   local dir="$OUT/core3-$chip"
-  rm -rf "$dir"
+  fresh; rm -rf "$dir"
   ARDUINO_DIRECTORIES_USER="${CM_CORE3_USER:-$PREFIX/core3/Arduino}" ARDUINO_DIRECTORIES_DATA="${CM_CORE3_DATA:-$PREFIX/core3/arduino15}" \
     "$CLI" compile --libraries "$LIBS" --fqbn "espressif:esp32:$chip:$opts" --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$dir" "$SKETCH" 2>&1 \
     | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
@@ -81,7 +86,7 @@ cmd_build3() {
 # and the 8 MB partition table (copied over the sketch's 4 MB one in a temp copy).
 cmd_build52() {
   local s="$OUT/sketch52/CarMetrics" dir="$OUT/v52"
-  rm -rf "$OUT/sketch52" "$dir" && mkdir -p "$s"
+  fresh; rm -rf "$OUT/sketch52" "$dir" && mkdir -p "$s"
   cp "$SKETCH"/*.h "$SKETCH"/*.cpp "$SKETCH"/*.ino "$s"/
   cp "$ROOT/firmware/partitions-8MB-v52.csv" "$s/partitions.csv"
   python3 "$ROOT/tools/build_web.py" --mklittlefs "$CORE/tools/mklittlefs/mklittlefs" --line 52 --fs-size 0x1C0000 \

@@ -24,8 +24,6 @@ namespace Proto { struct Command; }
 namespace Boards {
 void begin();                    // after WifiMgr::begin()
 void update();                   // from loop()
-bool isMain();
-const char* role();
 
 // main board, from web handlers (they take the state lock themselves)
 void toJson(JsonObject o);       // role, link, found / paired boards with live values
@@ -44,8 +42,6 @@ void displayValues(JsonObject o);              // {rev, level, muted, v:[[value,
 String displayCommand(JsonVariantConst j);     // {kind:"relay",board,index,on} | {kind:"mute",minutes} | {kind:"limit",index,which,value,rev}; "" = ok
 String relayCommand(int id, int relayIndex, bool on);
 String actuatorCommand(int id, int index, JsonVariantConst body);   // body as Relays::command
-String jsonToCommand(JsonVariantConst body, Proto::Command& c);
-void commandToJson(const Proto::Command& c, const RelayConfig& r, JsonObject o);
 
 // Firmware for another board, sent over the link: this board's own firmware
 // (same chip), or a file uploaded into this board's spare firmware slot.

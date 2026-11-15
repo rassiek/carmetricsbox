@@ -1,7 +1,6 @@
 #include "Boards.h"
 #include "BoardNet.h"
-#include "EspNowLink.h"
-#include "CanLink.h"
+#include "Radio.h"
 #include "State.h"
 #include "Outputs.h"
 #include "Board.h"
@@ -24,17 +23,10 @@ using namespace BoardNet;
 
 namespace {
 const char* NS = "boards";       // main board: paired boards + their shares (in the "cfg" NVS partition)
-const char* NODE_NS = "node";    // extra board: own id + accepted settings revision
-
-EspNowLink radio;      // ESP-NOW (default)
-CanLink can;           // CAN (option)
-MultiLink links;       // what the sessions use: ESP-NOW and/or CAN
-bool useRadio = false, useCan = false, anyLink = false;
 MainSession* mainS = nullptr;
-NodeSession* nodeS = nullptr;
 bool started = false;
-uint8_t hopChannel = 1;
-uint32_t lastHop = 0;
+EspNowLink& radio = Radio::espnow();
+using Radio::myChip; using Radio::chipName; using Radio::chipOfImage; using Radio::macStr; using Radio::parseMac;
 
 void syncMirrors();
 
@@ -58,53 +50,19 @@ uint32_t lastDisplayPush = 0;
 // ---------------------------------------------------------------- firmware images
 // ESP32 image header: magic 0xE9 at 0, chip id (uint16) at 12; app description
 // (version string at +16) right after the first segment header, at 32.
-uint8_t chipOfImage(const uint8_t* hdr) {
-  uint16_t id = hdr[12] | (hdr[13] << 8);
-  return id == 0 ? Proto::CHIP_ESP32 : id == 9 ? Proto::CHIP_ESP32S3 : Proto::CHIP_OTHER;
-}
-uint8_t myChip() { return String(Board::chip()) == "esp32s3" ? Proto::CHIP_ESP32S3 : Proto::CHIP_ESP32; }
-const char* chipName(uint8_t c) { return c == Proto::CHIP_ESP32S3 ? "ESP32-S3" : c == Proto::CHIP_ESP32 ? "ESP32" : "other chip"; }
-
 // Main board: an image for another board, uploaded into this board's spare
 // firmware slot (raw: no boot change; that slot's old "previous firmware" is lost).
 struct Uploaded { const esp_partition_t* part = nullptr; uint32_t size = 0, crc = 0; uint8_t chip = 0; String version; bool ok = false; String error; } upload;
-
-// Extra board: OTA writing of an image coming over the link.
-esp_ota_handle_t otaHandle = 0;
-const esp_partition_t* otaPart = nullptr;
 
 struct PointName { String id, name, unit; uint8_t decimals; bool relay; };
 struct Share { String json; std::vector<PointName> names; };
 Share shares[MAX_BOARD_ID + 1];
 
-String macStr(const uint8_t* m) {
-  char b[18]; snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]); return b;
-}
-bool parseMac(const String& s, uint8_t out[6]) {
-  unsigned v[6];
-  if (sscanf(s.c_str(), "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) return false;
-  for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
-  return true;
-}
 String hexKey(const uint8_t* k) { char b[33]; for (int i = 0; i < 16; i++) snprintf(b + 2 * i, 3, "%02x", k[i]); return b; }
 bool parseKey(const String& s, uint8_t out[16]) {
   if (s.length() != 32) return false;
   for (int i = 0; i < 16; i++) out[i] = (uint8_t)strtoul(s.substring(2 * i, 2 * i + 2).c_str(), nullptr, 16);
   return true;
-}
-
-uint8_t roleCode(const String& r) {
-  return r == "sensor" ? ROLE_SENSOR : r == "relay" ? ROLE_RELAY : r == "sensor_relay" ? ROLE_SENSOR_RELAY : ROLE_MAIN;
-}
-
-Identity identity() {
-  Identity me;
-  me.role = roleCode(gConfig.sys.role);
-  me.chip = String(Board::chip()) == "esp32s3" ? Proto::CHIP_ESP32S3 : Proto::CHIP_ESP32;
-  WiFi.macAddress(me.mac);
-  me.firmware = FW_VERSION;
-  me.name = gConfig.sys.hostname.c_str();
-  return me;
 }
 
 // ---------------------------------------------------------------- main board storage
@@ -369,70 +327,6 @@ String apIpOf(const uint8_t mac[6]) {
   return "";
 }
 
-// ---------------------------------------------------------------- extra board
-uint8_t nodePoints(Point* out, uint8_t max) {
-  size_t n = gConfig.sensors.size() + gConfig.relays.size();
-  if (!out) return n > 255 ? 255 : (uint8_t)n;
-  uint8_t k = 0;
-  for (size_t i = 0; i < gSensorRt.size() && k < max; i++, k++) {
-    out[k].value = gSensorRt[i].value; out[k].status = gSensorRt[i].status; out[k].level = gSensorRt[i].level;
-  }
-  for (size_t i = 0; i < gRelayRt.size() && k < max; i++, k++) {
-    out[k].value = Relays::value(i); out[k].status = ST_OK; out[k].level = LVL_OK;
-  }
-  return k;
-}
-
-uint8_t nodeConfig(const std::vector<uint8_t>& json, uint32_t rev, std::string& msg) {
-  JsonDocument d;
-  if (deserializeJson(d, (const char*)json.data(), json.size())) { msg = "not valid JSON"; return CFG_INVALID; }
-  Config* c = new Config(gConfig);
-  String err;
-  bool ok = (d["sensors"].isNull() || sensorsFromJson(d["sensors"], c->sensors, err)) &&
-            (d["relays"].isNull() || relaysFromJson(d["relays"], c->relays, err));
-  // The engine-running sensor (default bat_voltage) lives on the main board: when it
-  // isn't among this board's sensors, "engine running only" alarms here simply always
-  // apply instead of refusing the whole settings (5.2.0-beta.2: "Engine-running sensor
-  // 'bat_voltage' does not exist").
-  if (ok && c->sys.engineSensorId.length()) {
-    bool have = false;
-    for (auto& x : c->sensors) if (x.id == c->sys.engineSensorId) have = true;
-    if (!have) c->sys.engineSensorId = "";
-  }
-  ok = ok && validateConfig(*c, err);
-  if (!ok) {   // the reply carries 47 characters: keep the part that says what to fix
-    delete c;
-    err.replace("Actuator ", ""); err.replace("Sensor ", ""); err.replace(" can't be used as an output", " is input-only/missing");
-    int on = err.indexOf(" on "); if (on > 0 && err.indexOf("(use") > on) err = err.substring(0, on);
-    msg = err.c_str(); return CFG_INVALID;
-  }
-  requestConfigApply(c);   // applied and saved by loop() on its next pass
-  Preferences p;
-  if (p.begin(NODE_NS, false, "cfg")) { p.putUInt("rev", rev); p.end(); }
-  Serial.printf("[boards] new settings from the main board: %u sensors, %u relays\n", (unsigned)c->sensors.size(), (unsigned)c->relays.size());
-  return CFG_OK;
-}
-
-uint8_t nodeCommand(const Command& c) {
-  switch (c.kind) {
-    case CMD_RELAY: {
-      if (c.index >= gConfig.relays.size()) return 2;
-      JsonDocument d;
-      Boards::commandToJson(c, gConfig.relays[c.index], d.to<JsonObject>());
-      String err = Relays::command(gConfig.relays[c.index].id, d.as<JsonVariantConst>());
-      return err.length() ? 1 : 0;
-    }
-    case CMD_MUTE: if (c.minutes) Alerts::mute(c.minutes * 60000UL); else Alerts::unmute(); return 0;
-    case CMD_IDENTIFY: Alerts::chirp(300); return 0;
-    case CMD_REBOOT: requestReboot(500); return 0;
-    default: return 3;
-  }
-}
-
-void nodeLink(bool up) {
-  Serial.printf("[boards] link to the main board %s\n", up ? "up" : "LOST: actuators to their safe state");
-  Relays::linkLost(!up);
-}
 }  // namespace
 
 std::vector<SensorConfig> Boards::buildMirrors(const std::vector<ShareInfo>& infos, const std::vector<SensorConfig>& current) {
@@ -462,8 +356,7 @@ std::vector<SensorConfig> Boards::buildMirrors(const std::vector<ShareInfo>& inf
   return out;
 }
 
-bool Boards::isMain() { return gConfig.sys.role == "main"; }
-const char* Boards::role() { return gConfig.sys.role.c_str(); }
+
 
 void Boards::begin() {
 #ifdef CM_EMULATOR_TEST
@@ -471,128 +364,41 @@ void Boards::begin() {
 #endif
   if (started) return;
   started = true;
-  // Main board: ESP-NOW always, CAN too when enabled. Extra board: CAN when
-  // enabled (then no radio channel search), otherwise ESP-NOW.
-  const SystemConfig& s = gConfig.sys;
-  bool canWanted = s.canEnabled && s.canTx >= 0 && s.canRx >= 0;
-  useRadio = isMain() || !canWanted;
-  if (useRadio && radio.begin(isMain())) links.add(&radio); else useRadio = false;
-  uint8_t mac[6]; WiFi.macAddress(mac);
-  useCan = canWanted && can.begin(s.canTx, s.canRx, s.canKbps, mac);
-  if (useCan) links.add(&can);
-  anyLink = useRadio || useCan;
-  if (!anyLink) return;
-  if (isMain()) {
-    MainSession::Callbacks cb;
-    cb.online = [](const BoardInfo& b, bool on) { Serial.printf("[boards] board %u '%s' %s\n", b.id, b.name.c_str(), on ? "online" : "OFFLINE"); };
-    cb.configResult = [](const BoardInfo& b) {
-      Serial.printf("[boards] board %u settings %s %s\n", b.id, b.configStatus == CFG_OK ? "accepted" : "REFUSED:", b.configMessage.c_str());
-    };
-    cb.boardsChanged = [] { saveTable(); boardsVersion++; };
-    cb.boardCommand = [](const BoardInfo& b, const Command& c) -> uint8_t {
-      if (b.role != ROLE_DISPLAY) return ACK_NOT_ALLOWED;   // only displays control the main board
-      uint8_t st = runDisplayCommand(c);
-      Serial.printf("[boards] display %u: command %u -> %u\n", b.id, c.kind, st);
-      return st;
-    };
-    cb.status = [](uint8_t& level, uint8_t& flags) { level = (uint8_t)gSys.overallLevel; flags = gSys.muted ? HB_MUTED : 0; };
-    mainS = new MainSession(links, identity(), cb);
-    loadMain();
-  } else {
-    Preferences p;
-    uint8_t id = UNPAIRED; uint32_t rev = 0; uint8_t key[16]; bool hasKey = false;
-    if (p.begin(NODE_NS, true, "cfg")) {
-      id = p.getUChar("id", UNPAIRED); rev = p.getUInt("rev", 0);
-      hasKey = id != UNPAIRED && p.getBytes("key", key, 16) == 16;
-      p.end();
-    }
-    if (hasKey) radio.setKey(MAIN_BOARD, key);   // the main board's radio address is learned from its first frame
-    NodeSession::Callbacks cb;
-    cb.paired = [](uint8_t newId, const std::string&, const uint8_t* key) {
-      Preferences q;
-      if (q.begin(NODE_NS, false, "cfg")) {
-        q.putUChar("id", newId);
-        if (newId == UNPAIRED) q.putUInt("rev", 0);
-        if (key) q.putBytes("key", key, 16); else q.remove("key");
-        q.end();
-      }
-      radio.setKey(MAIN_BOARD, key);
-      Serial.printf("[boards] %s\n", newId == UNPAIRED ? "unpaired by the main board" : ("paired as board " + String(newId)).c_str());
-    };
-    cb.config = nodeConfig;
-    cb.command = nodeCommand;
-    cb.link = nodeLink;
-    cb.points = nodePoints;
-    cb.level = [] { return (uint8_t)gSys.overallLevel; };
-    cb.fwBegin = [](uint32_t size, uint8_t chip, const char* version, std::string& msg) -> uint8_t {
-      if (chip != myChip()) { msg = std::string("image is for ") + chipName(chip) + ", this is " + chipName(myChip()); return FW_WRONG_CHIP; }
-      otaPart = esp_ota_get_next_update_partition(nullptr);
-      if (!otaPart) { msg = "no spare firmware slot"; return FW_REFUSED; }
-      if (size > otaPart->size) { msg = "image bigger than the firmware slot"; return FW_TOO_BIG; }
-      // Erase as we go (not all at once), so sensors and alarms keep running during the transfer.
-      if (esp_ota_begin(otaPart, OTA_WITH_SEQUENTIAL_WRITES, &otaHandle) != ESP_OK) { msg = "could not start the update"; return FW_REFUSED; }
-      Serial.printf("[boards] receiving firmware %s (%u bytes) from the main board\n", version, (unsigned)size);
-      return FW_RECEIVING;
-    };
-    cb.fwWrite = [](uint32_t offset, const uint8_t* data, size_t len) {
-      if (offset == 0 && (len < 16 || data[0] != 0xE9 || chipOfImage(data) != myChip())) return false;   // not a firmware for this chip
-      return esp_ota_write(otaHandle, data, len) == ESP_OK;
-    };
-    cb.fwEnd = [](std::string& msg) -> uint8_t {
-      if (esp_ota_end(otaHandle) != ESP_OK) { otaHandle = 0; msg = "image check failed"; return FW_BAD_CRC; }
-      otaHandle = 0;
-      if (esp_ota_set_boot_partition(otaPart) != ESP_OK) { msg = "could not switch firmware"; return FW_WRITE_ERROR; }
-      return FW_DONE;   // the new firmware is confirmed after 60 s of running (rollback otherwise)
-    };
-    cb.fwAbort = [] { if (otaHandle) { esp_ota_abort(otaHandle); otaHandle = 0; } };
-    cb.fwDone = [] { Serial.println("[boards] new firmware received: restarting"); requestReboot(1500); };
-    nodeS = new NodeSession(links, identity(), id, rev, cb);
-  }
-  links.onReceive([](const uint8_t* f, size_t n, int8_t rssi) {
-    if (mainS) mainS->receive(f, n, rssi, millis());
-    if (nodeS) nodeS->receive(f, n, rssi, millis());
-  });
+  if (!Radio::begin(true)) return;   // the main board always listens on ESP-NOW (and CAN when enabled)
+  MainSession::Callbacks cb;
+  cb.online = [](const BoardInfo& b, bool on) { Serial.printf("[boards] board %u '%s' %s\n", b.id, b.name.c_str(), on ? "online" : "OFFLINE"); };
+  cb.configResult = [](const BoardInfo& b) {
+    Serial.printf("[boards] board %u settings %s %s\n", b.id, b.configStatus == CFG_OK ? "accepted" : "REFUSED:", b.configMessage.c_str());
+  };
+  cb.boardsChanged = [] { saveTable(); boardsVersion++; };
+  cb.boardCommand = [](const BoardInfo& b, const Command& c) -> uint8_t {
+    if (b.role != ROLE_DISPLAY) return ACK_NOT_ALLOWED;   // only displays control the main board
+    uint8_t st = runDisplayCommand(c);
+    Serial.printf("[boards] display %u: command %u -> %u\n", b.id, c.kind, st);
+    return st;
+  };
+  cb.status = [](uint8_t& level, uint8_t& flags) { level = (uint8_t)gSys.overallLevel; flags = gSys.muted ? HB_MUTED : 0; };
+  mainS = new MainSession(Radio::links(), Radio::identity(ROLE_MAIN), cb);
+  loadMain();
+  Radio::links().onReceive([](const uint8_t* f, size_t n, int8_t rssi) { if (mainS) mainS->receive(f, n, rssi, millis()); });
 }
 
 void Boards::update() {
-  if (!started || !anyLink) return;
+  if (!started || !Radio::ok() || !mainS) return;
   uint32_t now = millis();
   StateLock lk;   // web handlers use the main session too
-  links.poll();
-  if (mainS) { mainS->update(now); updateMirrors(now); serveDisplays(now); }
-  if (nodeS) {
-    nodeS->flags = (gSys.muted ? HB_MUTED : 0) | (Health::safeMode() ? HB_SAFE_MODE : 0);
-    nodeS->update(now);
-    // Channel search: hop until the main board answers (its beacon / reply to our hello).
-    if (useRadio && !nodeS->mainInRange(now) && now - lastHop >= 300) {
-      lastHop = now;
-      hopChannel = hopChannel % 13 + 1;
-      radio.setChannel(hopChannel);
-      nodeS->sayHello();
-    }
-  }
+  Radio::links().poll();
+  mainS->update(now); updateMirrors(now); serveDisplays(now);
 }
 
 // ---------------------------------------------------------------- web
 void Boards::toJson(JsonObject o) {
   StateLock lk;
   uint32_t now = millis();
-  o["role"] = gConfig.sys.role;
-  JsonObject l = o["link"].to<JsonObject>();
-  l["type"] = links.name(); l["ok"] = anyLink; l["channel"] = radio.ok() ? radio.channel() : 0;
-  if (useCan || gConfig.sys.canEnabled) {
-    JsonObject cj = o["can"].to<JsonObject>();
-    cj["state"] = can.state(); cj["rx"] = can.rxCount; cj["tx"] = can.txCount; cj["txFail"] = can.txFail; cj["busErrors"] = can.busErrors;
-  }
+  o["role"] = "main";
+  Radio::toJson(o);
   o["firmware"] = FW_VERSION; o["chip"] = chipName(myChip());
   if (upload.ok) { JsonObject u = o["uploaded"].to<JsonObject>(); u["version"] = upload.version; u["chip"] = chipName(upload.chip); u["size"] = upload.size; }
-  l["rx"] = radio.rxCount; l["tx"] = radio.txCount; l["txFail"] = radio.txFail; l["queueDrops"] = radio.queueDrops;
-  if (nodeS) {
-    JsonObject n = o["node"].to<JsonObject>();
-    n["paired"] = nodeS->paired(); n["id"] = nodeS->boardId(); n["linkUp"] = nodeS->linkUp();
-    n["mainInRange"] = nodeS->mainInRange(now); n["configRev"] = nodeS->configRev();
-    n["encrypted"] = radio.encrypted(MAIN_BOARD);
-  }
   if (!mainS) return;
   JsonArray fa = o["found"].to<JsonArray>();
   for (auto& f : mainS->found()) {
@@ -802,7 +608,7 @@ String Boards::relayCommand(int id, int index, bool on) {
 String Boards::actuatorCommand(int id, int index, JsonVariantConst body) {
   if (!mainS) return "Only on the main board";
   Command c; c.kind = CMD_RELAY; c.index = (uint8_t)index;
-  String err = jsonToCommand(body, c);
+  String err = Radio::jsonToCommand(body, c);
   if (err.length()) return err;
   StateLock lk;
   const BoardInfo* b = id >= 1 && id <= MAX_BOARD_ID ? mainS->board((uint8_t)id) : nullptr;
@@ -811,36 +617,6 @@ String Boards::actuatorCommand(int id, int index, JsonVariantConst body) {
   return mainS->command((uint8_t)id, c) < 0 ? "Not sent" : "";
 }
 
-// JSON actuator command -> radio command (other boards). Only what the radio carries.
-String Boards::jsonToCommand(JsonVariantConst b, Command& c) {
-  c.minutes = (uint16_t)constrain((long)(b["forMinutes"] | 0.0f), 0L, 1440L);
-  if (b["auto"] | false) { c.which = ACT_AUTO; return ""; }
-  String dir = b["direction"] | "";
-  if (!b["on"].isNull()) { c.which = ACT_ON; c.on = (b["on"] | false) ? 1 : 0; return ""; }
-  float v = NAN;
-  if (!b["duty"].isNull()) v = b["duty"].as<float>();
-  else if (!b["angle"].isNull()) v = b["angle"].as<float>();
-  else if (dir.length()) {
-    float sp = b["speed"] | 100.0f;
-    v = dir == "forward" ? sp : dir == "reverse" ? -sp : 0;
-  } else if (!b["speed"].isNull()) v = b["speed"].as<float>();
-  if (isnan(v)) return "Nothing to do: send on, duty, direction / speed, angle or auto";
-  c.which = ACT_VALUE; c.value = v; c.on = v != 0 ? 1 : 0;   // `on` for boards older than 5.3
-  return "";
-}
-
-// Radio command -> JSON for Relays::command on this board.
-void Boards::commandToJson(const Command& c, const RelayConfig& r, JsonObject o) {
-  if (c.which == ACT_AUTO) o["auto"] = true;
-  else if (c.which == ACT_VALUE) {
-    if (r.type == ActType::SERVO) o["angle"] = c.value;
-    else if (r.type == ActType::RELAY) o["on"] = c.value != 0;
-    else o["duty"] = c.value;
-  } else o["on"] = c.on != 0;
-  if (c.minutes) o["forMinutes"] = c.minutes;
-}
-
-// ---------------------------------------------------------------- board control (main board web pages)
 String Boards::boardCommand(int id, const String& cmd, int minutes) {
   if (!mainS) return "Only on the main board";
   StateLock lk;

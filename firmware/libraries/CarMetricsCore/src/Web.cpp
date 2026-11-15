@@ -4,13 +4,9 @@
 #include "State.h"
 #include "Sensors.h"
 #include "Outputs.h"
-#include "History.h"
-#include "Cloud.h"
 #include "Health.h"
 #include "Board.h"
-#include "BlackBox.h"
 #include "WifiMgr.h"
-#include "Boards.h"
 #include "Keys.h"
 #include "Pins.h"
 #include "Discover.h"
@@ -39,13 +35,20 @@ std::vector<WsInfo> wsInfo;            // StateLock
 uint32_t lastPush = 0, eventId = 0;
 volatile bool configChanged = false;
 uint8_t lastLevel = 255; bool lastMuted = false;
+const Web::Remote* remote = nullptr;               // other boards (main firmware only)
+void (*infoHook)(JsonObject) = nullptr;            // role, capabilities of this firmware
+void (*afterPatch)(const String& section) = nullptr;
+std::vector<std::pair<const Web::Route*, size_t>> extraRoutes;
 
-// ================================================================== replies
+}  // namespace
+
+// ================================================================== helpers (namespace Web, used by firmware routes too)
+namespace Web {
 bool roomFor(size_t n) {   // one free block big enough (+ headroom for Wi-Fi / TCP)?
   return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > n + 8192;
 }
 
-void sendJson(AsyncWebServerRequest* req, int code, JsonDocument& doc, const char* filename = nullptr) {
+void sendJson(AsyncWebServerRequest* req, int code, JsonDocument& doc, const char* filename) {
   size_t n = filename ? measureJsonPretty(doc) : measureJson(doc);
   if (!roomFor(n)) {
     AsyncWebServerResponse* r = req->beginResponse(503, "application/json", "{\"error\":{\"code\":\"busy\",\"message\":\"Low memory, try again in a moment\"}}");
@@ -61,7 +64,7 @@ void sendJson(AsyncWebServerRequest* req, int code, JsonDocument& doc, const cha
   req->send(res);
 }
 
-void sendError(AsyncWebServerRequest* req, int http, const String& msg, const char* field = nullptr) {
+void sendError(AsyncWebServerRequest* req, int http, const String& msg, const char* field) {
   const char* code = http == 401 ? "auth" : http == 403 ? "scope" : http == 404 ? "not_found" : http == 409 ? "conflict" : http == 503 ? "busy" : "invalid";
   JsonDocument d;
   JsonObject e = d["error"].to<JsonObject>();
@@ -70,14 +73,14 @@ void sendError(AsyncWebServerRequest* req, int http, const String& msg, const ch
   sendJson(req, http, d);
 }
 
-void sendOk(AsyncWebServerRequest* req, const String& msg = "", int http = 200) {
+void sendOk(AsyncWebServerRequest* req, const String& msg, int http) {
   JsonDocument d;
   d["ok"] = true;
   if (msg.length()) d["message"] = msg;
   sendJson(req, http, d);
 }
 // "" = ok, otherwise the message as a 400.
-void sendResult(AsyncWebServerRequest* req, const String& err, const String& okMsg = "") {
+void sendResult(AsyncWebServerRequest* req, const String& err, const String& okMsg) {
   if (err.length()) sendError(req, 400, err); else sendOk(req, okMsg);
 }
 
@@ -105,17 +108,6 @@ bool allowed(AsyncWebServerRequest* req, uint8_t need) {
 }
 
 // ================================================================== settings helpers
-// Copy the settings, let `edit` change the copy, validate, hand it to loop().
-template <typename F>
-void changeConfig(AsyncWebServerRequest* req, F edit, const String& okMsg) {
-  Config* next;
-  { StateLock lk; next = new Config(gConfig); }
-  String err;
-  if (!edit(*next, err) || !validateConfig(*next, err)) { delete next; sendError(req, 400, err); return; }
-  requestConfigApply(next);
-  sendOk(req, okMsg);
-}
-
 void deepMerge(JsonVariant dst, JsonVariantConst src) {
   if (src.is<JsonObjectConst>() && dst.is<JsonObject>()) {
     for (JsonPairConst kv : src.as<JsonObjectConst>()) {
@@ -218,15 +210,6 @@ void alertsToJson(JsonObject o) {   // lock held
 }
 
 // ================================================================== requests
-struct Ctx {
-  AsyncWebServerRequest* req;
-  String p[2];                  // the "*" parts of the route
-  JsonDocument body;            // parsed JSON body (null when none)
-  String q(const char* k, const char* def = "") const { return req->hasParam(k) ? req->getParam(k)->value() : String(def); }
-};
-using Fn = void (*)(Ctx&);
-struct Route { uint32_t method; const char* path; uint8_t need; Fn fn; };
-
 // ?board=local (default) | b1..bN -> 0 | N, -1 bad
 int boardParam(Ctx& c) {
   String b = c.q("board", "local");
@@ -235,6 +218,10 @@ int boardParam(Ctx& c) {
   return -1;
 }
 
+}  // namespace Web
+
+using namespace Web;
+namespace {
 // ---- sensors / actuators lists (this board or a paired board), edited as JSON
 // kind "sensors" | "relays"
 bool loadList(int board, const char* kind, JsonDocument& out, String& err) {
@@ -246,12 +233,9 @@ bool loadList(int board, const char* kind, JsonDocument& out, String& err) {
     return true;
   }
   String j;
-  err = Boards::shareJson(board, j);
-  if (err.length()) return false;
-  JsonDocument d;
-  if (deserializeJson(d, j)) { err = "Stored settings of that board are damaged"; return false; }
-  out.set(d[kind]);
-  if (!out.is<JsonArray>()) out.to<JsonArray>();
+  if (!remote) { err = "This board has no other boards"; return false; }
+  if (!remote->load(board, kind, j, err)) return false;
+  if (deserializeJson(out, j) || !out.is<JsonArray>()) out.to<JsonArray>();
   return true;
 }
 
@@ -269,7 +253,8 @@ void saveList(Ctx& c, int board, const char* kind, JsonDocument& list, const Str
     return;
   }
   JsonVariantConst v = list.as<JsonVariantConst>();
-  String err = !strcmp(kind, "sensors") ? Boards::setShare(board, v, JsonVariantConst()) : Boards::setShare(board, JsonVariantConst(), v);
+  if (!remote) { sendError(c.req, 400, "This board has no other boards"); return; }
+  String err = remote->save(board, kind, v);
   sendResult(c.req, err, okMsg + ". Sending it to the board.");
 }
 
@@ -369,13 +354,13 @@ void hInfo(Ctx& c) {
     d["appName"] = gConfig.ui.appName; d["machineName"] = gConfig.ui.machineName;
     d["firmware"] = FW_VERSION; d["build"] = Health::buildStamp(); d["variant"] = CM_VARIANT;
     JsonArray api = d["api"].to<JsonArray>(); api.add(1);
-    d["protocol"] = 1; d["role"] = Boards::role();
+    d["protocol"] = 1;
     const BoardProfile& b = Board::current();
     JsonObject bo = d["board"].to<JsonObject>(); bo["id"] = b.id; bo["name"] = b.name;
     d["chip"] = Board::chip();
     JsonArray cap = d["capabilities"].to<JsonArray>();
-    for (auto k : {"actuators", "pwm", "history", "events", "discover", "pins", "keys"}) cap.add(k);
-    if (Boards::isMain()) { cap.add("boards"); cap.add("cloud"); cap.add("weather"); }
+    for (auto k : {"sensors", "actuators", "pwm", "discover", "pins", "keys"}) cap.add(k);
+    if (infoHook) infoHook(d.as<JsonObject>());   // role, extra capabilities
     d["uptimeS"] = millis() / 1000;
     if (gSys.timeSynced) d["epoch"] = (uint32_t)time(nullptr);
     d["hostname"] = gConfig.sys.hostname; d["ip"] = gSys.ip; d["apIp"] = gSys.apIp;
@@ -432,15 +417,6 @@ void hPoint(Ctx& c) {
   if (d["items"].size() == 0) { sendError(c.req, 404, "No point '" + c.p[0] + "'"); return; }
   JsonDocument one; one.set(d["items"][0]); sendJson(c.req, 200, one);
 }
-void hHistory(Ctx& c) {
-  std::shared_ptr<History::Reader> rd;
-  { StateLock lk; rd = std::make_shared<History::Reader>(); }
-  AsyncWebServerResponse* res = c.req->beginChunkedResponse("application/json",
-    [rd](uint8_t* buf, size_t max, size_t) -> size_t { return rd->read(buf, max); });
-  res->addHeader("Cache-Control", "no-store");
-  c.req->send(res);
-}
-
 void hAlerts(Ctx& c) { JsonDocument d; { StateLock lk; alertsToJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
 void hMute(Ctx& c) {
   int m = c.body["minutes"] | 15;
@@ -486,45 +462,7 @@ void hActCommand(Ctx& c) {
   if (!loadList(b, "relays", list, err)) { sendError(c.req, 404, err); return; }
   int i = findIn(list, c.p[0]);
   if (i < 0) { sendError(c.req, 404, "No actuator '" + c.p[0] + "' on that board"); return; }
-  sendResult(c.req, Boards::actuatorCommand(b, i, c.body.as<JsonVariantConst>()), "Sent");
-}
-
-int boardId(Ctx& c) { return c.p[0].toInt(); }
-void hBoards(Ctx& c) {
-  JsonDocument d; Boards::toJson(d.to<JsonObject>());
-  if (!d["boards"].isNull()) { d["items"] = d["boards"]; d.remove("boards"); }
-  sendJson(c.req, 200, d);
-}
-void hBoardPair(Ctx& c) {
-  int id = -1;
-  String err = Boards::accept(c.body["mac"] | "", c.body["name"] | "", id);
-  if (err.length()) sendError(c.req, 400, err);
-  else { JsonDocument d; d["ok"] = true; d["id"] = id; d["message"] = "Paired as b" + String(id) + ": set up its sensors and actuators next"; sendJson(c.req, 200, d); }
-}
-void hBoardRename(Ctx& c) { sendResult(c.req, Boards::rename(boardId(c), c.body["name"] | ""), "Renamed"); }
-void hBoardForget(Ctx& c) { sendResult(c.req, Boards::forget(boardId(c)), "Board forgotten"); }
-void hBoardCommand(Ctx& c) {
-  String cmd = c.body["cmd"] | "";
-  sendResult(c.req, Boards::boardCommand(boardId(c), cmd, c.body["minutes"] | 15), cmd == "resend" ? "Sending the settings again" : "Sent");
-}
-void hBoardFirmware(Ctx& c) {
-  int id = boardId(c);
-  String src = c.body["source"] | "self";
-  String err = src == "cancel" ? Boards::firmwareCancel(id) : src == "file" ? Boards::firmwareFromUpload(id) : Boards::firmwareFromSelf(id);
-  sendResult(c.req, err, src == "cancel" ? "Cancelled" : "Sending the firmware; the board restarts when it has all of it");
-}
-void hDispCatalog(Ctx& c) {
-  uint32_t rev = 0;
-  String j = Boards::displayCatalog(rev);
-  AsyncWebServerResponse* res = c.req->beginResponse(200, "application/json", j);
-  res->addHeader("Cache-Control", "no-store"); res->addHeader("X-Catalog-Rev", String(rev));
-  c.req->send(res);
-}
-void hDispValues(Ctx& c) { JsonDocument d; Boards::displayValues(d.to<JsonObject>()); sendJson(c.req, 200, d); }
-void hDispCommand(Ctx& c) {
-  String kind = c.body["kind"] | "";
-  if (kind != "mute" && !allowed(c.req, SCOPE_CONTROL)) return;
-  sendResult(c.req, Boards::displayCommand(c.body.as<JsonVariantConst>()), "Done");
+  sendResult(c.req, remote ? remote->command(b, i, c.body.as<JsonVariantConst>()) : String("This board has no other boards"), "Sent");
 }
 
 void hSettings(Ctx& c) {
@@ -544,7 +482,7 @@ void hSettingsPatch(Ctx& c) {
   if (!c.body.is<JsonObject>()) { sendError(c.req, 400, "Send the fields to change as a JSON object"); return; }
   JsonDocument patch; patch[c.p[0]] = c.body;
   patchSettings(c.req, patch.as<JsonVariantConst>(), "Saved");
-  if (c.p[0] == "weather") Cloud::requestWeather();
+  if (afterPatch) afterPatch(c.p[0]);
 }
 void hBackup(Ctx& c) {
   JsonDocument d;
@@ -573,31 +511,6 @@ void hReset(Ctx& c) {
   requestConfigApply(cfg);
   sendOk(c.req, keepSystem ? "Back to defaults (network, passwords and pins kept)" : "Back to defaults");
 }
-void hPresets(Ctx& c) {
-  JsonDocument d; JsonArray a = d["items"].to<JsonArray>();
-  File dir = LittleFS.open("/www/presets");
-  if (dir && dir.isDirectory())
-    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
-      String n = f.name();
-      if (n.endsWith(".gz")) n.remove(n.length() - 3);
-      if (n.endsWith(".json")) a.add(n.substring(0, n.length() - 5));
-    }
-  { StateLock lk; d["current"] = gConfig.ui.preset; }
-  sendJson(c.req, 200, d);
-}
-void hPresetApply(Ctx& c) {
-  String p = c.body["preset"] | "";
-  for (char ch : p) if (!isalnum((unsigned char)ch) && ch != '_' && ch != '-') { sendError(c.req, 400, "Unknown preset", "preset"); return; }
-  File f = LittleFS.open("/www/presets/" + p + ".json");
-  if (!f) { sendError(c.req, 404, "Unknown preset '" + p + "'", "preset"); return; }
-  JsonDocument preset;
-  DeserializationError e = deserializeJson(preset, f);
-  f.close();
-  if (e) { sendError(c.req, 409, "Preset file is damaged"); return; }
-  preset["ui"]["preset"] = p;
-  patchSettings(c.req, preset.as<JsonVariantConst>(), "Preset '" + p + "' applied");
-}
-
 void hPins(Ctx& c) { JsonDocument d; { StateLock lk; Pins::toJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
 void hPinTest(Ctx& c) {
   JsonDocument d; String err;
@@ -625,17 +538,6 @@ void hProfileSet(Ctx& c) {   // {"board":"relay_x8","applyPins":true}
     return true;
   }, applyPins ? "Board saved, pins moved to its defaults" : "Board saved");
 }
-void hAltitude(Ctx& c) {   // known altitude -> sea-level pressure reference
-  if (c.body["altitudeM"].isNull()) { sendError(c.req, 400, "altitudeM: where you are now, in metres", "altitudeM"); return; }
-  float alt = c.body["altitudeM"].as<float>(), p;
-  { StateLock lk; p = gSys.stationHpa; }
-  if (isnan(p)) { sendError(c.req, 400, "No air pressure reading (BMP/BME280)"); return; }
-  if (alt < -500 || alt > 6000) { sendError(c.req, 400, "Altitude out of range", "altitudeM"); return; }
-  float sl = p / powf(1.0f - alt / 44330.0f, 5.255f);
-  changeConfig(c.req, [&](Config& cfg, String&) { cfg.sys.seaLevelHpa = sl; cfg.weather.autoSeaLevel = false; return true; },
-               "Sea-level reference " + String(sl, 1) + " hPa (automatic weather correction off)");
-}
-
 void hNetwork(Ctx& c) { JsonDocument d; { StateLock lk; WifiMgr::toJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
 void hScan(Ctx& c) { WifiMgr::searchNow(); sendOk(c.req, "Searching for networks", 202); }
 void hJoin(Ctx& c) {
@@ -660,27 +562,6 @@ void hForgetNet(Ctx& c) {
   }, "Forgotten");
 }
 
-void hEvents(Ctx& c) {
-  JsonDocument d;
-  { StateLock lk; d["enabled"] = gConfig.blackbox.enabled; d["keep"] = gConfig.blackbox.keepEvents; }
-  BlackBox::listToJson(d["items"].to<JsonArray>());
-  sendJson(c.req, 200, d);
-}
-void hEvent(Ctx& c) {
-  String body;
-  if (!BlackBox::read(c.p[0].toInt(), body)) { sendError(c.req, 404, "No such event"); return; }
-  AsyncWebServerResponse* r = c.req->beginResponse(200, "application/json", body);
-  r->addHeader("Cache-Control", "no-store");
-  c.req->send(r);
-}
-void hEventsClear(Ctx& c) { BlackBox::clear(); sendOk(c.req, "Recordings deleted"); }
-
-void hWeather(Ctx& c) { JsonDocument d; { StateLock lk; Cloud::weatherToJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
-void hWeatherRefresh(Ctx& c) { Cloud::requestWeather(); sendOk(c.req, "Refreshing", 202); }
-void hCloud(Ctx& c) { JsonDocument d; { StateLock lk; Cloud::statusToJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
-void hCloudFlush(Ctx& c) { Cloud::requestFlush(); sendOk(c.req, "Upload requested", 202); }
-void hCloudClear(Ctx& c) { Cloud::requestClearBacklog(); sendOk(c.req, "Waiting data deleted"); }
-
 void hKeys(Ctx& c) { JsonDocument d; Keys::toJson(d["items"].to<JsonArray>()); sendJson(c.req, 200, d); }
 void hKeyAdd(Ctx& c) {
   String key, err = Keys::create(c.body["name"] | "", scopeFromStr(c.body["scope"] | ""), key);
@@ -699,85 +580,62 @@ void hFirmwareDone(Ctx& c) {
   sendOk(c.req, "Installed: restarting");
   requestReboot(1500);
 }
-void hBoardFileDone(Ctx& c) { if (up.ok) sendOk(c.req, "Firmware file stored on this board"); else sendError(c.req, 400, up.err); }
 
 // ---- the table. "*" = one path part, passed to the handler in p[0], p[1].
 const Route kRoutes[] = {
-  {HTTP_GET, "", SCOPE_READ, hIndex},
-  {HTTP_GET, "info", SCOPE_NONE, hInfo},
-  {HTTP_GET, "system", SCOPE_READ, hSystem},
-  {HTTP_GET, "system/crash", SCOPE_READ, hCrash},
-  {HTTP_DELETE, "system/crash", SCOPE_ADMIN, hCrashClear},
-  {HTTP_GET, "system/crash/dump", SCOPE_ADMIN, hCrashDump},
-  {HTTP_POST, "system/reboot", SCOPE_ADMIN, hReboot},
-  {HTTP_POST, "system/safe-mode/leave", SCOPE_ADMIN, hLeaveSafe},
-  {HTTP_POST, "system/time", SCOPE_READ, hTime},
-  {HTTP_GET, "points", SCOPE_READ, hPoints},
-  {HTTP_GET, "points/*", SCOPE_READ, hPoint},
-  {HTTP_GET, "history", SCOPE_READ, hHistory},
-  {HTTP_GET, "alerts", SCOPE_READ, hAlerts},
-  {HTTP_POST, "alerts/mute", SCOPE_READ, hMute},   // one tap away, like the button on the box
-  {HTTP_GET, "sensors", SCOPE_READ, hSensors},
-  {HTTP_POST, "sensors", SCOPE_ADMIN, hSensorAdd},
-  {HTTP_GET, "sensors/discover", SCOPE_READ, hDiscover},
-  {HTTP_POST, "sensors/discover", SCOPE_ADMIN, hDiscoverStart},
-  {HTTP_GET, "sensors/*", SCOPE_READ, hSensors},
-  {HTTP_PATCH, "sensors/*", SCOPE_CONTROL, hSensorPatch},
-  {HTTP_DELETE, "sensors/*", SCOPE_ADMIN, hSensorDelete},
-  {HTTP_POST, "sensors/*/calibrate", SCOPE_ADMIN, hCalibrate},
-  {HTTP_GET, "actuators", SCOPE_READ, hActuators},
-  {HTTP_POST, "actuators", SCOPE_ADMIN, hActAdd},
-  {HTTP_GET, "actuators/*", SCOPE_READ, hActuators},
-  {HTTP_PATCH, "actuators/*", SCOPE_ADMIN, hActPatch},
-  {HTTP_DELETE, "actuators/*", SCOPE_ADMIN, hActDelete},
-  {HTTP_POST, "actuators/*/command", SCOPE_CONTROL, hActCommand},
-  {HTTP_GET, "boards", SCOPE_READ, hBoards},
-  {HTTP_POST, "boards", SCOPE_ADMIN, hBoardPair},
-  {HTTP_PATCH, "boards/*", SCOPE_ADMIN, hBoardRename},
-  {HTTP_DELETE, "boards/*", SCOPE_ADMIN, hBoardForget},
-  {HTTP_POST, "boards/*/command", SCOPE_ADMIN, hBoardCommand},
-  {HTTP_POST, "boards/*/firmware", SCOPE_ADMIN, hBoardFirmware},
-  {HTTP_PUT, "boards/firmware-file", SCOPE_ADMIN, hBoardFileDone},
-  {HTTP_GET, "displays/catalog", SCOPE_READ, hDispCatalog},
-  {HTTP_GET, "displays/values", SCOPE_READ, hDispValues},
-  {HTTP_POST, "displays/command", SCOPE_READ, hDispCommand},   // mute open; others checked inside
-  {HTTP_GET, "settings", SCOPE_READ, hSettings},
-  {HTTP_GET, "settings/*", SCOPE_READ, hSettings},
-  {HTTP_PATCH, "settings/*", SCOPE_ADMIN, hSettingsPatch},
-  {HTTP_POST, "settings/reset", SCOPE_ADMIN, hReset},
-  {HTTP_POST, "settings/restore", SCOPE_ADMIN, hRestoreSlot},
-  {HTTP_GET, "backup", SCOPE_ADMIN, hBackup},
-  {HTTP_POST, "backup", SCOPE_ADMIN, hRestore},
-  {HTTP_GET, "presets", SCOPE_READ, hPresets},
-  {HTTP_POST, "presets/apply", SCOPE_ADMIN, hPresetApply},
-  {HTTP_GET, "pins", SCOPE_READ, hPins},
-  {HTTP_POST, "pins/*/test", SCOPE_ADMIN, hPinTest},
-  {HTTP_GET, "hardware/profiles", SCOPE_READ, hProfiles},
-  {HTTP_POST, "hardware/profile", SCOPE_ADMIN, hProfileSet},
-  {HTTP_POST, "hardware/status-light/test", SCOPE_ADMIN, hLightTest},
-  {HTTP_POST, "hardware/altitude", SCOPE_ADMIN, hAltitude},
-  {HTTP_GET, "network", SCOPE_READ, hNetwork},
-  {HTTP_POST, "network/scan", SCOPE_ADMIN, hScan},
-  {HTTP_POST, "network/join", SCOPE_ADMIN, hJoin},
-  {HTTP_DELETE, "network/saved/*", SCOPE_ADMIN, hForgetNet},
-  {HTTP_GET, "events", SCOPE_READ, hEvents},
-  {HTTP_GET, "events/*", SCOPE_READ, hEvent},
-  {HTTP_DELETE, "events", SCOPE_ADMIN, hEventsClear},
-  {HTTP_GET, "weather", SCOPE_READ, hWeather},
-  {HTTP_POST, "weather/refresh", SCOPE_READ, hWeatherRefresh},
-  {HTTP_GET, "cloud", SCOPE_READ, hCloud},
-  {HTTP_POST, "cloud/flush", SCOPE_ADMIN, hCloudFlush},
-  {HTTP_DELETE, "cloud/backlog", SCOPE_ADMIN, hCloudClear},
-  {HTTP_GET, "keys", SCOPE_ADMIN, hKeys},
-  {HTTP_POST, "keys", SCOPE_ADMIN, hKeyAdd},
-  {HTTP_DELETE, "keys/*", SCOPE_ADMIN, hKeyDelete},
-  {HTTP_PUT, "firmware", SCOPE_ADMIN, hFirmwareDone},
+  {HTTP_GET, "", SCOPE_READ, hIndex, nullptr},
+  {HTTP_GET, "info", SCOPE_NONE, hInfo, nullptr},
+  {HTTP_GET, "system", SCOPE_READ, hSystem, nullptr},
+  {HTTP_GET, "system/crash", SCOPE_READ, hCrash, nullptr},
+  {HTTP_DELETE, "system/crash", SCOPE_ADMIN, hCrashClear, nullptr},
+  {HTTP_GET, "system/crash/dump", SCOPE_ADMIN, hCrashDump, nullptr},
+  {HTTP_POST, "system/reboot", SCOPE_ADMIN, hReboot, nullptr},
+  {HTTP_POST, "system/safe-mode/leave", SCOPE_ADMIN, hLeaveSafe, nullptr},
+  {HTTP_POST, "system/time", SCOPE_READ, hTime, nullptr},
+  {HTTP_GET, "points", SCOPE_READ, hPoints, nullptr},
+  {HTTP_GET, "points/*", SCOPE_READ, hPoint, nullptr},
+  {HTTP_GET, "alerts", SCOPE_READ, hAlerts, nullptr},
+  {HTTP_POST, "alerts/mute", SCOPE_READ, hMute, nullptr},   // one tap away, like the button on the box
+  {HTTP_GET, "sensors", SCOPE_READ, hSensors, nullptr},
+  {HTTP_POST, "sensors", SCOPE_ADMIN, hSensorAdd, nullptr},
+  {HTTP_GET, "sensors/discover", SCOPE_READ, hDiscover, nullptr},
+  {HTTP_POST, "sensors/discover", SCOPE_ADMIN, hDiscoverStart, nullptr},
+  {HTTP_GET, "sensors/*", SCOPE_READ, hSensors, nullptr},
+  {HTTP_PATCH, "sensors/*", SCOPE_CONTROL, hSensorPatch, nullptr},
+  {HTTP_DELETE, "sensors/*", SCOPE_ADMIN, hSensorDelete, nullptr},
+  {HTTP_POST, "sensors/*/calibrate", SCOPE_ADMIN, hCalibrate, nullptr},
+  {HTTP_GET, "actuators", SCOPE_READ, hActuators, nullptr},
+  {HTTP_POST, "actuators", SCOPE_ADMIN, hActAdd, nullptr},
+  {HTTP_GET, "actuators/*", SCOPE_READ, hActuators, nullptr},
+  {HTTP_PATCH, "actuators/*", SCOPE_ADMIN, hActPatch, nullptr},
+  {HTTP_DELETE, "actuators/*", SCOPE_ADMIN, hActDelete, nullptr},
+  {HTTP_POST, "actuators/*/command", SCOPE_CONTROL, hActCommand, nullptr},
+  {HTTP_GET, "settings", SCOPE_READ, hSettings, nullptr},
+  {HTTP_GET, "settings/*", SCOPE_READ, hSettings, nullptr},
+  {HTTP_PATCH, "settings/*", SCOPE_ADMIN, hSettingsPatch, nullptr},
+  {HTTP_POST, "settings/reset", SCOPE_ADMIN, hReset, nullptr},
+  {HTTP_POST, "settings/restore", SCOPE_ADMIN, hRestoreSlot, nullptr},
+  {HTTP_GET, "backup", SCOPE_ADMIN, hBackup, nullptr},
+  {HTTP_POST, "backup", SCOPE_ADMIN, hRestore, nullptr},
+  {HTTP_GET, "pins", SCOPE_READ, hPins, nullptr},
+  {HTTP_POST, "pins/*/test", SCOPE_ADMIN, hPinTest, nullptr},
+  {HTTP_GET, "hardware/profiles", SCOPE_READ, hProfiles, nullptr},
+  {HTTP_POST, "hardware/profile", SCOPE_ADMIN, hProfileSet, nullptr},
+  {HTTP_POST, "hardware/status-light/test", SCOPE_ADMIN, hLightTest, nullptr},
+  {HTTP_GET, "network", SCOPE_READ, hNetwork, nullptr},
+  {HTTP_POST, "network/scan", SCOPE_ADMIN, hScan, nullptr},
+  {HTTP_POST, "network/join", SCOPE_ADMIN, hJoin, nullptr},
+  {HTTP_DELETE, "network/saved/*", SCOPE_ADMIN, hForgetNet, nullptr},
+  {HTTP_GET, "keys", SCOPE_ADMIN, hKeys, nullptr},
+  {HTTP_POST, "keys", SCOPE_ADMIN, hKeyAdd, nullptr},
+  {HTTP_DELETE, "keys/*", SCOPE_ADMIN, hKeyDelete, nullptr},
+  {HTTP_PUT, "firmware", SCOPE_ADMIN, hFirmwareDone, nullptr},
 };
 
 // Path after /api/v1/, without query or trailing slash. Exact segment matching.
-const Route* match(uint32_t method, const String& path, String* parts, bool& pathKnown) {
-  pathKnown = false;
-  for (const Route& r : kRoutes) {
+const Route* matchIn(const Route* table, size_t n, uint32_t method, const String& path, String* parts, bool& pathKnown) {
+  for (size_t i = 0; i < n; i++) {
+    const Route& r = table[i];
     std::string pp[2];
     if (!routeMatch(r.path, path.c_str(), pp, 2)) continue;
     pathKnown = true;
@@ -786,6 +644,11 @@ const Route* match(uint32_t method, const String& path, String* parts, bool& pat
     return &r;
   }
   return nullptr;
+}
+const Route* match(uint32_t method, const String& path, String* parts, bool& pathKnown) {
+  pathKnown = false;
+  for (auto& t : extraRoutes) if (const Route* r = matchIn(t.first, t.second, method, path, parts, pathKnown)) return r;
+  return matchIn(kRoutes, sizeof(kRoutes) / sizeof(kRoutes[0]), method, path, parts, pathKnown);
 }
 
 String apiPath(AsyncWebServerRequest* req) {
@@ -799,8 +662,10 @@ String apiPath(AsyncWebServerRequest* req) {
 // PUT firmware / firmware-file streamed to flash.
 void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
   String path = apiPath(req);
-  bool fw = path == "firmware", bfile = path == "boards/firmware-file";
-  if (req->method() == HTTP_PUT && (fw || bfile)) {
+  String parts[2]; bool known;
+  const Route* route = req->method() == HTTP_PUT ? match(HTTP_PUT, path, parts, known) : nullptr;
+  bool fw = route && path == "firmware";
+  if (route && (fw || route->upload)) {
     if (index == 0) {
       up = Upload();
       up.active = callerScope(req) >= SCOPE_ADMIN;
@@ -843,7 +708,7 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
       if (final && !Update.end(true)) { up.ok = false; up.err = Update.errorString(); }
     } else {
       String err;
-      if (!Boards::uploadChunk(index, data, len, final, err)) { up.ok = false; up.err = err; }
+      if (!route->upload(index, data, len, final, err)) { up.ok = false; up.err = err; }
     }
     return;
   }
@@ -979,6 +844,11 @@ void Web::begin() {
 }
 
 void Web::notifyConfigChanged() { configChanged = true; }
+void Web::addRoutes(const Route* r, size_t n) { extraRoutes.push_back({r, n}); }
+void Web::setRemote(const Remote* r) { remote = r; }
+void Web::setInfo(void (*fn)(JsonObject)) { infoHook = fn; }
+void Web::setAfterPatch(void (*fn)(const String&)) { afterPatch = fn; }
+bool Web::uploadResult(String& err) { err = up.err; return up.ok; }
 
 // Live channel subscribers that may read.
 void sendLive(const String& msg, const char* event) {

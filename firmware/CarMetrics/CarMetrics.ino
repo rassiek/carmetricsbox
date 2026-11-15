@@ -35,6 +35,7 @@
 #include "Display.h"
 #include "History.h"
 #include "Web.h"
+#include "WebMain.h"
 #include "Cloud.h"
 #include "Health.h"
 #include "Board.h"
@@ -154,7 +155,7 @@ void setup() {
   LocalDns::begin();
   Boards::begin();
   startOta();
-  Web::begin();
+  WebMain::begin();
   Display::start();
   if (!Health::safeMode()) Cloud::startNetTask();   // no internet features in safe mode
   else Health::refreshStorage(true);                  // the net task normally keeps the storage figures
