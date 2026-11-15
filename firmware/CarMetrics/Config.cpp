@@ -297,6 +297,7 @@ void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
   o["ignitionPin"] = s.ignitionPin; o["ignitionActiveLow"] = s.ignitionActiveLow; o["sleepAfterMinutes"] = s.sleepAfterMinutes;
   o["gpsRxPin"] = s.gpsRxPin; o["gpsTxPin"] = s.gpsTxPin; o["gpsBaud"] = s.gpsBaud;
   o["hostname"] = s.hostname; o["adminPass"] = includeSecrets ? s.adminPass : "";
+  o["readNeedsAuth"] = s.readNeedsAuth;
   o["i2cSda"] = s.i2cSda; o["i2cScl"] = s.i2cScl; o["i2cKhz"] = s.i2cKhz;
   o["oneWirePin"] = s.oneWirePin; o["oneWireResolution"] = s.oneWireResolution;
   o["oledType"] = s.oledType; o["oledFlip"] = s.oledFlip; o["oledClock"] = s.oledClock;
@@ -523,6 +524,7 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   if (s.gpsBaud != 4800 && s.gpsBaud != 9600 && s.gpsBaud != 19200 && s.gpsBaud != 38400 && s.gpsBaud != 57600 && s.gpsBaud != 115200) s.gpsBaud = 9600;
   s.hostname = getS(o, "hostname", s.hostname);
   p = getS(o, "adminPass", ""); if (p.length()) s.adminPass = p;
+  s.readNeedsAuth = getB(o, "readNeedsAuth", s.readNeedsAuth);
   s.i2cSda = getI(o, "i2cSda", s.i2cSda); s.i2cScl = getI(o, "i2cScl", s.i2cScl);
   s.i2cKhz = getI(o, "i2cKhz", s.i2cKhz) <= 100 ? 100 : 400;
   s.oneWirePin = getI(o, "oneWirePin", s.oneWirePin);

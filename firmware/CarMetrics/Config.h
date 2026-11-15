@@ -155,6 +155,7 @@ struct SystemConfig {
   String staPass;
   String hostname = "carmetrics";    // http://carmetrics.local
   String adminPass = "carmetrics";   // settings, relays, OTA (user "admin")
+  bool readNeedsAuth = false;         // API: reading needs a key or the password too
 
   // Buses
   int i2cSda = 21, i2cScl = 22;
