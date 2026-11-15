@@ -39,6 +39,7 @@
     }
     box.append(panel('Tasks', h('table', {}, [h('tr', {}, [h('th', {}, 'Task'), h('th', {}, 'Stack left')]), ...(d.tasks || []).map(t => h('tr', {}, [h('td', {}, t.name), h('td', {}, `${t.stackFree} B`)]))])));
     box.append(panel('Restart and undo', h('div', { class: 'row' }, [
+      h('button', { onclick: () => act(() => api('/system/identify', { body: {} })), title: 'LED, status light and OLED flash, short beeps' }, 'Identify this board'),
       h('button', { onclick: () => confirm('Restart the board?') && act(() => api('/system/reboot', { body: {} })) }, 'Restart'),
       h('button', { onclick: () => confirm('Go back to the settings before the last change?') && act(() => api('/settings/restore', { body: { slot: 'previous' } })) }, 'Undo last settings change'),
       h('button', { onclick: () => confirm('Go back to the last settings that ran without problems?') && act(() => api('/settings/restore', { body: { slot: 'good' } })) }, 'Last good settings')])));
@@ -248,13 +249,8 @@
         if (confirm('Replace all settings with this file?')) act(() => api('/backup', { body: j }));
       } })]),
       h('button', { class: 'danger', onclick: () => confirm('Sensors, actuators and layout back to defaults? Network and passwords are kept.') && act(() => api('/settings/reset', { body: { keep: ['system'] } })) }, 'Reset to defaults')])));
-    const fwIn = label => h('label', { class: 'btn' }, [label, h('input', { type: 'file', accept: '.bin', class: 'hidden', onchange: async e => {
-      const f = e.target.files[0]; if (!f) return;
-      toast('Uploading ' + f.name + '…', false, 120000);
-      await act(() => api('/firmware', { method: 'PUT', raw: f }));
-    } })]);
     box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'Choose the …-firmware.bin file for this board (the web app is inside it). The …-full-flash.bin file is for USB only.'),
-      h('div', { class: 'row' }, [fwIn('Firmware file')])));
+      CM.uploader('Firmware file', '/firmware', 'checking and installing…')));
   }
   function townsEditor(w, changed) {
     const box = h('div');
@@ -266,9 +262,10 @@
         h('div', { class: 'chips' }, (w.towns || []).map((t, i) => h('span', { class: 'chip' }, [t.name, ' ',
           h('a', { href: '#system/data', onclick: e => { e.preventDefault(); w.towns.splice(i, 1); draw(); changed(); } }, '×')]))));
       if (have.length >= 12) return;
-      const list = typeof KENYA_TOWNS !== 'undefined' ? KENYA_TOWNS.filter(t => !have.includes(t[0])) : [];
-      const sel = h('select', { style: 'width:auto', onchange: e => { const t = list.find(x => x[0] === e.target.value); if (t) add(t[0], t[1], t[2]); } },
-        [h('option', { value: '' }, `Add a town… (${list.length})`)].concat(list.map(t => h('option', { value: t[0] }, t[0]))));
+      // towns.js: [{name, lat, lon}]
+      const list = typeof KENYA_TOWNS !== 'undefined' ? KENYA_TOWNS.filter(t => !have.includes(t.name)) : [];
+      const sel = h('select', { style: 'width:auto', onchange: e => { const t = list.find(x => x.name === e.target.value); if (t) add(t.name, t.lat, t.lon); } },
+        [h('option', { value: '' }, `Add a town… (${list.length})`)].concat(list.map(t => h('option', { value: t.name }, t.name))));
       const other = { name: '', lat: null, lon: null };
       box.append(h('div', { class: 'row', style: 'margin-top:6px' }, [sel]),
         h('details', {}, [h('summary', { class: 'small' }, 'Another place (name and coordinates)'),

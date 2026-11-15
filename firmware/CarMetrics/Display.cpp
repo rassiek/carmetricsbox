@@ -1,4 +1,5 @@
 #include "Display.h"
+#include "Outputs.h"
 #include "Health.h"
 #include "State.h"
 #include <U8g2lib.h>
@@ -226,6 +227,15 @@ void render(const Snapshot& s, uint32_t now) {
   oled->setFont(large ? u8g2_font_7x13_tr : u8g2_font_6x10_tr);
   oled->setFontMode(1);
 
+  if (Alerts::identifying()) {   // "which board is this?": the whole screen flashes with the board's name
+    bool on = (now / 400) % 2 == 0;
+    if (on) { oled->drawBox(0, 0, W, H); oled->setDrawColor(0); }
+    oled->setCursor(0, H / 2 - 4); oled->print("IDENTIFY");
+    oled->setCursor(0, H / 2 + 12); oled->print(gConfig.sys.hostname.c_str());
+    oled->setDrawColor(1);
+    oled->sendBuffer();
+    return;
+  }
   if (s.ota >= 0) {
     oled->setCursor(0, 14); oled->print("Updating...");
     oled->drawFrame(0, 24, W, 10); oled->drawBox(1, 25, (W - 2) * s.ota / 100, 8);
@@ -341,7 +351,7 @@ void task(void*) {
       if (dumpRequested) { dumpRequested = false; Serial.println("<<<PBM"); oled->writeBufferPBM(Serial); Serial.println(">>>PBM"); }
 #endif
     }
-    vTaskDelay(pdMS_TO_TICKS(snap.ota >= 0 ? 200 : 400));
+    vTaskDelay(pdMS_TO_TICKS(snap.ota >= 0 || Alerts::identifying() ? 200 : 400));
   }
 }
 }  // namespace

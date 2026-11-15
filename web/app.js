@@ -21,7 +21,25 @@ const CM = (() => {
   }
 
   // ---- API: errors come back as {error:{code,message,field}}
-  async function api(path, { method, body, raw } = {}) {
+  // A file upload with progress: fetch() can't report how much was sent, XMLHttpRequest can.
+  function sendFile(path, method, file, progress) {
+    return new Promise((ok, fail) => {
+      const x = new XMLHttpRequest();
+      x.open(method, A + path);
+      x.setRequestHeader('Content-Type', 'application/octet-stream');
+      x.upload.onprogress = e => { if (e.lengthComputable) progress(e.loaded / e.total); };
+      x.upload.onload = () => progress(1);
+      x.onerror = () => fail(new Error('Upload interrupted: is the board still in reach?'));
+      x.onload = () => {
+        let j = null; try { j = x.responseText ? JSON.parse(x.responseText) : {}; } catch { j = { text: x.responseText }; }
+        if (x.status >= 200 && x.status < 300) return ok(j);
+        const e = new Error((j && j.error && j.error.message) || `${x.status} ${x.statusText}`); e.status = x.status; fail(e);
+      };
+      x.send(file);
+    });
+  }
+  async function api(path, { method, body, raw, progress } = {}) {
+    if (raw && progress) return sendFile(path, method || 'PUT', raw, progress);
     const opt = { method: method || (body !== undefined ? 'POST' : 'GET'), headers: {} };
     if (raw) { opt.body = raw; opt.headers['Content-Type'] = 'application/octet-stream'; }
     else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers['Content-Type'] = 'application/json'; }
@@ -249,6 +267,24 @@ const CM = (() => {
     return out;
   }
 
-  return { has, isWorker, autoTiles, $, $$, h, api, get, patch, del, toast, act, err, live, S, ui, fmt, conv, page, form, reloadSettings, loadPins,
+  // File picker that uploads with a progress bar: label, path, done(reply) after a good upload.
+  function uploader(label, path, note, done) {
+    const bar = h('div'), info = h('span', { class: 'small muted' }), prog = h('div', { class: 'upload hidden' }, [h('div', { class: 'progress' }, bar), info]);
+    const input = h('input', { type: 'file', accept: '.bin', class: 'hidden', onchange: async e => {
+      const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+      prog.classList.remove('hidden'); bar.style.width = '0'; info.textContent = `${f.name}: 0 %`;
+      try {
+        const r = await api(path, { method: 'PUT', raw: f, progress: fr => {
+          bar.style.width = `${Math.round(fr * 100)}%`;
+          info.textContent = fr < 1 ? `${f.name}: ${Math.round(fr * 100)} % (${Math.round(f.size * fr / 1024)} of ${Math.round(f.size / 1024)} KB)` : `${f.name}: sent, ${note}`;
+        } });
+        info.textContent = `${f.name}: ${r.message || 'done'}`; toast(r.message || 'Done');
+        if (done) done(r);
+      } catch (err) { info.textContent = `${f.name}: ${err.message}`; bar.style.width = '0'; toast(err.message, true, 8000); }
+    } });
+    return h('div', {}, [h('label', { class: 'btn' }, [label, input]), prog]);
+  }
+
+  return { has, isWorker, uploader, autoTiles, $, $$, h, api, get, patch, del, toast, act, err, live, S, ui, fmt, conv, page, form, reloadSettings, loadPins,
            pins: () => pinInfo, sensorChoices, go: hash => { location.hash = hash; } };
 })();

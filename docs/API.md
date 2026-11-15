@@ -141,6 +141,7 @@ Routes of a part a board doesn't have answer 404.
 | `GET /hardware/profiles` | board profiles for this chip, the current one and the detected one |
 | `POST /hardware/profile` `{"board":"relay_x8","applyPins":true}` | choose the board profile (optionally move pins to its defaults) |
 | `POST /hardware/status-light/test` `{"which":"builtin"|"external"}` | cycle red, green, blue |
+| `POST /system/identify` | 10 s: warning LED and status light flash, a short beep each second, the OLED flashes the board's name (main board). Also sent to another board by the Boards tab's *Identify* |
 | `POST /hardware/altitude` `{"altitudeM":1661}` | sea-level pressure reference from a known altitude (main board) |
 | `GET /hardware/custom-board` | worker: the custom board definition (404 when there is none) |
 | `POST /hardware/custom-board` `{"name":"Pump board","flashMB":4,"valid":"2, 4, 13-19, 21-23, 25-27, 32-39","output":[…],"adc1":"32-39","rtc":"…","caution":"…","defaults":{"i2cSda":21,"i2cScl":22,"oneWirePin":4,"buzzerPin":-1,"ledPin":2},"fixed":{"relays":[16,17],"relaysActiveLow":true,"inputs":[],"inputsActiveLow":true,"rgb":-1},"notes":""}` | worker: check and save a custom board (pins as lists or text ranges; refused when the chip can't use a pin, or the settings in use no longer fit); then choose `"board":"custom"` with `POST /hardware/profile`. Kept apart from the settings (a reset or restore keeps it) |

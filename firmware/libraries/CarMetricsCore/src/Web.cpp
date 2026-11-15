@@ -563,6 +563,7 @@ void hCustomSet(Ctx& c) {
   sendOk(c.req, inUse ? "Board definition saved and in use" : "Board definition saved: choose \"custom\" as the board type to use it");
 }
 void hCustomDelete(Ctx& c) { String err; sendResult(c.req, Board::clearCustom(err) ? String() : err, "Board definition removed"); }
+void hIdentify(Ctx& c) { Alerts::identify(10000); sendOk(c.req, "Flashing for 10 s"); }
 void hNetwork(Ctx& c) { JsonDocument d; { StateLock lk; WifiMgr::toJson(d.to<JsonObject>()); } sendJson(c.req, 200, d); }
 void hScan(Ctx& c) { WifiMgr::searchNow(); sendOk(c.req, "Searching for networks", 202); }
 void hJoin(Ctx& c) {
@@ -651,6 +652,7 @@ const Route kRoutes[] = {
   {HTTP_POST, "hardware/custom-board", SCOPE_ADMIN, hCustomSet, nullptr},
   {HTTP_DELETE, "hardware/custom-board", SCOPE_ADMIN, hCustomDelete, nullptr},
   {HTTP_POST, "hardware/status-light/test", SCOPE_ADMIN, hLightTest, nullptr},
+  {HTTP_POST, "system/identify", SCOPE_CONTROL, hIdentify, nullptr},
   {HTTP_GET, "network", SCOPE_READ, hNetwork, nullptr},
   {HTTP_POST, "network/scan", SCOPE_ADMIN, hScan, nullptr},
   {HTTP_POST, "network/join", SCOPE_ADMIN, hJoin, nullptr},

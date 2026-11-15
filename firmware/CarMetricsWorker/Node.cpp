@@ -70,7 +70,7 @@ uint8_t onCommand(const Command& c) {
       return err.length() ? 1 : 0;
     }
     case CMD_MUTE: if (c.minutes) Alerts::mute(c.minutes * 60000UL); else Alerts::unmute(); return 0;
-    case CMD_IDENTIFY: Alerts::chirp(300); return 0;
+    case CMD_IDENTIFY: Alerts::identify(10000); return 0;
     case CMD_REBOOT: requestReboot(500); return 0;
     default: return 3;
   }

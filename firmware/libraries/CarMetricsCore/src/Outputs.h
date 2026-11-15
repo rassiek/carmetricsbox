@@ -9,6 +9,8 @@ void update();                   // evaluate thresholds, drive outputs (non-bloc
 void mute(uint32_t ms);          // silence the buzzer; a NEW or worse alert un-mutes
 void unmute();
 void chirp(uint32_t ms);         // short beep (turbo timer "OK to switch off")
+void identify(uint32_t ms);      // "which board is this?": LED and status light flash, short beeps, OLED flashes (main)
+bool identifying();
 void onAlarm(void (*fn)(const String& what));   // called when a sensor goes to warning / critical
 }
 

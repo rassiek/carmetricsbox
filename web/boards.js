@@ -1,6 +1,7 @@
 'use strict';
 // Boards tab: other boards (workers, displays): pair, rename, commands, firmware, live values.
 (() => {
+  const uploads = {};   // board id -> its firmware file picker with progress
   const { h, api, get, patch, del, toast, act, err, S, fmt, page } = CM;
   let timer = null, el = null, openFw = null;
 
@@ -17,11 +18,8 @@
         ['offering', 'sending'].includes(fw.state) ? h('button', { class: 'small', onclick: () => act(() => api(`${q}/firmware`, { body: { source: 'cancel' } })) }, 'Cancel') : null]) : null,
       h('label', {}, b.role === 'display' ? `Send its firmware file (carmetrics-display-…-firmware.bin, ${b.chip}):`
                                           : `Send its firmware file (carmetrics-worker-… or the relay board's …-firmware.bin, ${b.chip}):`),
-      h('input', { type: 'file', accept: '.bin', onchange: async e => {
-        const f = e.target.files[0]; if (!f) return;
-        toast('Uploading…', false, 60000);
-        if (await act(() => api('/boards/firmware-file', { method: 'PUT', raw: f }))) act(() => api(`${q}/firmware`, { body: { source: 'file' } }));
-      } })]);
+      // kept across the 3 s refresh, so the progress bar survives it
+      uploads[b.id] ||= CM.uploader('Choose file', '/boards/firmware-file', 'checking…', () => act(() => api(`${q}/firmware`, { body: { source: 'file' } })))]);
     const pts = (b.points || []).map(p => h('span', { class: 'chip' + (p.level && p.level !== 'ok' ? ' ' + p.level : '') },
       `${p.name}: ${p.relay ? (p.value ? 'on' : 'off') : fmt(p.value, p.unit, p.decimals).join(' ')}`));
     return h('div', { class: 'panel board ' + (b.online ? '' : 'off') }, [

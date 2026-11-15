@@ -18,7 +18,7 @@
 // same label baked in (tools/build_web.py) and warns when the two don't match.
 // One version for every board type since 5.3 (docs/DESIGN.md section 1). The build
 // variant (which board family the file is for) is separate: CM_VARIANT.
-#define FW_VERSION "5.4.0-beta.1"
+#define FW_VERSION "5.4.0-beta.2"
 // Build variant (tools/cm.sh): which firmware and board this binary is for.
 #if !defined(CM_VARIANT) && defined(CM_RELAY_X8)
 #define CM_VARIANT "relay-x8"

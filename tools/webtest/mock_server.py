@@ -177,6 +177,8 @@ def route(m, path, q, body, scope):
             merge(CFG[p[1]], body)
         bump(); return ok('Saved')
     if m == 'POST' and path == 'system/time': return ok('Time set')
+    if m == 'POST' and path == 'system/identify': need(2); return ok('Flashing for 10 s')
+    if m == 'PUT' and path == 'firmware': need(3); return ok('Firmware installed: restarting')
     if m == 'GET' and path == 'alerts': return {'level': STATE['level'], 'muted': STATE['muted'], 'items': []}
     if m == 'POST' and path == 'alerts/mute':
         STATE['muted'] = (body or {}).get('minutes', 15) > 0; return ok('Muted' if STATE['muted'] else 'Unmuted')

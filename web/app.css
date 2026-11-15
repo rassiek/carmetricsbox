@@ -227,3 +227,5 @@ body.fs .tiles .tval { margin-top: 0; } body.fs .thermos { min-height: 0; } body
 .tile .why:empty { min-height: 0; }
 .thermo.none .tv { color: var(--muted); } .thermo.none .tube { opacity: .4; }
 .gtools select { margin: 0; }
+
+.upload { margin-top: 8px; display: grid; gap: 4px; }

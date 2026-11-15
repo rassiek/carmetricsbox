@@ -146,9 +146,35 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
     check((await p.locator('main .panel').count()) >= 2, `system: ${s}`);
     await p.screenshot({ path: `${OUT}/system-${s}.png`, fullPage: true });
   }
+  await go('#system/status', 1200);
+  await p.click('text=Identify this board'); await p.waitForTimeout(400);
+  check(/Flashing/.test(await p.locator('#toast').textContent()), 'identify this board');
   await go('#system/network', 1200);
   check(await p.locator('text=Phone hotspot').isVisible(), 'Wi-Fi scan and join on one panel');
   await go('#system/data', 1500);
+  {   // weather towns: add two from the list, save, still there after a reload
+    const wp = () => p.locator('.panel', { has: p.locator('h3', { hasText: /^Weather$/ }) });
+    const addSel = () => wp().locator('select').last();
+    const firstOpts = await addSel().evaluate(s => [...s.options].slice(1, 3).map(o => o.value));
+    check(firstOpts.length === 2 && firstOpts.every(Boolean), 'town list has names', firstOpts.join(','));
+    await addSel().selectOption('Mombasa'); await p.waitForTimeout(200);
+    await addSel().selectOption('Kisumu'); await p.waitForTimeout(200);
+    const chips = await wp().locator('.chip').allTextContents();
+    check(chips.some(c => c.startsWith('Mombasa')) && chips.some(c => c.startsWith('Kisumu')), 'towns added from the list', chips.join(' | '));
+    await wp().locator('button.primary').click(); await p.waitForTimeout(800);
+    const names = (await api('/settings/weather')).towns.map(t => t.name);
+    check(names.includes('Mombasa') && names.includes('Kisumu'), 'towns saved', names.join(','));
+    await go('#system/status', 800); await go('#system/data', 1500);
+    check((await wp().locator('.chip').allTextContents()).some(c => c.startsWith('Kisumu')), 'towns still there after leaving the page');
+  }
+  {   // firmware upload shows its progress
+    const fw = Buffer.alloc(600 * 1024, 0xff); fw[0] = 0xE9;
+    await p.locator('.panel', { hasText: 'Firmware update' }).locator('input[type=file]').setInputFiles({ name: 'carmetrics-main-s3-firmware.bin', mimeType: 'application/octet-stream', buffer: fw });
+    await p.waitForTimeout(2000);
+    const up = p.locator('.panel', { hasText: 'Firmware update' }).locator('.upload');
+    check(await up.isVisible() && /installed/.test(await up.textContent()) && (await up.locator('.progress > div').getAttribute('style')).includes('100%'),
+          'firmware upload: progress bar, then the board\'s answer', await up.textContent());
+  }
   await p.locator('input[name="appName"]').fill('BoatMetrics'); await p.locator('input[name="appName"]').dispatchEvent('change');
   await p.locator('.panel', { hasText: 'Names and units' }).locator('button.primary').first().click(); await p.waitForTimeout(2500);
   check((await p.locator('#brand').textContent()) === 'BoatMetrics', 'app name changed everywhere', await p.locator('#brand').textContent());

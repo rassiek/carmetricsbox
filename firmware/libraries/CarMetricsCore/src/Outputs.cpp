@@ -92,6 +92,9 @@ void Alerts::mute(uint32_t ms) {
 }
 void Alerts::unmute() { StateLock lk; gSys.muted = false; }
 void Alerts::chirp(uint32_t ms) { chirpUntil = millis() + ms; }
+static uint32_t identUntil = 0;
+void Alerts::identify(uint32_t ms) { identUntil = millis() + ms; }
+bool Alerts::identifying() { return (int32_t)(identUntil - millis()) > 0; }
 void Alerts::onAlarm(void (*fn)(const String& what)) { alarmHook = fn; }
 
 void Alerts::update() {
@@ -131,6 +134,7 @@ void Alerts::update() {
   if (muted) buzz = false;
   if ((int32_t)(chirpUntil - now) > 0) buzz = true;
   if ((int32_t)(selfTestUntil - now) > 0) { buzz = true; led = true; }
+  if (identifying()) { uint32_t ph = (identUntil - now) % 1000; led = (now / 125) % 2 == 0; if (ph > 900) buzz = true; }   // fast LED, a pip every second
   writeOut(aBuzzer, buzz, aBuzzerLow);
   writeOut(aLed, led, aLedLow);
 }
@@ -534,7 +538,8 @@ void StatusLight::update() {
   uint8_t lvl; bool muted;
   { StateLock lk; lvl = gSys.overallLevel; muted = gSys.muted; }
   bool slow = (now / 500) % 2 == 0, fast = (now / 150) % 2 == 0;
-  if (Health::safeMode()) c = PURPLE;
+  if (Alerts::identifying()) c = fast ? 0xFFFFFF : OFF;   // white flashes: "this board"
+  else if (Health::safeMode()) c = PURPLE;
   else if (lvl == LVL_CRIT) c = muted || fast ? RED : OFF;
   else if (lvl == LVL_FAULT) c = slow ? AMBER : OFF;
   else if (lvl == LVL_WARN) c = AMBER;

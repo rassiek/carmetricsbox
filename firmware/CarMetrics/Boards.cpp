@@ -281,7 +281,7 @@ uint8_t runDisplayCommand(const Command& c) {
       return mainS->command(c.board, r) < 0 ? ACK_FAILED : ACK_OK;
     }
     case CMD_MUTE: if (c.minutes) Alerts::mute(std::min<uint16_t>(c.minutes, 120) * 60000UL); else Alerts::unmute(); return ACK_OK;
-    case CMD_IDENTIFY: Alerts::chirp(150); return ACK_OK;
+    case CMD_IDENTIFY: Alerts::identify(10000); return ACK_OK;
     case CMD_SET_LIMIT:
       ensureCatalog();
       if (c.rev != (uint16_t)cat.rev) return ACK_STALE;   // the display's list is out of date
