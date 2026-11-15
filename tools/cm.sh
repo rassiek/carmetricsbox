@@ -24,11 +24,13 @@ CORE="$ARDUINO_DIRECTORIES_USER/hardware/espressif/esp32"
 ESPTOOL="python3 $CORE/tools/esptool/esptool.py"
 QEMU="$PREFIX/qemu/bin/qemu-system-xtensa"
 SKETCH="$ROOT/firmware/CarMetrics"
+LIBS="$ROOT/firmware/libraries"           # CarMetricsLink + CarMetricsCore, shared by every firmware
+LINK="$LIBS/CarMetricsLink/src"; CORELIB="$LIBS/CarMetricsCore/src"
 OUT="$ROOT/build"
 mkdir -p "$OUT"
 
 compile() {   # compile <outdir> <fqbn-options> [extra cpp flags]
-  local args=(--fqbn "espressif:esp32:esp32:$2" --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$1")
+  local args=(--libraries "$LIBS" --fqbn "espressif:esp32:esp32:$2" --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$1")
   [ -n "${3:-}" ] && args+=(--build-property "compiler.cpp.extra_flags=$3")
   "$CLI" compile "${args[@]}" "$SKETCH" 2>&1 | grep -vE "^Error initializing instance" | grep -E "error|warning: unused|Sketch uses|Global variables" || true
   [ -f "$1/CarMetrics.ino.bin" ] || { echo "compile failed"; exit 1; }
@@ -61,7 +63,7 @@ cmd_build3() {
   local dir="$OUT/core3-$chip"
   rm -rf "$dir"
   ARDUINO_DIRECTORIES_USER="${CM_CORE3_USER:-$PREFIX/core3/Arduino}" ARDUINO_DIRECTORIES_DATA="${CM_CORE3_DATA:-$PREFIX/core3/arduino15}" \
-    "$CLI" compile --fqbn "espressif:esp32:$chip:$opts" --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$dir" "$SKETCH" 2>&1 \
+    "$CLI" compile --libraries "$LIBS" --fqbn "espressif:esp32:$chip:$opts" --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$dir" "$SKETCH" 2>&1 \
     | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
   [ -f "$dir/CarMetrics.ino.bin" ] || { echo "compile failed"; exit 1; }
   if [ "$chip" = esp32s3 ]; then
@@ -85,7 +87,7 @@ cmd_build52() {
   python3 "$ROOT/tools/build_web.py" --mklittlefs "$CORE/tools/mklittlefs/mklittlefs" --line 52 --fs-size 0x1C0000 \
     --data "$OUT/v52data" --out "$dir/littlefs.bin" | tail -2
   ARDUINO_DIRECTORIES_USER="${CM_CORE3_USER:-$PREFIX/core3/Arduino}" ARDUINO_DIRECTORIES_DATA="${CM_CORE3_DATA:-$PREFIX/core3/arduino15}" \
-    "$CLI" compile --fqbn "espressif:esp32:esp32s3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB" \
+    "$CLI" compile --libraries "$LIBS" --fqbn "espressif:esp32:esp32s3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB" \
       --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --build-property "compiler.cpp.extra_flags=-DCM_V52" \
       --output-dir "$dir" "$s" 2>&1 | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
   [ -f "$dir/CarMetrics.ino.bin" ] || { echo "5.2 compile failed"; exit 1; }
@@ -106,11 +108,10 @@ cmd_display() {
   local s="$OUT/sketchDisplay/CarMetricsDisplay"
   rm -rf "$OUT/sketchDisplay" && mkdir -p "$s"
   cp "$ROOT/firmware/CarMetricsDisplay"/*.h "$ROOT/firmware/CarMetricsDisplay"/*.cpp "$ROOT/firmware/CarMetricsDisplay"/*.ino "$s"/
-  for f in Proto.h Proto.cpp BoardNet.h BoardNet.cpp Link.h EspNowLink.h EspNowLink.cpp; do cp "$SKETCH/$f" "$s/"; done
   local c3=(env ARDUINO_DIRECTORIES_USER="${CM_CORE3_USER:-$PREFIX/core3/Arduino}" ARDUINO_DIRECTORIES_DATA="${CM_CORE3_DATA:-$PREFIX/core3/arduino15}")
   if [ "$which" = all ] || [ "$which" = jc ]; then
     local dir="$OUT/display-jc"; rm -rf "$dir"
-    "${c3[@]}" "$CLI" compile --fqbn "espressif:esp32:esp32s3:PSRAM=opi,FlashSize=4M,PartitionScheme=min_spiffs,CDCOnBoot=cdc" \
+    "${c3[@]}" "$CLI" compile --libraries "$LIBS" --fqbn "espressif:esp32:esp32s3:PSRAM=opi,FlashSize=4M,PartitionScheme=min_spiffs,CDCOnBoot=cdc" \
       --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$dir" "$s" 2>&1 \
       | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
     [ -f "$dir/CarMetricsDisplay.ino.bin" ] || { echo "display (JC3248W535) compile failed"; exit 1; }
@@ -122,7 +123,7 @@ cmd_display() {
   fi
   if [ "$which" = all ] || [ "$which" = cyd ]; then
     local dir="$OUT/display-cyd"; rm -rf "$dir"
-    "${c3[@]}" "$CLI" compile --fqbn "espressif:esp32:esp32:PartitionScheme=min_spiffs" \
+    "${c3[@]}" "$CLI" compile --libraries "$LIBS" --fqbn "espressif:esp32:esp32:PartitionScheme=min_spiffs" \
       --build-property "runtime.tools.ctags.path=$PREFIX/fakectags" --output-dir "$dir" "$s" 2>&1 \
       | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
     [ -f "$dir/CarMetricsDisplay.ino.bin" ] || { echo "display (CYD) compile failed"; exit 1; }
@@ -200,8 +201,8 @@ cmd_emu() {
 
 cmd_prototest() {
   mkdir -p "$OUT/prototest"
-  g++ -std=c++17 -Wall -Wextra -Werror -O1 -fsanitize=address,undefined -I "$SKETCH" \
-    "$ROOT/tools/prototest/proto_test.cpp" "$ROOT/tools/prototest/boards_test.cpp" "$ROOT/tools/prototest/fw_test.cpp" "$ROOT/tools/prototest/can_test.cpp" "$ROOT/tools/prototest/display_test.cpp" "$ROOT/tools/prototest/route_test.cpp" "$SKETCH/CanFrag.cpp" "$SKETCH/Proto.cpp" "$SKETCH/BoardNet.cpp" \
+  g++ -std=c++17 -Wall -Wextra -Werror -O1 -fsanitize=address,undefined -I "$LINK" -I "$CORELIB" \
+    "$ROOT/tools/prototest/proto_test.cpp" "$ROOT/tools/prototest/boards_test.cpp" "$ROOT/tools/prototest/fw_test.cpp" "$ROOT/tools/prototest/can_test.cpp" "$ROOT/tools/prototest/display_test.cpp" "$ROOT/tools/prototest/route_test.cpp" "$LINK/CanFrag.cpp" "$LINK/Proto.cpp" "$LINK/BoardNet.cpp" \
     -o "$OUT/prototest/proto_test"
   "$OUT/prototest/proto_test"
 }

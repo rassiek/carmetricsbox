@@ -123,6 +123,8 @@ void setup() {
   Serial.printf("\n\nCarMetrics %s booting on %s\n", FW_VERSION, ESP.getChipModel());
   Health::earlyBoot();
   Health::registerTask("loop");
+  Alerts::onAlarm(BlackBox::trigger);        // warning / critical -> 30 s before and after recorded
+  Health::setHistorySize(History::bytes);
   stateInit();
 
   // Safe mode starts from the last configuration that ran well.

@@ -1,4 +1,4 @@
-// Host-side test of the CAN framing (firmware/CarMetrics/CanFrag.*).
+// Host-side test of the CAN framing (firmware/libraries/CarMetricsLink/src/CanFrag.*).
 #include "CanFrag.h"
 #include <string>
 #include <vector>

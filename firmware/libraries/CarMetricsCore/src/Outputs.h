@@ -9,6 +9,7 @@ void update();                   // evaluate thresholds, drive outputs (non-bloc
 void mute(uint32_t ms);          // silence the buzzer; a NEW or worse alert un-mutes
 void unmute();
 void chirp(uint32_t ms);         // short beep (turbo timer "OK to switch off")
+void onAlarm(void (*fn)(const String& what));   // called when a sensor goes to warning / critical
 }
 
 // Actuators (the stored list keeps the name "relays"): relay, PWM, H-bridge, servo.

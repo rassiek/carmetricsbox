@@ -1,6 +1,5 @@
 #include "Outputs.h"
 #include "Health.h"
-#include "BlackBox.h"
 #include "State.h"
 #include "Pwm.h"
 #include "Board.h"
@@ -24,6 +23,7 @@ static void releasePin(int pin) {
 
 // ============================================================== Alerts
 namespace {
+void (*alarmHook)(const String& what) = nullptr;   // Alerts::onAlarm()
 int aBuzzer = -1, aLed = -1;
 bool aBuzzerLow = false, aLedLow = false;
 uint32_t aLastEval = 0;
@@ -92,6 +92,7 @@ void Alerts::mute(uint32_t ms) {
 }
 void Alerts::unmute() { StateLock lk; gSys.muted = false; }
 void Alerts::chirp(uint32_t ms) { chirpUntil = millis() + ms; }
+void Alerts::onAlarm(void (*fn)(const String& what)) { alarmHook = fn; }
 
 void Alerts::update() {
   uint32_t now = millis();
@@ -108,7 +109,7 @@ void Alerts::update() {
       uint8_t before = r.level;
       r.level = evalLevel(gConfig.sensors[i], r, r.level, running);
       if ((r.level == LVL_WARN || r.level == LVL_CRIT) && r.level > before)
-        BlackBox::trigger(gConfig.sensors[i].name + ": " + (r.level == LVL_CRIT ? "critical" : "warning"));   // records 30 s before and after
+        if (alarmHook) alarmHook(gConfig.sensors[i].name + ": " + (r.level == LVL_CRIT ? "critical" : "warning"));   // e.g. the black box records 30 s before and after
       if (r.level > overall) overall = r.level;
       if (r.level > mutedLevels[i]) worse = true;
     }

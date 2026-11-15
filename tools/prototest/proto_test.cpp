@@ -1,4 +1,4 @@
-// Host-side test of the board-to-board protocol (firmware/CarMetrics/Proto.*).
+// Host-side test of the board-to-board protocol (firmware/libraries/CarMetricsLink/src/Proto.*).
 // Build + run: tools/cm.sh prototest
 #include "Proto.h"
 #include "Link.h"

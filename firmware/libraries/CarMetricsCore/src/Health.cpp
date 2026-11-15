@@ -1,7 +1,6 @@
 #include "Health.h"
 #include "State.h"
 #include "Board.h"
-#include "History.h"
 #include <Preferences.h>
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -17,6 +16,9 @@
 #include <nvs.h>
 #include <esp_timer.h>
 #include <esp_arduino_version.h>
+
+namespace { size_t (*historyBytes)() = nullptr; }   // set by firmware that keeps chart history
+void Health::setHistorySize(size_t (*fn)()) { historyBytes = fn; }
 
 // The Arduino core marks a new firmware valid at boot unless this returns true;
 // we confirm it ourselves once the firmware has run for HEALTHY_AFTER_S.
@@ -319,7 +321,7 @@ void Health::toJson(JsonObject o) {
   JsonObject m = o["memory"].to<JsonObject>();
   m["free"] = ESP.getFreeHeap(); m["min"] = ESP.getMinFreeHeap();
   m["largest"] = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);   // internal RAM: what TLS and Wi-Fi need
-  m["historyKB"] = (History::bytes() + 512) / 1024;
+  m["historyKB"] = historyBytes ? (historyBytes() + 512) / 1024 : 0;
   m["historyIn"] = ESP.getPsramSize() > 0 ? "PSRAM" : "RAM";
   m["psramFree"] = ESP.getFreePsram();
   if (storage.valid) {   // cached: see refreshStorage()

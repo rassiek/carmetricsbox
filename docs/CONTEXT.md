@@ -51,7 +51,7 @@ To let a session push instead: install the Claude GitHub App on the repo (github
 
 ## 3. Releases and which file goes where
 
-The release label is `FW_RELEASE_51` / `FW_RELEASE_52` in `firmware/CarMetrics/Config.h`. It is shown in the web app header, on System → Status (firmware + web app) and on the OLED start screen. A **red banner** appears when the firmware and the web app come from different releases (e.g. only `littlefs.bin` was uploaded).
+The release label is `FW_RELEASE_51` / `FW_RELEASE_52` in `firmware/libraries/CarMetricsCore/src/Config.h`. It is shown in the web app header, on System → Status (firmware + web app) and on the OLED start screen. A **red banner** appears when the firmware and the web app come from different releases (e.g. only `littlefs.bin` was uploaded).
 
 | Line | Boards | Files |
 |---|---|---|

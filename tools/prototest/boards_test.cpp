@@ -1,4 +1,4 @@
-// Host-side test of the board-to-board exchange (firmware/CarMetrics/BoardNet.*):
+// Host-side test of the board-to-board exchange (firmware/libraries/CarMetricsLink/src/BoardNet.*):
 // a main board and a sensor + relay board over a loopback link, simulated time.
 #include "BoardNet.h"
 #include <cmath>

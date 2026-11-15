@@ -56,7 +56,7 @@ def main():
     # The firmware's release label (Config.h FW_VERSION) is baked into the web
     # app, so the pages can warn when the firmware and web app don't match.
     import re
-    cfg = open(os.path.join(ROOT, "firmware", "CarMetrics", "Config.h"), encoding="utf-8").read()
+    cfg = open(os.path.join(ROOT, "firmware", "libraries", "CarMetricsCore", "src", "Config.h"), encoding="utf-8").read()
     version = re.search(r'#define FW_VERSION "([^"]+)"', cfg).group(1)
     data_dir, out_dir = args.data, os.path.join(args.data, "www")
     print(f"release {version}")

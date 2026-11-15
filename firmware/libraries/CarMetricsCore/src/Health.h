@@ -20,6 +20,7 @@ namespace Health {
 void earlyBoot();                // first thing in setup()
 bool safeMode();
 const char* buildStamp();        // one build time for every page
+void setHistorySize(size_t (*fn)());   // firmware with chart history reports its RAM use here
 String safeModeReason();
 uint8_t crashCount();
 void leaveSafeMode();            // clears the crash counter; caller reboots

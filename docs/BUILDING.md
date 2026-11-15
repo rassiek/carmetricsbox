@@ -113,7 +113,7 @@ Open the folder in Explorer: `explorer build`.
 
 - Main board: the header of its web page and **System → Status → Firmware** show the release name.
 - Display: the **Setup** tab on the screen shows its firmware.
-- The release name comes from `firmware/CarMetrics/Config.h` (`FW_VERSION`) and, for the display, `firmware/CarMetricsDisplay/DispConfig.h` (`DISP_VERSION`). If you build your own changes, give them your own name there (e.g. `5.3.0-beta.1-rk1`) so you can tell them apart. `GET /api/v1/info` also shows the build variant.
+- The release name comes from `firmware/libraries/CarMetricsCore/src/Config.h` (`FW_VERSION`) and, for the display, `firmware/CarMetricsDisplay/DispConfig.h` (`DISP_VERSION`). If you build your own changes, give them your own name there (e.g. `5.3.0-beta.1-rk1`) so you can tell them apart. `GET /api/v1/info` also shows the build variant.
 
 ## Run the tests (optional)
 
