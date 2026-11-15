@@ -13,16 +13,22 @@ ready-made Docker "box" that has exactly the tools the firmware was developed wi
 
 | You want to flash… | Command (see *Build the firmware*) | Files it makes in the `build` folder |
 |---|---|---|
-| Main board, ESP32-S3 with 8 or 16 MB flash (recommended) | `tools/cm.sh build52` | `carmetrics-52-full-flash.bin`, `carmetrics-52-firmware.bin`, `carmetrics-52-littlefs.bin` |
-| Worker board (sensors / actuators), classic ESP32 | `tools/cm.sh build` | `carmetrics-full-flash.bin` (USB), `carmetrics-firmware.bin` + `littlefs.bin` (Wi-Fi update) |
-| Worker board, ESP32-S3 with 4 MB flash | `tools/cm.sh build3 esp32s3` | `carmetrics-s3-full-flash.bin`, `carmetrics-s3-firmware.bin` |
-| ESP32 Relay X8 (8-relay board, starts as a relay worker) | `tools/cm.sh relayx8` | `carmetrics-relay-x8-full-flash.bin`, `carmetrics-relay-x8-firmware.bin` |
-| Touch display JC3248W535 | `tools/cm.sh display jc` | `carmetrics-display-jc3248w535-full-flash.bin`, `…-firmware.bin` |
-| Touch display Cheap Yellow Display (ESP32-2432S028R) | `tools/cm.sh display cyd` | `carmetrics-display-cyd-full-flash.bin`, `…-firmware.bin` |
+| Main board, ESP32-S3 with 8 or 16 MB flash (recommended) | `tools/cm.sh build52` | `carmetrics-52-usb.bin` + `carmetrics-52-webapp.bin` (USB), `carmetrics-52-firmware.bin` (Wi-Fi) |
+| Worker board (sensors / actuators), classic ESP32 | `tools/cm.sh build` | `carmetrics-usb.bin` + `carmetrics-webapp.bin` (USB), `carmetrics-firmware.bin` (Wi-Fi) |
+| Worker board, ESP32-S3 with 4 MB flash | `tools/cm.sh build3 esp32s3` | `carmetrics-s3-usb.bin` + `carmetrics-webapp.bin` (USB), `carmetrics-s3-firmware.bin` (Wi-Fi) |
+| ESP32 Relay X8 (8-relay board, starts as a relay worker) | `tools/cm.sh relayx8` | `carmetrics-relay-x8-usb.bin` + `carmetrics-webapp.bin` (USB), `carmetrics-relay-x8-firmware.bin` (Wi-Fi) |
+| Touch display JC3248W535 | `tools/cm.sh display jc` | `carmetrics-display-jc3248w535-usb.bin`, `…-firmware.bin` |
+| Touch display Cheap Yellow Display (ESP32-2432S028R) | `tools/cm.sh display cyd` | `carmetrics-display-cyd-usb.bin`, `…-firmware.bin` |
 
 Every board runs the same release (5.3.0-…); the build only decides the chip, the flash layout and how a fresh board starts.
 
-**full-flash** = the whole thing, for USB. **firmware** (+ **littlefs** for the main firmware's web app) = for updating over Wi-Fi from the board's own web page.
+**usb** = boot loader + partition table + firmware, for USB at address 0x0. **webapp** = the web app (only the part that holds data, so it is small). **firmware** = for updating over Wi-Fi.
+
+| Board | USB: file → address |
+|---|---|
+| Main S3, 8/16 MB | `…-52-usb.bin` → **0x0**, `…-52-webapp.bin` → **0x610000** |
+| Workers (4 MB layout: classic ESP32, S3 4 MB, Relay X8) | `…-usb.bin` → **0x0**, `…-webapp.bin` → **0x350000** |
+| Touch displays | `…-usb.bin` → **0x0** (nothing else) |
 
 ## Install the tools (once)
 
@@ -99,13 +105,13 @@ Open the folder in Explorer: `explorer build`.
 1. Plug the board in with a **data** USB cable.
 2. Open [https://espressif.github.io/esptool-js/](https://espressif.github.io/esptool-js/) in **Chrome or Edge**.
 3. Baud rate 921600 → **Connect** → pick the board's port. If nothing connects: hold **BOOT**, press and release **RST/EN**, release BOOT, try again. No port at all: install the USB driver (CH340 or CP210x, depending on the board).
-4. Flash address **0x0**, file: the **`…-full-flash.bin`**.
+4. Flash address **0x0**, file: the **`…-usb.bin`**. Press *Add File* and add the **`…-webapp.bin`** at its address from the table above (main S3: 0x610000, 4 MB boards: 0x350000). Touch displays only need the first file.
 5. **Don't tick *Erase flash*** (your settings would be lost; the full image leaves them alone).
 6. **Program**, wait for *Leaving…*, press **RST**.
 
 ### Over Wi-Fi (later updates)
 
-- **Main board / worker on its own Wi-Fi:** its web page → **System → Data** → *Firmware update*: first `…-firmware.bin`, then the web app file (`…littlefs.bin`). Both from the same build.
+- **Main board / worker on its own Wi-Fi:** its web page → **System → Data** → *Firmware update*: first `…-firmware.bin`, then the web app file (`…-webapp.bin`). Both from the same release.
 - **Another board from the main board:** **Boards** tab → that board's card → *Firmware* → send this board's firmware (same chip) or choose its `…-firmware.bin`.
 - **Touch display:** its own page (http://192.168.5.1/ on its Wi-Fi *CarMetrics-Display-xxxx*) → **Firmware**, or from the main board's Boards page.
 

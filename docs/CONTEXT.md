@@ -4,6 +4,10 @@ Give this file to Claude at the start of a new session (or say: *"Clone github.c
 
 Last updated: 15 Nov 2026, release **5.3.0-beta.2** (every board type: main S3, workers, Relay X8, touch displays).
 
+> **Release files (from beta.3 on):** `…-usb.bin` (USB at 0x0: boot loader + partitions + firmware, no padding) + `…-webapp.bin` (web app, trimmed;
+> USB at 0x610000 on the 8 MB main S3, 0x350000 on 4 MB boards), `…-firmware.bin` for Wi-Fi updates. The big padded full-flash / littlefs files are gone.
+> Real app slots: 4 MB layout 1664 KB (classic worker ~91 %, **S3 4 MB worker ~98 %: nearly full**), 8 MB main 3 MB (~55 %). `cm.sh` prints and checks this.
+>
 > **5.3.0-beta.2** (15 Nov): charts group values of the same kind (per-sensor Chart setting), history also records actuators and board figures,
 > carmetrics.local on the board's own access point (it answers DNS for its name), full-screen gauges, thermometer group tiles with each sensor's limits,
 > most important gauges first, touch-sized actuator controls, enable-from-list, live state of other boards' switches, same-chip pin checks for other boards,

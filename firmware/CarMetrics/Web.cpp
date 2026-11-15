@@ -814,20 +814,18 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
                                              : esp_ota_get_next_update_partition(nullptr);
         size_t room = slot ? slot->size : 0;
         String fit = String(room / 1024) + " KB";
-        if (!webapp && len > 0 && data[0] != 0xE9) { up.ok = false; up.err = "Not a firmware file: choose the …-firmware.bin file"; return; }
+        if (!webapp && len > 0 && data[0] != 0xE9) { up.ok = false; up.err = "Not a firmware file: choose the …-firmware.bin file (…-usb.bin is for USB only)"; return; }
         if (!webapp && total > room) {
           up.ok = false;
-          up.err = total >= 0x3E0000 ? "That is a full-flash image (for USB only): choose the …-firmware.bin file"
-                                     : "File too big for this board's firmware slot (" + fit + "): use the firmware made for this board";
+          up.err = "File too big for this board's firmware slot (" + fit + "): choose the …-firmware.bin made for this board (…-usb.bin is for USB only)";
           return;
         }
         if (webapp && total > room) {
           up.ok = false;
-          up.err = "Web app file too big for this board (" + fit + "): use the web app file made for this board"
-                   " (the 4 MB one for 4 MB boards, the 8 MB one for the main S3)";
+          up.err = "Web app file too big for this board (" + fit + "): use the …-webapp.bin made for this board";
           return;
         }
-        if (webapp && len > 0 && data[0] == 0xE9) { up.ok = false; up.err = "That is a firmware file: choose the web app (…littlefs.bin) file here"; return; }
+        if (webapp && len > 0 && data[0] == 0xE9) { up.ok = false; up.err = "That is a firmware file: choose the …-webapp.bin file here"; return; }
         if (webapp) LittleFS.end();
         if (!Update.begin(total ? total : UPDATE_SIZE_UNKNOWN, webapp ? U_SPIFFS : U_FLASH)) { up.ok = false; up.err = Update.errorString(); return; }
         StateLock lk; gSys.otaProgress = 0;
@@ -835,6 +833,10 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
     }
     if (!up.active || !up.ok) return;
     bool final = index + len >= total;
+    // A USB image has the partition table at 0x8000: refuse it before it is installed as firmware.
+    if (fw && index <= 0x8000 && index + len >= 0x8002 && data[0x8000 - index] == 0xAA && data[0x8001 - index] == 0x50) {
+      up.ok = false; up.err = "That is the USB image (…-usb.bin): over Wi-Fi choose the …-firmware.bin file"; Update.abort(); return;
+    }
     if (fw) {
       if (Update.write(data, len) != len) { up.ok = false; up.err = Update.errorString(); Update.abort(); return; }
       if (total) { StateLock lk; gSys.otaProgress = std::min(99, (int)((index + len) * 100 / total)); }
@@ -959,7 +961,7 @@ void setupServer() {
     if (req->url().startsWith("/api/")) { sendError(req, 404, "No such address: the API is at " API); return; }
     if (!LittleFS.exists("/www/index.html") && !LittleFS.exists("/www/index.html.gz")) {
       req->send(200, "text/html",
-                "<h3>" FW_VERSION "</h3><p>The web app is not installed. Choose <b>littlefs.bin</b>:</p>"
+                "<h3>" FW_VERSION "</h3><p>The web app is not installed. Choose the <b>…-webapp.bin</b> file:</p>"
                 "<input type=file id=f><button onclick=\"fetch('" API "/firmware?target=webapp',{method:'PUT',body:f.files[0]})"
                 ".then(r=>r.text()).then(t=>document.body.append(t))\">Upload</button>");
       return;

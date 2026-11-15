@@ -33,11 +33,18 @@ compile() {   # compile <outdir> <fqbn-options> [extra cpp flags]
   [ -f "$1/CarMetrics.ino.bin" ] || { echo "compile failed"; exit 1; }
 }
 
-merge() {     # merge <bindir> <flash-freq> <output>
+merge() {     # merge <bindir> <flash-freq> <output> [with-webapp]: USB image, from 0x0 to the end of the firmware
+  local extra=(); [ -n "${4:-}" ] && extra=(0x350000 "$OUT/littlefs.bin")
   $ESPTOOL --chip esp32 merge_bin -o "$3" --flash_mode dio --flash_freq "$2" --flash_size 4MB \
     0x1000 "$1/CarMetrics.ino.bootloader.bin" 0x8000 "$1/CarMetrics.ino.partitions.bin" \
-    0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$1/CarMetrics.ino.bin" \
-    0x350000 "$OUT/littlefs.bin" > /dev/null
+    0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$1/CarMetrics.ino.bin" "${extra[@]}" > /dev/null
+}
+
+# Real room in the app slot (the arduino-cli "Maximum" figure ignores our partition table).
+slotcheck() {   # slotcheck <bin> <slot size> <name>
+  local n; n=$(stat -c %s "$1"); local max=$(( $2 ))
+  echo "firmware slot $3: $n of $max bytes ($(( n * 100 / max )) %)"
+  [ "$n" -le "$max" ] || { echo "FIRMWARE TOO BIG for the $3 slot"; exit 1; }
 }
 
 web() { python3 "$ROOT/tools/build_web.py" --mklittlefs "$CORE/tools/mklittlefs/mklittlefs" | tail -2; }
@@ -59,9 +66,10 @@ cmd_build3() {
   if [ "$chip" = esp32s3 ]; then
     cp "$dir/CarMetrics.ino.bin" "$OUT/carmetrics-s3-firmware.bin"
     [ -f "$OUT/littlefs.bin" ] || web
-    $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-s3-full-flash.bin" --flash_mode dio --flash_freq 80m --flash_size keep \
+    $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-s3-usb.bin" --flash_mode dio --flash_freq 80m --flash_size keep \
       0x0 "$dir/CarMetrics.ino.bootloader.bin" 0x8000 "$dir/CarMetrics.ino.partitions.bin" \
-      0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetrics.ino.bin" 0x350000 "$OUT/littlefs.bin" > /dev/null
+      0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetrics.ino.bin" > /dev/null
+    slotcheck "$dir/CarMetrics.ino.bin" 0x1A0000 "ESP32-S3 4 MB"
   fi
   echo "core 3 $chip build OK"
 }
@@ -81,10 +89,11 @@ cmd_build52() {
       --output-dir "$dir" "$s" 2>&1 | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
   [ -f "$dir/CarMetrics.ino.bin" ] || { echo "5.2 compile failed"; exit 1; }
   cp "$dir/CarMetrics.ino.bin" "$OUT/carmetrics-52-firmware.bin"
-  cp "$dir/littlefs.bin" "$OUT/carmetrics-52-littlefs.bin"
-  $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-52-full-flash.bin" --flash_mode dio --flash_freq 80m --flash_size 8MB \
+  cp "$dir/littlefs.bin" "$OUT/carmetrics-52-webapp.bin"
+  $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-52-usb.bin" --flash_mode dio --flash_freq 80m --flash_size 8MB \
     0x0 "$dir/CarMetrics.ino.bootloader.bin" 0x8000 "$dir/CarMetrics.ino.partitions.bin" \
-    0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetrics.ino.bin" 0x610000 "$dir/littlefs.bin" > /dev/null
+    0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetrics.ino.bin" > /dev/null
+  slotcheck "$dir/CarMetrics.ino.bin" 0x300000 "ESP32-S3 8 MB"
   echo "5.2 (ESP32-S3, 8 MB) build OK: $OUT/carmetrics-52-*.bin"
 }
 
@@ -105,7 +114,7 @@ cmd_display() {
       | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
     [ -f "$dir/CarMetricsDisplay.ino.bin" ] || { echo "display (JC3248W535) compile failed"; exit 1; }
     cp "$dir/CarMetricsDisplay.ino.bin" "$OUT/carmetrics-display-jc3248w535-firmware.bin"
-    $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-display-jc3248w535-full-flash.bin" --flash_mode dio --flash_freq 80m --flash_size 4MB \
+    $ESPTOOL --chip esp32s3 merge_bin -o "$OUT/carmetrics-display-jc3248w535-usb.bin" --flash_mode dio --flash_freq 80m --flash_size 4MB \
       0x0 "$dir/CarMetricsDisplay.ino.bootloader.bin" 0x8000 "$dir/CarMetricsDisplay.ino.partitions.bin" \
       0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetricsDisplay.ino.bin" > /dev/null
     echo "display JC3248W535 build OK"
@@ -117,7 +126,7 @@ cmd_display() {
       | grep -vE "^Error initializing instance|^Downloading index" | grep -E "error|Sketch uses|Global variables" || true
     [ -f "$dir/CarMetricsDisplay.ino.bin" ] || { echo "display (CYD) compile failed"; exit 1; }
     cp "$dir/CarMetricsDisplay.ino.bin" "$OUT/carmetrics-display-cyd-firmware.bin"
-    $ESPTOOL --chip esp32 merge_bin -o "$OUT/carmetrics-display-cyd-full-flash.bin" --flash_mode dio --flash_freq 40m --flash_size 4MB \
+    $ESPTOOL --chip esp32 merge_bin -o "$OUT/carmetrics-display-cyd-usb.bin" --flash_mode dio --flash_freq 40m --flash_size 4MB \
       0x1000 "$dir/CarMetricsDisplay.ino.bootloader.bin" 0x8000 "$dir/CarMetricsDisplay.ino.partitions.bin" \
       0xe000 "$CORE/tools/partitions/boot_app0.bin" 0x10000 "$dir/CarMetricsDisplay.ino.bin" > /dev/null
     echo "display CYD build OK"
@@ -149,8 +158,10 @@ cmd_build() {
   web
   rm -rf "$OUT/fw" && compile "$OUT/fw" "PartitionScheme=min_spiffs"
   cp "$OUT/fw/CarMetrics.ino.bin" "$OUT/carmetrics-firmware.bin"
-  merge "$OUT/fw" 80m "$OUT/carmetrics-full-flash.bin"
-  ls -la "$OUT"/carmetrics-*.bin "$OUT/littlefs.bin"
+  merge "$OUT/fw" 80m "$OUT/carmetrics-usb.bin"
+  cp "$OUT/littlefs.bin" "$OUT/carmetrics-webapp.bin"
+  slotcheck "$OUT/fw/CarMetrics.ino.bin" 0x1A0000 "ESP32 4 MB"
+  ls -la "$OUT"/carmetrics-*.bin
 }
 
 # ESP32 Relay X8 (8 relays): the classic build, starting as a relay worker with that board's profile.
@@ -158,7 +169,8 @@ cmd_relayx8() {
   [ -f "$OUT/littlefs.bin" ] || web
   rm -rf "$OUT/fw-x8" && compile "$OUT/fw-x8" "PartitionScheme=min_spiffs" "-DCM_RELAY_X8"
   cp "$OUT/fw-x8/CarMetrics.ino.bin" "$OUT/carmetrics-relay-x8-firmware.bin"
-  merge "$OUT/fw-x8" 80m "$OUT/carmetrics-relay-x8-full-flash.bin"
+  merge "$OUT/fw-x8" 80m "$OUT/carmetrics-relay-x8-usb.bin"
+  slotcheck "$OUT/fw-x8/CarMetrics.ino.bin" 0x1A0000 "Relay X8"
   ls -la "$OUT"/carmetrics-relay-x8-*.bin
 }
 
@@ -166,7 +178,7 @@ run_qemu() {  # run_qemu <flags> <seconds>
   [ -f "$OUT/littlefs.bin" ] || web
   # QEMU needs 40 MHz DIO flash; it has no Wi-Fi radio or ADC (CM_EMULATOR_TEST skips/fakes those)
   rm -rf "$OUT/emu" && compile "$OUT/emu" "PartitionScheme=min_spiffs,FlashFreq=40,FlashMode=dio,DebugLevel=info" "$1"
-  merge "$OUT/emu" 40m "$OUT/emu/flash.bin"
+  merge "$OUT/emu" 40m "$OUT/emu/flash.bin" webapp
   python3 -c "import sys;f=open(sys.argv[1],'ab');f.write(b'\\xff'*(4194304-f.tell()))" "$OUT/emu/flash.bin"   # QEMU needs a full 4 MB image (erased = 0xFF)
   echo "== running emulator for $2 s (log: build/emu/qemu.log)"
   timeout "$2" "$QEMU" -nographic -machine esp32 -m 4M -drive "file=$OUT/emu/flash.bin,if=mtd,format=raw" > "$OUT/emu/qemu.log" 2>&1 || true

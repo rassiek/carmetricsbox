@@ -196,7 +196,7 @@
       toast('Uploading ' + f.name + '…', false, 120000);
       await act(() => api('/firmware' + (target ? '?target=' + target : ''), { method: 'PUT', raw: f }));
     } })]);
-    box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'First the firmware (…-firmware.bin), then the web app (littlefs.bin) from the same build.'),
+    box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'First the firmware (…-firmware.bin), then the web app (…-webapp.bin) from the same release. The …-usb.bin file is for USB only.'),
       h('div', { class: 'row' }, [fwIn('', 'Firmware file'), fwIn('webapp', 'Web app file')])));
   }
   function townsEditor(w) {

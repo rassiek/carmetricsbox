@@ -92,9 +92,17 @@ def main():
     os.makedirs(BUILD, exist_ok=True)
     image = args.out
     os.makedirs(os.path.dirname(image), exist_ok=True)
+    # Keep only the part with data: the rest of the image is erased flash (0xFF).
+    # LittleFS never relies on unused blocks being erased (it erases a block before
+    # using it), so leaving them as they are on the board is safe, and the file
+    # shrinks from the whole partition to roughly what the web app uses.
     subprocess.check_call([tool, "-c", data_dir, "-b", "4096", "-p", "256", "-s", str(int(args.fs_size, 0)), image],
                           stdout=subprocess.DEVNULL)
-    print(f"filesystem image: {image} ({os.path.getsize(image)} bytes)")
+    data = open(image, "rb").read()
+    end = (len(data.rstrip(b"\xff")) + 4095) // 4096 * 4096
+    with open(image, "wb") as f:
+        f.write(data[:end])
+    print(f"filesystem image: {image} ({end} bytes, partition {int(args.fs_size, 0)})")
     return 0
 
 
