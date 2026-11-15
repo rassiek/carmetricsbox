@@ -47,7 +47,7 @@ def find_mklittlefs(explicit):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mklittlefs", help="path to the mklittlefs tool")
-    ap.add_argument("--line", default="51", help="release line whose label goes into the web app (51 or 52)")
+    ap.add_argument("--line", default="", help="ignored since 5.3 (one version for every board)")
     ap.add_argument("--fs-size", default=hex(FS_SIZE), help="LittleFS partition size (5.1: 0x90000, 5.2: 0x1C0000)")
     ap.add_argument("--data", default=DATA, help="where the gzipped files go")
     ap.add_argument("--out", default=os.path.join(BUILD, "littlefs.bin"), help="LittleFS image to write")
@@ -57,7 +57,7 @@ def main():
     # app, so the pages can warn when the firmware and web app don't match.
     import re
     cfg = open(os.path.join(ROOT, "firmware", "CarMetrics", "Config.h"), encoding="utf-8").read()
-    version = re.search(r'#define FW_RELEASE_%s "([^"]+)"' % args.line, cfg).group(1)
+    version = re.search(r'#define FW_VERSION "([^"]+)"', cfg).group(1)
     data_dir, out_dir = args.data, os.path.join(args.data, "www")
     print(f"release {version}")
 

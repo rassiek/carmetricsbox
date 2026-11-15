@@ -16,12 +16,17 @@
 // Release label: shown in the web app header, System page, OLED start screen and
 // the release file names. Bump for every build handed out; the web app gets the
 // same label baked in (tools/build_web.py) and warns when the two don't match.
-#define FW_RELEASE_51 "5.1.0-beta.11"   // every board (classic ESP32 4 MB, ESP32-S3), 4 MB layout
-#define FW_RELEASE_52 "5.2.0-beta.3"   // ESP32-S3 8 MB+ only (tools/cm.sh build52, -DCM_V52): main board, bigger buffers
+// One version for every board type since 5.3 (docs/DESIGN.md section 1). The build
+// variant (which board family the file is for) is separate: CM_VARIANT.
+#define FW_VERSION "5.3.0-beta.1"
+#ifndef CM_VARIANT
 #ifdef CM_V52
-#define FW_VERSION FW_RELEASE_52
+#define CM_VARIANT "s3-8mb"      // main board: ESP32-S3 with 8/16 MB + PSRAM (bigger buffers)
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#define CM_VARIANT "s3-4mb"
 #else
-#define FW_VERSION FW_RELEASE_51
+#define CM_VARIANT "esp32"
+#endif
 #endif
 #define CONFIG_SCHEMA 2   // bumped when the stored layout changes; older configs are upgraded on load
 #define MAX_SENSORS 24
@@ -222,7 +227,22 @@ struct BlackBoxConfig {
   uint8_t keepEvents = 10;           // oldest dropped
 };
 
+// Everything a person reads that names the machine (docs/DESIGN.md section 7).
+// Defaults are CarMetrics / car wording; a boat, farm or generator just changes them.
+struct UiConfig {
+  String appName = "CarMetrics";      // header, browser tab, OLED start screen, displays
+  String machineName;                 // "My Defender", "MV Aurora", "Borehole 2" (optional)
+  String pageDashboard = "Dashboard", pageSensors = "Sensors", pageActuators = "Actuators",
+         pageBoards = "Boards", pageSystem = "System";
+  String runningWord = "engine";      // "<word> running" / "<word> off" (engine, pump, generator...)
+  String tempUnit = "C";              // display preference: C | F
+  String pressureUnit = "";           // "" = as each sensor says | bar | psi | kPa
+  String speedUnit = "";              // "" = as each sensor says | km/h | mph | kn
+  String preset = "car";              // preset the settings started from (car | boat | farm | blank | custom)
+};
+
 struct Config {
+  UiConfig ui;
   SystemConfig sys;
   TurboConfig turbo;
   LayoutConfig layout;
@@ -264,6 +284,8 @@ bool cloudFromJson(JsonVariantConst v, CloudConfig& out, String& err);
 void weatherToJson(const WeatherConfig& w, JsonObject o);
 void turboToJson(const TurboConfig& t, JsonObject o);
 bool turboFromJson(JsonVariantConst v, TurboConfig& out, String& err);
+void uiToJson(const UiConfig& u, JsonObject o);
+bool uiFromJson(JsonVariantConst v, UiConfig& out, String& err);
 void layoutToJson(const LayoutConfig& l, JsonObject o);
 bool layoutFromJson(JsonVariantConst v, LayoutConfig& out, String& err);
 bool parseCurve(const String& s, std::vector<std::pair<float, float>>& out);   // "x:y,x:y"

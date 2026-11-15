@@ -34,10 +34,10 @@ volatile bool configChanged = false;
 // ------------------------------------------------------------------ helpers
 // Settings, relays, OTA and reboot need the admin password (HTTP Basic, user "admin").
 bool requireAuth(AsyncWebServerRequest* req) {
-  String pass;
-  { StateLock lk; pass = gConfig.sys.adminPass; }
+  String pass, realm;
+  { StateLock lk; pass = gConfig.sys.adminPass; realm = gConfig.ui.appName; }
   if (req->authenticate("admin", pass.c_str())) return true;
-  req->requestAuthentication("CarMetrics", false);
+  req->requestAuthentication(realm.c_str(), false);
   return false;
 }
 

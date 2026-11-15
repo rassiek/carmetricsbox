@@ -234,7 +234,7 @@ void render(const Snapshot& s, uint32_t now) {
     return;
   }
   if (now - bootMs < 3000 || s.items.empty()) {
-    oled->setCursor(0, 12); oled->print("CarMetrics " FW_VERSION);
+    oled->setCursor(0, 12); oled->print(gConfig.ui.appName); oled->print(" " FW_VERSION);
     oled->setCursor(0, 28); oled->print("WiFi: "); oled->print(s.ssid);
     oled->setCursor(0, 42); oled->print(s.ip);
     if (s.items.empty()) { oled->setCursor(0, 58); oled->print("No OLED sensors"); }

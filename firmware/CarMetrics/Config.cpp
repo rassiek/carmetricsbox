@@ -163,6 +163,7 @@ static void sysPins(SystemConfig& s, const BoardProfile& b) {
 }
 
 void configDefaults(Config& c, const BoardProfile& b) {
+  c.ui = UiConfig();
   c.sys = SystemConfig();
   sysPins(c.sys, b);
   c.weather = WeatherConfig();
@@ -283,6 +284,7 @@ void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
 void configToJson(const Config& c, JsonObject o, bool includeSecrets) {
   o["version"] = FW_VERSION;
   o["schema"] = CONFIG_SCHEMA;
+  uiToJson(c.ui, o["ui"].to<JsonObject>());
   systemToJson(c.sys, o["system"].to<JsonObject>(), includeSecrets);
   JsonArray sa = o["sensors"].to<JsonArray>();
   for (auto& s : c.sensors) sensorToJson(s, sa.add<JsonObject>());
@@ -532,6 +534,43 @@ bool turboFromJson(JsonVariantConst v, TurboConfig& t, String& err) {
   if (isnan(t.idleRpm)) t.idleRpm = 1000;
   return true;
 }
+// ---------------------------------------------------------------- names (ui)
+void uiToJson(const UiConfig& u, JsonObject o) {
+  o["appName"] = u.appName; o["machineName"] = u.machineName;
+  JsonObject p = o["pages"].to<JsonObject>();
+  p["dashboard"] = u.pageDashboard; p["sensors"] = u.pageSensors; p["actuators"] = u.pageActuators; p["boards"] = u.pageBoards; p["system"] = u.pageSystem;
+  o["runningWord"] = u.runningWord;
+  JsonObject un = o["units"].to<JsonObject>();
+  un["temperature"] = u.tempUnit; un["pressure"] = u.pressureUnit; un["speed"] = u.speedUnit;
+  o["preset"] = u.preset;
+}
+
+bool uiFromJson(JsonVariantConst v, UiConfig& out, String& err) {
+  UiConfig u = out;
+  auto str = [&](JsonVariantConst x, String& dst, size_t maxLen, const char* what, bool allowEmpty) -> bool {
+    if (x.isNull()) return true;
+    String s = x.as<const char*>() ? x.as<const char*>() : ""; s.trim();
+    if ((!allowEmpty && s.isEmpty()) || s.length() > maxLen) { err = String(what) + ": " + (allowEmpty ? "0" : "1") + " to " + maxLen + " characters"; return false; }
+    dst = s; return true;
+  };
+  JsonVariantConst p = v["pages"];
+  if (!str(v["appName"], u.appName, 24, "App name", false) || !str(v["machineName"], u.machineName, 32, "Machine name", true) ||
+      !str(p["dashboard"], u.pageDashboard, 16, "Page name", false) || !str(p["sensors"], u.pageSensors, 16, "Page name", false) ||
+      !str(p["actuators"], u.pageActuators, 16, "Page name", false) || !str(p["boards"], u.pageBoards, 16, "Page name", false) ||
+      !str(p["system"], u.pageSystem, 16, "Page name", false) || !str(v["runningWord"], u.runningWord, 16, "Running word", false) ||
+      !str(v["preset"], u.preset, 16, "Preset", true)) return false;
+  JsonVariantConst un = v["units"];
+  if (!un.isNull()) {
+    String t = un["temperature"] | u.tempUnit.c_str(), pr = un["pressure"] | u.pressureUnit.c_str(), sp = un["speed"] | u.speedUnit.c_str();
+    if (t != "C" && t != "F") { err = "Temperature unit: C or F"; return false; }
+    if (pr != "" && pr != "bar" && pr != "psi" && pr != "kPa") { err = "Pressure unit: bar, psi or kPa"; return false; }
+    if (sp != "" && sp != "km/h" && sp != "mph" && sp != "kn") { err = "Speed unit: km/h, mph or kn"; return false; }
+    u.tempUnit = t; u.pressureUnit = pr; u.speedUnit = sp;
+  }
+  out = u;
+  return true;
+}
+
 void layoutToJson(const LayoutConfig& l, JsonObject o) {
   JsonArray t = o["tiles"].to<JsonArray>();
   for (auto& x : l.tiles) { JsonObject j = t.add<JsonObject>(); j["id"] = x.id; j["size"] = x.size; j["widget"] = x.widget; }
@@ -636,6 +675,7 @@ bool cloudFromJson(JsonVariantConst v, CloudConfig& c, String& err) {
 
 bool configFromJson(JsonVariantConst v, Config& out, String& err) {
   Config tmp = out;
+  if (!v["ui"].isNull() && !uiFromJson(v["ui"], tmp.ui, err)) return false;
   if (!v["system"].isNull() && !systemFromJson(v["system"], tmp.sys, err)) return false;
   if (!v["sensors"].isNull() && !sensorsFromJson(v["sensors"], tmp.sensors, err)) return false;
   if (!v["relays"].isNull() && !relaysFromJson(v["relays"], tmp.relays, err)) return false;
