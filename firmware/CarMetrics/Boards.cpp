@@ -400,7 +400,12 @@ uint8_t nodeConfig(const std::vector<uint8_t>& json, uint32_t rev, std::string& 
     if (!have) c->sys.engineSensorId = "";
   }
   ok = ok && validateConfig(*c, err);
-  if (!ok) { delete c; msg = err.c_str(); return CFG_INVALID; }
+  if (!ok) {   // the reply carries 47 characters: keep the part that says what to fix
+    delete c;
+    err.replace("Actuator ", ""); err.replace("Sensor ", ""); err.replace(" can't be used as an output", " is input-only/missing");
+    int on = err.indexOf(" on "); if (on > 0 && err.indexOf("(use") > on) err = err.substring(0, on);
+    msg = err.c_str(); return CFG_INVALID;
+  }
   requestConfigApply(c);   // applied and saved by loop() on its next pass
   Preferences p;
   if (p.begin(NODE_NS, false, "cfg")) { p.putUInt("rev", rev); p.end(); }
@@ -707,6 +712,17 @@ String Boards::setShareLocked(int id, JsonVariantConst sensors, JsonVariantConst
   for (auto& r : rv) relayToJson(r, ra.add<JsonObject>());
   String j; serializeJson(out, j);
   if (j.length() > MAX_CONFIG) return "Too many settings for one board";
+  // Same chip as this board: catch impossible pins here instead of having the board refuse them.
+  if (mainS->board((uint8_t)id)->chip == myChip()) {
+    for (auto& r : rv) {
+      if (!r.enabled) continue;
+      for (int p : {r.pin, r.type == ActType::HBRIDGE ? r.pin2 : -1})
+        if (p >= 0 && !Board::chipCanOutput(p)) return "Actuator '" + r.id + "': GPIO " + String(p) + " can't drive an output on a " + String(Board::chip()) + " board";
+    }
+    for (auto& s : sv)
+      for (int p : {s.pin, s.sckPin, s.soPin})
+        if (s.enabled && p >= 0 && !Board::chipHasPin(p)) return "Sensor '" + s.id + "': GPIO " + String(p) + " doesn't exist on a " + String(Board::chip()) + " board";
+  }
   if (mainS->board((uint8_t)id)->role == ROLE_DISPLAY) return "A display has no sensors or relays of its own";
   shares[id].json = j;
   indexShare(id); saveShare(id); pushShare(id);

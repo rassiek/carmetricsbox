@@ -98,49 +98,72 @@
   }
 
   // ---- actuators
-  function control(a, q) {
-    const send = body => act(() => api(`/actuators/${a.id}/command${q}`, { body }));
+  // Controls are big: they get used on a phone or a touch screen in the car.
+  function control(a, q, reload) {
+    const send = async body => { await act(() => api(`/actuators/${a.id}/command${q}`, { body })); reload(); };
     const st = a.state || {};
-    const auto = a.rule !== 'manual' ? h('button', { class: 'small' + (st.by === 'rule' ? ' on' : ''), onclick: () => send({ auto: true }) }, 'Auto') : null;
-    if (a.type === 'relay') return h('div', { class: 'row' }, [h('button', { class: 'small' + (st.on ? ' on' : ''), onclick: () => send({ on: !st.on }) }, st.on ? 'On' : 'Off'), auto]);
+    const auto = a.rule !== 'manual' ? h('button', { class: 'big' + (st.by === 'rule' ? ' on' : ''), onclick: () => send({ auto: true }) }, 'Auto') : null;
+    const known = st.value !== undefined;
+    if (a.type === 'relay') return h('div', { class: 'row ctl' }, [
+      h('button', { class: 'big' + (st.on ? ' on' : ''), onclick: () => send({ on: !st.on }) }, !known ? 'Switch' : st.on ? 'On' : 'Off'), auto]);
     if (a.type === 'servo') {
       const r = h('input', { type: 'range', min: a.servoMinDeg, max: a.servoMaxDeg, value: st.value ?? a.servoMinDeg, onchange: e => send({ angle: +e.target.value }) });
-      return h('div', { class: 'row' }, [r, auto]);
+      return h('div', { class: 'row ctl' }, [r, auto]);
     }
     if (a.type === 'hbridge') {
-      const sp = h('input', { type: 'range', min: 0, max: 100, value: Math.abs(st.value || 0) || a.maxDuty, style: 'max-width:120px' });
-      return h('div', { class: 'row' }, [h('button', { class: 'small', onclick: () => send({ direction: 'reverse', speed: +sp.value }) }, '◀'),
-        h('button', { class: 'small', onclick: () => send({ direction: 'stop' }) }, 'Stop'), h('button', { class: 'small', onclick: () => send({ direction: 'forward', speed: +sp.value }) }, '▶'), sp, auto]);
+      const sp = h('input', { type: 'range', min: 0, max: 100, value: Math.abs(st.value || 0) || a.maxDuty });
+      return h('div', { class: 'row ctl' }, [h('button', { class: 'big', onclick: () => send({ direction: 'reverse', speed: +sp.value }) }, '◀'),
+        h('button', { class: 'big', onclick: () => send({ direction: 'stop' }) }, 'Stop'), h('button', { class: 'big', onclick: () => send({ direction: 'forward', speed: +sp.value }) }, '▶'), sp, auto]);
     }
     const r = h('input', { type: 'range', min: 0, max: 100, value: st.value || 0, onchange: e => send({ duty: +e.target.value }) });
-    return h('div', { class: 'row' }, [h('button', { class: 'small', onclick: () => send({ on: !(st.value > 0) }) }, st.value > 0 ? 'On' : 'Off'), r, auto]);
+    return h('div', { class: 'row ctl' }, [h('button', { class: 'big' + (st.value > 0 ? ' on' : ''), onclick: () => send({ on: !(st.value > 0) }) }, st.value > 0 ? 'On' : 'Off'), r, auto]);
   }
   async function showActuators(main) {
     if (board === 'local') await loadPins();
     const top = await boardPicker(() => showActuators(main));
     const list = h('div');
-    let items = [];
+    let items = [], shown = '', warned = false;
     const q = `?board=${board}`;
     const draw = () => {
+      const snap = JSON.stringify(items);
+      if (snap === shown) return;   // nothing changed: don't rebuild under the finger
+      shown = snap;
       list.innerHTML = '';
       for (const a of items) {
         const st = a.state || {};
-        const val = a.type === 'relay' ? (st.on ? 'on' : 'off') : st.value === undefined ? '' : a.type === 'servo' ? `${st.value}°` : `${st.value} %`;
-        list.append(h('div', { class: 'list-item' }, [
+        const val = st.value === undefined ? '' : a.type === 'relay' ? (st.on ? 'on' : 'off') : a.type === 'servo' ? `${st.value}°` : `${st.value} %`;
+        list.append(h('div', { class: 'list-item act' }, [
           h('div', { class: 'grow' }, [h('b', {}, a.name), ' ', h('span', { class: 'muted small' },
-            `${(SCHEMA.actTypes.find(t => t[0] === a.type) || [, a.type])[1]} · ${a.rule}${st.by ? ' · now: ' + st.by : ''}${a.enabled ? '' : ' · disabled'}`)]),
-          h('span', { class: 'val' }, val), a.enabled ? control(a, q) : null,
+            `${(SCHEMA.actTypes.find(t => t[0] === a.type) || [, a.type])[1]} · ${a.rule}${st.by ? ' · now: ' + st.by : ''} · GPIO ${a.pin}`)]),
+          h('span', { class: 'val' }, val),
+          a.enabled ? control(a, q, load) : h('button', { class: 'big', title: 'Switched off in its settings', onclick: async () => {
+            if (await act(() => patch(`/actuators/${a.id}${q}`, { enabled: true }), `${a.name} enabled`)) load();
+          } }, 'Disabled: enable'),
           h('button', { class: 'small', onclick: () => list.replaceWith(editor('actuators', a, false, () => showActuators(main))) }, 'Edit')]));
       }
       if (!items.length) list.append(h('p', { class: 'muted' }, 'Nothing yet: relays, fans (PWM), motors (H-bridge) and servos go here.'));
     };
-    const load = async () => { try { items = (await get(`/actuators${q}`)).items; draw(); } catch (e) { err(e); } };
+    async function load() {
+      try {
+        const r = await get(`/actuators${q}`);
+        if (board !== 'local') {   // another board: its live values come with the Boards list
+          const b = ((await get('/boards')).items || []).find(x => 'b' + x.id === board);
+          for (const a of r.items) {
+            const p = b && b.online && (b.points || []).find(x => x.relay && x.id === a.id);
+            if (p && p.value != null) a.state = { value: p.value, on: p.value > 0 };
+          }
+          const cfg = b && b.config;
+          if (cfg && cfg.status === 'refused' && !warned && (warned = true)) toast(`${b.name} refused its settings: ${cfg.message}`, true, 8000);
+        }
+        items = r.items; draw();
+      } catch (e) { err(e); }
+    }
     await load();
     main.innerHTML = '';
     main.append(h('div', { class: 'row' }, [top, h('span', { class: 'spacer' }),
       h('button', { class: 'primary', onclick: () => list.replaceWith(editor('actuators', SCHEMA.newActuator(), true, () => showActuators(main))) }, 'Add actuator')]), list);
     clearInterval(page.actT);
-    if (board === 'local') page.actT = setInterval(() => { if (!document.querySelector('.edit') && document.activeElement?.type !== 'range') load(); }, 3000);
+    page.actT = setInterval(() => { if (!document.querySelector('.edit') && document.activeElement?.type !== 'range') load(); }, 3000);
   }
 
   page('sensors', { show: main => { board = sessionStorage.getItem('cmBoard') || 'local'; sessionStorage.removeItem('cmBoard'); showSensors(main); }, leave: () => { page.sensorsTick = null; } });

@@ -46,6 +46,9 @@ const BoardProfile& detected();             // best guess from chip + PSRAM
 const BoardProfile& current();              // profile of the active config
 void listToJson(JsonArray a);               // profiles for this chip
 void profileToJson(const BoardProfile& p, JsonObject o);
-String pinList(uint64_t mask);              // "1-10, 12" style
+String pinList(uint64_t mask);
+// Any board of this firmware's chip: can the pin exist / drive an output? (checks for another board of the same chip)
+bool chipHasPin(int pin);
+bool chipCanOutput(int pin);              // "1-10, 12" style
 inline bool has(uint64_t mask, int pin) { return pin >= 0 && pin < 64 && (mask & CM_BIT(pin)); }
 }

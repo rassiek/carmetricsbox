@@ -9,4 +9,5 @@ void toJson(JsonObject o);                       // StateLock held
 // mode "blink": toggles a free output for 5 s; "read": level (+ volts on an ADC1 pin).
 String test(int gpio, const String& mode, JsonObject result);   // StateLock held; "" = ok
 void update();                                   // from loop(): runs a blink test
+String usedBy(int gpio);                         // StateLock held; "" = free
 }

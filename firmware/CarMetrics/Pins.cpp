@@ -33,6 +33,8 @@ std::map<int, String> usedPins() {
 }
 }  // namespace
 
+String Pins::usedBy(int gpio) { auto u = usedPins(); return u.count(gpio) ? u[gpio] : String(); }
+
 void Pins::toJson(JsonObject o) {
   const BoardProfile& b = Board::current();
   o["board"] = b.id; o["boardName"] = b.name; o["chip"] = b.chip; o["notes"] = b.notes;
@@ -54,7 +56,7 @@ void Pins::toJson(JsonObject o) {
     if (used.count(p)) {
       x["usedBy"] = used[p];
       if (used[p].indexOf(',') > 0) warn.add("GPIO " + String(p) + " is used twice: " + used[p]);
-      if (Board::has(b.caution, p)) warn.add("GPIO " + String(p) + " (" + used[p] + ") is a boot pin: it must not be pulled the wrong way while the board starts");
+      if (Board::has(b.caution, p) && p != b.fixed.rgb) warn.add("GPIO " + String(p) + " (" + used[p] + ") is a boot pin: it must not be pulled the wrong way while the board starts");
     }
   }
   if (blinkPin >= 0) o["testing"] = blinkPin;

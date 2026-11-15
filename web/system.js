@@ -54,7 +54,7 @@
       const list = h('div');
       for (const n of (w.scan || []).slice(0, 15)) {
         const pass = h('input', { type: 'password', placeholder: n.saved ? 'saved password (leave empty)' : 'password', style: 'max-width:200px' });
-        list.append(h('div', { class: 'list-item' }, [h('div', { class: 'grow' }, [h('b', {}, n.ssid || '(hidden)'), h('span', { class: 'muted small' }, ` ${n.rssi} dBm · ch ${n.ch}${n.security ? '' : ' · open'}${n.saved ? ' · saved' : ''}`)]),
+        list.append(h('div', { class: 'list-item' }, [h('div', { class: 'grow' }, [h('b', {}, n.ssid || '(hidden)'), h('span', { class: 'muted small' }, ` ${n.rssi} dBm · ch ${n.ch}${n.security ? '' : ' · open'}${n.saved ? ' · saved' : ''}${/^CarMetrics/i.test(n.ssid || '') ? ' · another CarMetrics board' : ''}`)]),
           n.security ? pass : null, h('button', { class: 'small primary', onclick: () => act(() => api('/network/join', { body: { ssid: n.ssid, pass: pass.value } })) }, n.ssid === w.ssid ? 'Joined' : 'Join')]));
       }
       wifi.append(h('div', { class: 'row', style: 'margin:8px 0' }, [h('b', {}, 'Networks in range'), h('span', { class: 'muted small' }, w.scanAgeS >= 0 ? `searched ${w.scanAgeS} s ago` : ''),
@@ -69,6 +69,9 @@
     };
     drawScan();
     box.append(panel('Wi-Fi', wifi));
+    if (!(w.scanAgeS >= 0 && w.scanAgeS < 60)) {   // an old list: search again (the results follow in a few seconds)
+      api('/network/scan', { body: {} }).then(() => setTimeout(async () => { try { w = await get('/network'); drawScan(); } catch {} }, 5000)).catch(() => {});
+    }
     box.append(panel('Access point and names', ...sectionForm('system', [
       { k: 'apSsid', label: 'Access point name' }, { k: 'apPass', label: 'Access point password (empty = keep)', type: 'pass' },
       { k: 'hostname', label: 'Host name (http://<name>.local)' }, { k: 'scanWhileApInUse', label: 'Search for networks while a phone is connected', type: 'bool' }],
@@ -105,7 +108,7 @@
     const pins = await loadPins();
     let prof; try { prof = await get('/hardware/profiles'); } catch (e) { return err(e); }
     const p = { board: prof.setting, applyPins: false };
-    box.append(panel('Board', form(p, [{ k: 'board', label: 'Board type', type: 'select', opts: [['auto', `Detect (${prof.detected})`]].concat(prof.items.map(x => [x.id, x.name])) },
+    box.append(panel('Board', form(p, [{ k: 'board', label: 'Board type', type: 'select', opts: [['auto', `Detect (${(prof.items.find(x => x.id === prof.detected) || { name: prof.detected }).name})`]].concat(prof.items.map(x => [x.id, x.name])) },
       { k: 'applyPins', label: 'Move the bus and default sensor pins to this board\'s defaults', type: 'bool' }]),
       h('p', { class: 'muted small' }, prof.current.notes), h('button', { class: 'primary', onclick: () => act(() => api('/hardware/profile', { body: p })) }, 'Save')));
     const table = h('table', {}, [h('tr', {}, ['GPIO', 'Can do', 'Used by', ''].map(t => h('th', {}, t)))]);

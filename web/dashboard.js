@@ -10,8 +10,9 @@
   function tiles() {
     const lay = (S.settings.layout && S.settings.layout.tiles) || [];
     const byId = Object.fromEntries(sensorsCfg().map(s => [s.id, s]));
-    const list = lay.length ? lay.filter(t => byId[t.id]) : sensorsCfg().filter(s => s.enabled).map(s => ({ id: s.id, size: 1, widget: 'bar' }));
-    return list.map(t => ({ ...t, s: byId[t.id], a: addrOf(byId[t.id]) }));
+    const list = (lay.length ? lay : CM.autoTiles(sensorsCfg())).filter(t => byId[t.id]);
+    return list.map(t => ({ ...t, s: byId[t.id], a: addrOf(byId[t.id]),
+      group: t.widget === 'bars' ? [t.id].concat((t.with || '').split(',').filter(x => byId[x])).map(id => byId[id]) : null }));
   }
 
   // ---- dial: 240° arc with the warning / critical zones, needle and value
@@ -37,35 +38,90 @@
     if (n) n.setAttribute('transform', `rotate(${(A0 + SWEEP * fr + 90).toFixed(1)} 60 60)`);
   }
 
+  // Thermometer group: several sensors as vertical bars on one tile (gearbox, transfer case...)
+  function barsTile(t) {
+    const tile = h('div', { class: `tile size${t.size || 1} w-bars`, 'data-group': t.group.map(addrOf).join(',') }, [
+      h('div', { class: 'tname' }, t.group.length > 3 ? 'Temperatures' : t.group.map(s => s.oledLabel || s.name).join(' · ')),
+      h('div', { class: 'thermos' }, t.group.map(s => {
+        const lo = s.gaugeMin ?? 0, hi = s.gaugeMax ?? 100, f = v => `${Math.max(0, Math.min(100, (v - lo) / ((hi - lo) || 1) * 100)).toFixed(1)}%`;
+        const ticks = [[s.warnHigh, 'w'], [s.critHigh, 'c'], [s.warnLow, 'w'], [s.critLow, 'c']].filter(x => x[0] != null)
+          .map(([v, c]) => h('i', { class: 'tk ' + c, style: `bottom:${f(v)}` }));
+        return h('div', { class: 'thermo', 'data-a': addrOf(s), onclick: e => { e.stopPropagation(); if (!document.body.classList.contains('fs')) editLimits(s); } }, [
+          h('div', { class: 'tv' }, '--'), h('div', { class: 'tube' }, [h('div', { class: 'fill' }), ...ticks]), h('div', { class: 'tl' }, s.oledLabel || s.name)]);
+      }))]);
+    return tile;
+  }
   function renderGauges(box) {
     const grid = h('div', { class: 'tiles' });
     for (const t of tiles()) {
-      const tile = h('div', { class: `tile size${t.size || 1} w-${t.widget}`, 'data-a': t.a, onclick: () => editLimits(t.s) }, [
+      if (t.widget === 'bars') { grid.append(barsTile(t)); continue; }
+      const tile = h('div', { class: `tile size${t.size || 1} w-${t.widget}`, 'data-a': t.a, onclick: () => { if (!document.body.classList.contains('fs')) editLimits(t.s); } }, [
         h('div', { class: 'tname' }, t.s.name), t.widget === 'bar' ? h('div', { html: dialSvg(t.s) }) : null,
         t.widget === 'spark' ? h('canvas', { class: 'spark', width: 300, height: 60 }) : null,
         h('div', { class: 'tval' }, [h('span', { class: 'num' }, '--'), ' ', h('span', { class: 'unit' }, '')])]);
       grid.append(tile);
     }
     if (!grid.children.length) grid.append(h('p', { class: 'muted' }, 'No sensors to show yet: add some on the Sensors tab.'));
-    box.append(grid, h('div', { class: 'row small' }, [h('a', { href: '#dashboard/layout' }, 'Change tiles and OLED pages')]));
+    box.append(grid);
     updateGauges();
+    fitTiles();
   }
+  function valueText(s, v) { const [txt, u] = fmt(v.v, s.unit, s.decimals); return [v.st === 'ok' || v.st === undefined ? txt : v.st.replace('_', ' '), u]; }
   function updateGauges() {
     if (!el) return;
-    for (const tile of el.querySelectorAll('.tile')) {
+    const tbWas = $('#turbo') && $('#turbo').classList.contains('hidden');
+    for (const tile of el.querySelectorAll('.tile[data-a]')) {
       const a = tile.dataset.a, s = sensorsCfg().find(x => addrOf(x) === a);
       if (!s) continue;
       const v = S.values[a] || { v: null, st: 'waiting', lvl: 'ok' };
-      const [txt, u] = fmt(v.v, s.unit, s.decimals);
-      tile.querySelector('.num').textContent = v.st === 'ok' || v.st === undefined ? txt : v.st.replace('_', ' ');
+      const [txt, u] = valueText(s, v);
+      tile.querySelector('.num').textContent = txt;
       tile.querySelector('.unit').textContent = u;
       tile.className = tile.className.replace(/ lvl-\w+/g, '') + ' lvl-' + (v.lvl || 'ok');
       setDial(tile, s, v);
       const c = tile.querySelector('canvas.spark');
       if (c) drawSpark(c, spark[a] || []);
     }
-    const tb = $('#turbo'); if (tb) { const t = S.turbo; tb.classList.toggle('hidden', !t); if (t) tb.textContent = t.phase === 'cooling' ? `Turbo cooling: ${t.leftS} s before switching off` : 'Turbo cool: OK to switch off'; }
+    const order = { ok: 0, warn: 1, fault: 2, crit: 3 };
+    for (const tile of el.querySelectorAll('.tile.w-bars')) {
+      let worst = 'ok';
+      for (const th of tile.querySelectorAll('.thermo')) {
+        const a = th.dataset.a, s = sensorsCfg().find(x => addrOf(x) === a); if (!s) continue;
+        const v = S.values[a] || { v: null, st: 'waiting', lvl: 'ok' };
+        const [txt, u] = valueText(s, v);
+        th.querySelector('.tv').textContent = v.st === 'ok' ? `${txt}${u.startsWith('°') ? '°' : ' ' + u}` : txt;
+        const lo = s.gaugeMin ?? 0, hi = s.gaugeMax ?? 100;
+        th.querySelector('.fill').style.height = v.v == null ? '0' : `${Math.max(0, Math.min(100, (v.v - lo) / ((hi - lo) || 1) * 100))}%`;
+        th.className = 'thermo lvl-' + (v.lvl || 'ok');
+        if (order[v.lvl] > order[worst]) worst = v.lvl;
+      }
+      tile.className = tile.className.replace(/ lvl-\w+/g, '') + ' lvl-' + worst;
+    }
+    const tb = $('#turbo'); if (tb) { const t = S.turbo; tb.classList.toggle('hidden', !t); if (t) tb.textContent = t.phase === 'cooling' ? `Turbo cooling: ${t.leftS} s before switching off` : 'Turbo cool: OK to switch off'; if (tbWas !== tb.classList.contains('hidden')) fitTiles(); }
   }
+
+  // ---- full screen: only the tiles, sized to fill the screen (2 columns upright, 3 sideways)
+  let wake = null;
+  function fitTiles() {
+    const grid = el && el.querySelector('.tiles'); if (!grid) return;
+    if (!document.body.classList.contains('fs')) { grid.style.cssText = ''; return; }
+    const W = innerWidth, cols = W > innerHeight ? 3 : 2;
+    const H = innerHeight - Math.max(0, grid.getBoundingClientRect().top + scrollY);   // below the turbo banner, if shown
+    const spans = [...grid.children].reduce((n, t) => n + (t.classList.contains('size2') ? 2 : 1), 0);
+    const rows = Math.max(1, Math.ceil(spans / cols));
+    grid.style.cssText = `grid-template-columns:repeat(${cols},1fr);grid-auto-rows:${Math.max(60, Math.floor((H - 6 - 6 * (rows - 1)) / rows))}px;gap:6px`;
+  }
+  async function fullScreen(on) {
+    document.body.classList.toggle('fs', on);
+    try {
+      if (on && document.documentElement.requestFullscreen && !document.fullscreenElement) await document.documentElement.requestFullscreen();
+      if (!on && document.fullscreenElement) await document.exitFullscreen();
+    } catch {}
+    try { if (on && navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); else if (!on && wake) { wake.release(); wake = null; } } catch {}
+    fitTiles();
+  }
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.classList.contains('fs')) fullScreen(false); });
+  window.addEventListener('resize', fitTiles);
   function drawSpark(c, vals) {
     const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height);
     const v = vals.filter(x => x != null); if (v.length < 2) return;
@@ -212,7 +268,10 @@
     const views = h('div', { class: 'seg' }, [['gauges', 'Gauges'], ['charts', 'Charts'], ['events', 'Events']].map(([k, t]) =>
       h('a', { href: `#dashboard/${k}`, class: view === k ? 'active' : '' }, t)));
     const box = h('div');
-    main.append(views, box);
+    const tools = view === 'gauges' ? h('div', { class: 'row gtools' }, [h('button', { class: 'small', onclick: () => fullScreen(true) }, '⛶ Full screen'),
+      h('a', { class: 'btn small', href: '#dashboard/layout' }, 'Edit layout')]) : null;
+    main.append(h('div', { class: 'row' }, [views, h('span', { class: 'spacer' }), tools]), box,
+      h('button', { class: 'fsexit', onclick: () => fullScreen(false), title: 'Leave full screen' }, '✕'));
     if (view === 'gauges') { renderGauges(box); weatherCard(box); }
     else if (view === 'charts') renderCharts(box);
     else renderEvents(box);
@@ -222,5 +281,5 @@
     for (const [a, v] of Object.entries(S.values)) { const l = spark[a] ||= []; l.push(v.v); if (l.length > 120) l.shift(); }
     if (view === 'gauges') updateGauges();
   });
-  page('dashboard', { show, leave: () => { el = null; }, onSettings: () => { if (el && view === 'gauges' && !document.querySelector('.modal')) show(el); } });
+  page('dashboard', { show, leave: () => { if (document.body.classList.contains('fs')) fullScreen(false); el = null; }, onSettings: () => { if (el && view === 'gauges' && !document.querySelector('.modal')) show(el); } });
 })();

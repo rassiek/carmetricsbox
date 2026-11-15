@@ -366,7 +366,7 @@ void hInfo(Ctx& c) {
   {
     StateLock lk;
     d["appName"] = gConfig.ui.appName; d["machineName"] = gConfig.ui.machineName;
-    d["firmware"] = FW_VERSION; d["build"] = __DATE__ " " __TIME__; d["variant"] = CM_VARIANT;
+    d["firmware"] = FW_VERSION; d["build"] = Health::buildStamp(); d["variant"] = CM_VARIANT;
     JsonArray api = d["api"].to<JsonArray>(); api.add(1);
     d["protocol"] = 1; d["role"] = Boards::role();
     const BoardProfile& b = Board::current();

@@ -108,7 +108,7 @@ void Alerts::update() {
       uint8_t before = r.level;
       r.level = evalLevel(gConfig.sensors[i], r, r.level, running);
       if ((r.level == LVL_WARN || r.level == LVL_CRIT) && r.level > before)
-        BlackBox::trigger(gConfig.sensors[i].id + " " + alertLevelStr(r.level));   // records 30 s before and after
+        BlackBox::trigger(gConfig.sensors[i].name + ": " + (r.level == LVL_CRIT ? "critical" : "warning"));   // records 30 s before and after
       if (r.level > overall) overall = r.level;
       if (r.level > mutedLevels[i]) worse = true;
     }

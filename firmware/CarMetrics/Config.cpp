@@ -639,7 +639,7 @@ bool uiFromJson(JsonVariantConst v, UiConfig& out, String& err) {
 
 void layoutToJson(const LayoutConfig& l, JsonObject o) {
   JsonArray t = o["tiles"].to<JsonArray>();
-  for (auto& x : l.tiles) { JsonObject j = t.add<JsonObject>(); j["id"] = x.id; j["size"] = x.size; j["widget"] = x.widget; }
+  for (auto& x : l.tiles) { JsonObject j = t.add<JsonObject>(); j["id"] = x.id; j["size"] = x.size; j["widget"] = x.widget; if (x.with.length()) j["with"] = x.with; }
   JsonArray d = o["oled"].to<JsonArray>();
   for (auto& x : l.oled) d.add(x);
   o["oledColumns"] = l.oledColumns;
@@ -649,7 +649,8 @@ bool layoutFromJson(JsonVariantConst v, LayoutConfig& l, String& err) {
   LayoutConfig n;
   for (JsonObjectConst x : v["tiles"].as<JsonArrayConst>()) {
     LayoutTile t; t.id = getS(x, "id", ""); t.size = constrain(getI(x, "size", 1), 1, 2); t.widget = getS(x, "widget", "bar");
-    if (t.widget != "number" && t.widget != "bar" && t.widget != "spark") t.widget = "bar";
+    if (t.widget != "number" && t.widget != "bar" && t.widget != "spark" && t.widget != "bars") t.widget = "bar";
+    t.with = getS(x, "with", ""); if (t.with.length() > 160) { err = "Too many sensors on one tile"; return false; }
     if (t.id.length()) n.tiles.push_back(t);
   }
   for (JsonVariantConst x : v["oled"].as<JsonArrayConst>()) { String id = x.as<const char*>() ? x.as<const char*>() : ""; if (id.length()) n.oled.push_back(id); }

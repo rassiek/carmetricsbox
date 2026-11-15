@@ -2,6 +2,7 @@
 #include "Sensors.h"
 #include "State.h"
 #include "Board.h"
+#include "Pins.h"
 #include <Wire.h>
 
 namespace {
@@ -73,9 +74,14 @@ void Discover::update() {
     }
   }
   // Free ADC1 pins of this board (those that work with Wi-Fi on).
+  // Never read a pin something else uses: analogRead takes it over (on the I2C pins
+  // that stops the bus until a restart). Analog sensors' own pins are fine.
   const BoardProfile& b = Board::current();
+  uint64_t skip = 0;
+  { StateLock lk; for (int p = 0; p < 64; p++) { String u = Pins::usedBy(p); bool adc = false; for (auto& c : gConfig.sensors) if (c.enabled && c.type == SensorType::ADC && c.pin == p) adc = true;
+    if (u.length() && !adc) skip |= CM_BIT(p); } }
   for (int p = 0; p < 64; p++) {
-    if (!Board::has(b.adc1, p) || !Board::has(b.valid, p)) continue;
+    if (!Board::has(b.adc1, p) || !Board::has(b.valid, p) || (skip & CM_BIT(p))) continue;
     an.push_back({"gpio" + String(p), analogReadMilliVolts(p) / 1000.0f, ""});
   }
   StateLock lk;

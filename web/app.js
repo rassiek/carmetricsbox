@@ -224,6 +224,27 @@ const CM = (() => {
   async function loadPins() { try { pinInfo = await get('/pins'); } catch { pinInfo = { pins: [] }; } return pinInfo; }
   const err = e => toast(e.message, true, 6000);
 
-  return { $, $$, h, api, get, patch, del, toast, act, err, live, S, ui, fmt, conv, page, form, reloadSettings, loadPins,
+  // The tiles when none are chosen: the most important first (six fit a phone),
+  // the other plain temperatures together as one thermometer group, then the rest.
+  function autoTiles(list) {
+    const en = list.filter(s => s.enabled);
+    const tc = s => ['max6675', 'mcp9600'].includes(s.type) || (s.type === 'remote' && /°/.test(s.unit) && (s.gaugeMax || 0) >= 400);
+    const used = new Set(), out = [];
+    const take = pred => { const s = en.find(x => !used.has(x.id) && pred(x)); if (s) { used.add(s.id); out.push({ id: s.id, size: 1, widget: 'bar' }); } };
+    take(s => /coolant|water_temp|engine_temp/.test(s.id));
+    take(s => /oil/.test(s.id) && /psi|bar|kPa/.test(s.unit));
+    take(tc);
+    take(s => /boost|map_press/.test(s.id));
+    take(s => s.unit === 'V');
+    const temps = en.filter(s => !used.has(s.id) && /°/.test(s.unit) && !tc(s) && !/cabin|outside|ambient|air_temp/.test(s.id));
+    if (temps.length >= 2) {
+      const g = temps.slice(0, 4); g.forEach(s => used.add(s.id));
+      out.push({ id: g[0].id, size: 1, widget: 'bars', with: g.slice(1).map(s => s.id).join(',') });
+    }
+    for (const s of en) if (!used.has(s.id)) out.push({ id: s.id, size: 1, widget: 'bar' });
+    return out;
+  }
+
+  return { autoTiles, $, $$, h, api, get, patch, del, toast, act, err, live, S, ui, fmt, conv, page, form, reloadSettings, loadPins,
            pins: () => pinInfo, sensorChoices, go: hash => { location.hash = hash; } };
 })();

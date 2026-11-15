@@ -243,7 +243,7 @@ struct TurboConfig {
 };
 
 // Display layout: one model for the web dashboard tiles and the OLED pages.
-struct LayoutTile { String id; uint8_t size = 1; String widget = "bar"; };   // size 1|2, widget bar|number|spark
+struct LayoutTile { String id; uint8_t size = 1; String widget = "bar"; String with; };   // size 1|2, widget bar (dial)|number|spark|bars; with: more sensor ids for "bars" ("a,b,c")
 struct LayoutConfig {
   std::vector<LayoutTile> tiles;     // empty = every enabled sensor, config order
   std::vector<String> oled;          // sensor ids, "|" = page break; empty = automatic

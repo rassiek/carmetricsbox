@@ -19,6 +19,7 @@
 namespace Health {
 void earlyBoot();                // first thing in setup()
 bool safeMode();
+const char* buildStamp();        // one build time for every page
 String safeModeReason();
 uint8_t crashCount();
 void leaveSafeMode();            // clears the crash counter; caller reboots

@@ -38,6 +38,7 @@ CFG = {
         dict(id='fan', name='Fan', pin=13, type='pwm', mode='on_off', activeLow=False, defaultOn=False, blinkMs=500, enabled=True, safeState='off',
              freqHz=25000, kickMs=500, minDuty=20, maxDuty=100, rampPerS=20, safeDuty=0, rule='threshold', ruleSensor='coolant_temp', onAt=95, offAt=90),
         dict(id='lights', name='Spot lights', pin=26, type='relay', mode='on_off', activeLow=True, defaultOn=False, blinkMs=500, enabled=True, safeState='off', rule='manual'),
+        dict(id='horn', name='Horn', pin=21, type='relay', mode='on_off', activeLow=True, defaultOn=False, blinkMs=500, enabled=False, safeState='off', rule='manual'),
     ],
     'system': {'board': 'auto', 'role': 'main', 'boardEncrypt': False, 'canEnabled': False, 'canTx': -1, 'canRx': -1, 'canKbps': 500,
                'apSsid': 'CarMetrics', 'apPass': '', 'networks': [{'ssid': 'Home', 'pass': '', 'passSet': True, 'priority': 5}], 'scanWhileApInUse': True,

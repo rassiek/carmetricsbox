@@ -30,7 +30,23 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await p.locator('#tab-dashboard').textContent()) === 'Dashboard' && (await p.locator('#machine').textContent()) === 'Defender', 'names from the settings');
   const needle = await p.locator('.tile .needle').first().getAttribute('transform');
   check(/rotate\(/.test(needle || ''), 'needle moves with the value', needle);
+  const order = await p.$$eval('.tiles .tile .tname', e => e.slice(0, 6).map(x => x.textContent));
+  check(order[0] === 'Coolant' && order[1] === 'Oil pressure' && order[2] === 'EGT', 'most important gauges first', order.join(' | '));
+  check((await p.locator('.tile.w-bars .thermo').count()) >= 2, 'other temperatures as one thermometer group', String(await p.locator('.tile.w-bars .thermo').count()));
   await p.screenshot({ path: `${OUT}/dashboard-phone.png`, fullPage: true });
+  await p.click('text=Full screen'); await p.waitForTimeout(800);
+  const fs = await p.evaluate(() => ({ fs: document.body.classList.contains('fs'), header: getComputedStyle(document.querySelector('header')).display, sh: document.documentElement.scrollHeight, ih: innerHeight }));
+  check(fs.fs && fs.header === 'none' && fs.sh <= fs.ih + 1, 'full screen: header hidden, tiles fit the screen', JSON.stringify(fs));
+  await p.screenshot({ path: `${OUT}/dashboard-fullscreen-phone.png` });
+  await p.click('.fsexit'); await p.waitForTimeout(300);
+  await p.setViewportSize({ width: 844, height: 390 }); await p.waitForTimeout(300);
+  await p.click('text=Full screen'); await p.waitForTimeout(800);
+  const fs2 = await p.evaluate(() => [document.documentElement.scrollHeight, innerHeight]);
+  check(fs2[0] <= fs2[1] + 1, 'full screen sideways fits', fs2.join('/'));
+  await p.screenshot({ path: `${OUT}/dashboard-fullscreen-landscape.png` });
+  await p.click('.fsexit'); await p.waitForTimeout(300);
+  check(!(await p.evaluate(() => document.body.classList.contains('fs'))), 'leave full screen');
+  await p.setViewportSize({ width: 390, height: 844 });
   await p.locator('.tile').first().click();
   await p.locator('.modal input[name="warnHigh"]').fill('97'); await p.locator('.modal input[name="warnHigh"]').dispatchEvent('change');
   await p.locator('.modal button.primary').click(); await p.waitForTimeout(500);
@@ -80,10 +96,18 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   await p.screenshot({ path: `${OUT}/sensors.png`, fullPage: true });
   await p.selectOption('main select >> nth=0', 'b1'); await p.waitForTimeout(1200);
   check(await p.locator('text=Gearbox').first().isVisible(), 'another board\'s sensors');
+  await go('#actuators', 1200);
+  await p.selectOption('main select >> nth=0', 'b1'); await p.waitForTimeout(1500);
+  check(await p.locator('.list-item', { hasText: 'Pump' }).locator('button', { hasText: 'Off' }).isVisible(), 'another board\'s switch shows its state');
 
   // ---- Actuators
   await go('#actuators', 1500);
-  check((await p.locator('.list-item').count()) === 2, 'actuator list');
+  await p.selectOption('main select >> nth=0', 'local'); await p.waitForTimeout(1500);
+  check((await p.locator('.list-item').count()) === 3, 'actuator list');
+  const bh = await p.locator('.list-item', { hasText: 'Spot lights' }).locator('button.big').first().boundingBox();
+  check(bh && bh.height >= 44, 'switch buttons are touch-sized', bh && String(bh.height));
+  await p.locator('.list-item', { hasText: 'Horn' }).locator('button', { hasText: 'Disabled: enable' }).click(); await p.waitForTimeout(600);
+  check((await api('/actuators/horn')).enabled === true && await p.locator('.list-item', { hasText: 'Horn' }).locator('button', { hasText: 'Off' }).isVisible(), 'disabled actuator can be enabled from the list');
   await p.locator('.list-item', { hasText: 'Spot lights' }).locator('button', { hasText: 'Off' }).click(); await p.waitForTimeout(400);
   check((await api('/actuators/lights')).id === 'lights' && (await api('/actuators')).items.find(a => a.id === 'lights').state.on === true, 'relay switched from the list');
   await p.click('text=Add actuator'); await p.waitForTimeout(200);

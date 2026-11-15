@@ -79,11 +79,22 @@
 
   function render() {
     const tl = $('#tList');
+    const withChips = t => h('div', { class: 'chips', style: 'flex-basis:100%' }, [h('span', { class: 'muted small' }, 'Also on this tile:'),
+      ...sensors.filter(s => s.enabled && s.id !== t.id).map(s => {
+        const on = (t.with || '').split(',').includes(s.id);
+        return h('button', { class: 'small chipbtn' + (on ? ' on' : ''), onclick: () => {
+          const l = (t.with || '').split(',').filter(Boolean);
+          t.with = (on ? l.filter(x => x !== s.id) : l.concat(s.id)).join(','); render();
+        } }, s.name);
+      })]);
+    const auto = CM.autoTiles(sensors);
     tl.replaceChildren(...(tiles.length ? tiles.map((t, i) => h('div', { class: 'lay-row' },
-      h('span', { class: 'name' }, name(t.id)),
+      h('span', { class: 'name' }, (i < 6 ? (i + 1) + '. ' : '') + name(t.id)),
       sel(t.size, [[1, 'Normal'], [2, 'Wide']], v => { t.size = +v; }),
-      sel(t.widget, [['bar', 'Dial'], ['number', 'Value only'], ['spark', 'Value + trend line']], v => { t.widget = v; }),
-      ...arrows(tiles, i))) : [h('p', { class: 'muted' }, 'Automatic: every enabled sensor.')]));
+      sel(t.widget, [['bar', 'Dial'], ['number', 'Value only'], ['spark', 'Value + trend line'], ['bars', 'Thermometer group']], v => { t.widget = v; }),
+      ...arrows(tiles, i), t.widget === 'bars' ? withChips(t) : null))
+      : [h('p', { class: 'muted' }, 'Automatic order: ' + auto.map((t, i) => (i === 6 ? '| ' : '') + (t.widget === 'bars' ? [t.id].concat(t.with.split(',')).map(name).join(' + ') : name(t.id))).join(', ') +
+          '. The first six fit a phone screen.'), h('button', { class: 'small', onclick: () => { tiles = auto.map(t => ({ ...t })); render(); } }, 'Customise this order')]));
     const used = new Set(tiles.map(t => t.id));
     $('#tAdd').replaceChildren(...sensors.filter(s => s.enabled && !used.has(s.id)).map(s => h('option', { value: s.id }, s.name)));
 
@@ -194,7 +205,7 @@
     $('#tAddBtn').onclick = () => {
       const id = $('#tAdd').value;
       if (!id) return;
-      if (!tiles.length) tiles = sensors.filter(s => s.enabled).map(s => ({ id: s.id, size: 1, widget: 'bar' })).filter(t => t.id !== id);
+      if (!tiles.length) tiles = CM.autoTiles(sensors).filter(t => t.id !== id);
       tiles.push({ id, size: 1, widget: 'bar' });
       render();
     };

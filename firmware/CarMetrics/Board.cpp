@@ -96,6 +96,9 @@ const BoardProfile& Board::resolve(const String& id) {
 
 const BoardProfile& Board::current() { return resolve(gConfig.sys.board); }
 
+bool Board::chipHasPin(int pin) { for (size_t i = 0; i < kCount; i++) if (has(kProfiles[i].valid, pin)) return true; return false; }
+bool Board::chipCanOutput(int pin) { for (size_t i = 0; i < kCount; i++) if (has(kProfiles[i].output, pin)) return true; return false; }
+
 String Board::pinList(uint64_t m) {
   String s;
   for (int p = 0; p < 64; p++) {

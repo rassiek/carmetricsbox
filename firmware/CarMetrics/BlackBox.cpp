@@ -93,13 +93,19 @@ void BlackBox::trigger(const String& why) {
   if (!pendingTrigger) { pendingTrigger = true; }
   portEXIT_CRITICAL(&trigMux);
   pendingReason = why;   // last writer wins; only read by loop() below
+  pendingReason.replace("\"", "'"); pendingReason.replace("\\", "/");   // goes into JSON as is
 }
 
 void BlackBox::update() {
   uint32_t now = millis();
   if (pendingTrigger) {
     pendingTrigger = false;
-    bool ok = gConfig.blackbox.enabled && remaining < 0 && now > 20000 && (!lastTriggerMs || now - lastTriggerMs > 60000) && !ids.empty();
+    // The same alarm again within 15 minutes (a flickering sender, a bench with
+    // nothing wired) doesn't push older recordings out.
+    static String lastReason; static uint32_t lastReasonMs = 0;
+    bool repeat = pendingReason == lastReason && lastReasonMs && now - lastReasonMs < 15 * 60000UL;
+    bool ok = gConfig.blackbox.enabled && remaining < 0 && now > 20000 && (!lastTriggerMs || now - lastTriggerMs > 60000) && !ids.empty() && !repeat;
+    if (ok) { lastReason = pendingReason; lastReasonMs = now; }
     if (ok) {
       lastTriggerMs = now; remaining = BB_SECONDS;
       reason = pendingReason; eventUptime = now;

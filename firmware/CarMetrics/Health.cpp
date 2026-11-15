@@ -295,7 +295,7 @@ void Health::toJson(JsonObject o) {
   bo["id"] = b.id; bo["name"] = b.name; bo["setting"] = gConfig.sys.board;
 
   JsonObject fw = o["firmware"].to<JsonObject>();
-  fw["version"] = FW_VERSION; fw["build"] = __DATE__ " " __TIME__;
+  fw["version"] = FW_VERSION; fw["build"] = buildStamp();
   fw["core"] = String(ESP_ARDUINO_VERSION_MAJOR) + "." + ESP_ARDUINO_VERSION_MINOR + "." + ESP_ARDUINO_VERSION_PATCH;
   fw["idf"] = ESP.getSdkVersion();
   const esp_partition_t* run = esp_ota_get_running_partition();
@@ -391,3 +391,5 @@ bool Health::crashDumpLocation(uint32_t& off, uint32_t& size) {
   off = addr - p->address; size = sz;
   return off + size <= p->size;
 }
+
+const char* Health::buildStamp() { return __DATE__ " " __TIME__; }
