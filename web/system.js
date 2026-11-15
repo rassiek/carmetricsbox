@@ -1,281 +1,225 @@
 'use strict';
+// System tab: Status, Network, Hardware, Data.
 (() => {
-  const { $, h, api, toast } = CM;
-  const form = () => $('#sys');
-
-  function dur(s) { const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + 'd ' : '') + hh + 'h ' + m + 'm'; }
-  const kb = b => (b / 1024).toFixed(0) + ' KB';
-
-  async function loadInfo() {
-    const i = await api('/api/info');
-    const rows = [
-      ['Release', `firmware ${i.version}, web app ${CM.WEB_VERSION}` + (i.version !== CM.WEB_VERSION && !CM.WEB_VERSION.startsWith('__') ? ' (MISMATCH)' : '')],
-      ['Firmware built', i.build],
-      ['Uptime', dur(i.uptimeS)],
-      ['Access point', `${i.apSsid} – ${i.apIp}`],
-      ['Network', i.staSsid && i.ip ? `${i.staSsid} – ${i.ip} (${i.rssi} dBm)` : i.networks ? (i.wifiState || 'not connected') : 'no networks saved'],
-      ['Address', `http://${i.hostname}.local`],
-      ['BMP sensor', i.bmp], ['OLED', i.oled],
-      ['Memory', `${kb(i.heapFree)} free (lowest ${kb(i.heapMin)})`],
-      ['Web app storage', `${kb(i.fsUsed)} / ${kb(i.fsTotal)}`],
-      ['Firmware space', `${kb(i.sketchSize)} used, ${kb(i.sketchFree)} slot`],
-      ['Clock', i.timeSynced ? 'set from ' + (i.timeSource || 'browser') : 'not set'],
-    ];
-    const t = $('#info');
-    t.innerHTML = '';
-    rows.forEach(([k, v]) => t.append(h('tr', {}, h('th', { style: 'width:40%' }, k), h('td', {}, v))));
+  const { h, api, get, patch, del, toast, act, err, S, page, form, loadPins } = CM;
+  const SECTIONS = [['status', 'Status'], ['network', 'Network'], ['hardware', 'Hardware'], ['data', 'Data']];
+  const copy = o => JSON.parse(JSON.stringify(o || {}));
+  const kv = rows => h('table', { class: 'kv' }, rows.filter(Boolean).map(([k, v]) => h('tr', {}, [h('th', {}, k), h('td', {}, v ?? '')])));
+  const panel = (title, ...kids) => h('div', { class: 'panel' }, [h('h3', {}, title), ...kids]);
+  // A settings form over one section (or part of it), saved with PATCH /settings/<section>
+  function sectionForm(section, fields, pick, note) {
+    const o = copy(pick ? pick(S.settings[section]) : S.settings[section]);
+    return [form(o, fields), note ? h('p', { class: 'muted small' }, note) : null,
+            h('button', { class: 'primary', onclick: () => act(() => patch(`/settings/${section}`, o), 'Saved') }, 'Save')];
   }
+  const sysPick = keys => s => Object.fromEntries(keys.map(k => [k, s[k]]));
+  const num = (k, label, extra) => ({ k, label, type: 'num', ...extra });
 
-  // ---- board health (refreshes every 5 s)
-  const pct = v => v === null || v === undefined ? '–' : v + '%';
-  async function loadHealth() {
-    const m = await api('/api/v2/system');
-    document.body.dataset.chip = m.chip.model;
-    const fw = $('#hFw');
-    fw.textContent = `${m.firmware.slot}: ${m.firmware.state}`;
-    fw.className = 'pill ' + (m.firmware.state === 'confirmed' || m.firmware.state === 'factory' ? 'ok' : 'warn');
-    $('#hSafe').classList.toggle('hidden', !m.safeMode);
-    $('#hSafe').textContent = m.safeMode ? `Safe mode: ${m.safeReason}. Running the last known-good settings with relays off and internet features paused. Fix the cause, then leave safe mode.` : '';
-    $('#hLeave').classList.toggle('hidden', !m.safeMode);
-    $('#hNote').classList.toggle('hidden', !m.firmware.note);
-    $('#hNote').textContent = m.firmware.note || '';
-    const mem = m.memory, k = b => (b / 1024).toFixed(0) + ' KB';
-    const tiles = [
-      ['Uptime', dur(m.uptime.s), `boot #${m.uptime.boots}, last reset: ${m.uptime.resetReason}`],
-      ['CPU core 0', pct(m.cpu[0]), 'Wi-Fi, display, uploads'],
-      ['CPU core 1', pct(m.cpu[1]), 'sensors, alarms, web'],
-      ['Free memory', k(mem.free), `lowest ${k(mem.min)}, largest block ${k(mem.largest)}` + (mem.historyKB !== undefined ? `, charts ${mem.historyKB} KB in ${mem.historyIn}` : '')],
-      ['Loop time', (m.loop.avgUs / 1000).toFixed(1) + ' ms', `max ${(m.loop.maxUs / 1000).toFixed(1)} ms (10 s)`],
-      ['Wi-Fi', m.wifi.connected ? `${m.wifi.rssi} dBm` : 'not joined', m.wifi.connected ? `${m.wifi.ssid}, ch ${m.wifi.channel}` : `${m.wifi.apClients} on CarMetrics AP`],
-      ['Flash writes', String(m.flash.configWrites + m.flash.bufferWrites), `settings ${m.flash.configWrites}, buffer ${m.flash.bufferWrites} (${m.flash.bufferKB} KB)`],
-      ['Clients', String(m.clients.websocket + m.clients.events), `${m.clients.websocket} WebSocket, ${m.clients.events} events`],
-      ['Chip', m.chip.model, `${m.chip.cores} cores, ${m.chip.mhz} MHz, ${m.chip.flashMB} MB flash` + (m.chip.psramKB ? `, ${m.chip.psramKB / 1024} MB PSRAM` : '')],
-      ['Temperature', m.chip.tempC === null ? '–' : m.chip.tempC + ' °C', 'chip (rough)'],
-      ['Firmware', m.firmware.version, `core ${m.firmware.core}, ${m.firmware.sketchKB} / ${m.firmware.slotKB} KB`],
-    ];
-    const st = m.storage;
-    if (st) {
-      const pc = Math.round(100 * st.fsUsed / st.fsTotal);
-      tiles.push(['Storage', `${k(st.fsUsed)} / ${k(st.fsTotal)}`,
-        `${pc}% used: web app ${k(st.webApp)}, black box ${k(st.blackBox)}, upload buffer ${k(st.uploadBuffer)}` +
-        (st.settingsTotal ? `; settings ${Math.round(100 * st.settingsUsed / st.settingsTotal)}% of ${(st.settingsTotal * 32 / 1024).toFixed(0)} KB` : '')]);
+  // ================================================================ Status
+  async function status(box) {
+    let d; try { d = await get('/system'); } catch (e) { return err(e); }
+    const m = d.memory || {}, fw = d.firmware || {}, st = d.storage || {};
+    box.append(panel('This board', kv([
+      ['Firmware', `${fw.version} (${S.info.variant})`], ['Built', fw.build], ['Board', `${d.board?.name || ''}`], ['Chip', `${d.chip?.model || ''} · ${d.chip?.flashMB} MB flash · ${Math.round((d.chip?.psramKB || 0) / 1024)} MB PSRAM`],
+      ['Running for', `${Math.floor(d.uptime.s / 3600)} h ${Math.floor(d.uptime.s / 60) % 60} min · last restart: ${d.uptime.resetReason}`],
+      ['Memory free', `${Math.round(m.free / 1024)} KB (lowest ${Math.round(m.min / 1024)} KB, largest block ${Math.round(m.largest / 1024)} KB)${m.psramFree ? ` · PSRAM ${Math.round(m.psramFree / 1024)} KB` : ''}`],
+      ['CPU', (d.cpu || []).map(c => `${Math.round(c)} %`).join(' / ')], ['Loop', `${d.loop?.avgUs} µs average, ${d.loop?.maxUs} µs max`],
+      ['Storage', `${Math.round(st.fsUsed / 1024)} of ${Math.round(st.fsTotal / 1024)} KB used`],
+      ['Viewers', `${d.clients?.websocket || 0} live, ${d.clients?.events || 0} on events`],
+    ])));
+    if (d.safeMode) box.append(panel('Safe mode', h('p', {}, `The board restarted after crashes (${d.safeReason}). Outputs are off, internet features stopped.`),
+      h('button', { class: 'primary', onclick: () => act(() => api('/system/safe-mode/leave', { body: {} })) }, 'Leave safe mode')));
+    if (d.crash) {
+      const c = d.crash;
+      box.append(panel('Last crash', kv([['Cause', c.cause], ['Task', c.task], ['Where', c.pc], ['This firmware', c.thisFirmware ? 'yes' : 'no (an older one)']]),
+        h('pre', { class: 'small' }, c.backtrace || ''), h('div', { class: 'row' }, [
+          h('a', { class: 'btn small', href: '/api/v1/system/crash/dump' }, 'Download core dump'),
+          h('button', { class: 'small', onclick: () => act(() => del('/system/crash')).then(() => show(el, 'status')) }, 'Clear')])));
     }
-    const cr = m.crash;
-    $('#hCrash').classList.toggle('hidden', !cr);
-    if (cr) {
-      $('#hCrashText').textContent = `In task "${cr.task}": ${cr.cause} (code ${cr.causeCode}, address ${cr.address}). ` +
-        (cr.thisFirmware ? 'Happened with the firmware running now.' : 'Happened with an earlier firmware.') + (cr.corrupted ? ' Backtrace incomplete.' : '');
-      $('#hCrashBt').textContent = `PC ${cr.pc}  backtrace: ${cr.backtrace}`;
-    }
-    if (m.chip.psramKB) tiles.splice(4, 0, ['PSRAM free', k(mem.psramFree), '']);
-    $('#hKv').replaceChildren(...tiles.map(([a, b, c]) => h('div', {}, h('span', {}, a), h('b', {}, b), h('span', {}, c))));
-    $('#hTasks').replaceChildren(h('tr', {}, h('th', {}, 'Task'), h('th', {}, 'Stack headroom')),
-      ...m.tasks.map(t => h('tr', {}, h('td', {}, t.name), h('td', { style: t.stackFree < 1024 ? 'color:var(--crit)' : '' }, t.stackFree + ' bytes'))));
-    $('#hResets').textContent = 'Recent resets (newest first): ' + m.uptime.history.join(', ');
+    box.append(panel('Tasks', h('table', {}, [h('tr', {}, [h('th', {}, 'Task'), h('th', {}, 'Stack left')]), ...(d.tasks || []).map(t => h('tr', {}, [h('td', {}, t.name), h('td', {}, `${t.stackFree} B`)]))])));
+    box.append(panel('Restart and undo', h('div', { class: 'row' }, [
+      h('button', { onclick: () => confirm('Restart the board?') && act(() => api('/system/reboot', { body: {} })) }, 'Restart'),
+      h('button', { onclick: () => confirm('Go back to the settings before the last change?') && act(() => api('/settings/restore', { body: { slot: 'previous' } })) }, 'Undo last settings change'),
+      h('button', { onclick: () => confirm('Go back to the last settings that ran without problems?') && act(() => api('/settings/restore', { body: { slot: 'good' } })) }, 'Last good settings')])));
   }
 
-  // ---- Wi-Fi join log (refreshes every 5 s)
-  const ago = (now, t) => { const s = now - t; return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : (s / 3600).toFixed(1) + ' h ago'; };
-  async function loadWifi() {
-    const w = await api('/api/v2/wifi');
-    const st = $('#wState');
-    st.textContent = w.state + (w.ssid ? ` – ${w.ssid}` : '');
-    st.className = 'pill ' + (w.state === 'connected' ? 'ok' : w.state === 'off' ? '' : 'warn');
-    const r = w.remembered || {};
-    $('#wSum').textContent = [
-      w.ip ? `IP ${w.ip}, ${w.rssi} dBm` : '',
-      `radio channel ${w.channel || '–'}`,
-      `${w.apClients ?? 0} on the CarMetrics access point`,
-      r.ssid ? `remembered: ${r.ssid} on channel ${r.channel}` : 'no network remembered yet',
-      w.nextTryS ? `next try in ${w.nextTryS} s` : '',
-    ].filter(Boolean).join(' · ');
-    $('#wScan').replaceChildren(
-      h('tr', {}, h('th', {}, w.scanAgeS < 0 ? 'No search yet' : `Network (${w.scanTotal} seen, ${ago(w.uptimeS, w.uptimeS - w.scanAgeS)})`), h('th', {}, 'Signal'), h('th', {}, 'Ch'), h('th', {}, 'Security')),
-      ...w.scan.map(n => h('tr', {}, h('td', {}, n.ssid + (n.saved ? ' ★' : '')), h('td', {}, n.rssi + ' dBm'), h('td', {}, String(n.ch)), h('td', {}, n.security))));
-    $('#wLog').replaceChildren(
-      h('tr', {}, h('th', {}, 'When'), h('th', {}, 'What'), h('th', {}, 'Details')),
-      ...(w.log.length ? w.log.map(e => {
-        const det = [e.ch ? `ch ${e.ch}` : '', e.rssi ? `${e.rssi} dBm` : '', e.try ? `try ${e.try}` : '', e.reasonText ? `${e.reasonText} (${e.reason})` : '', e.note || '', e.ms ? `${(e.ms / 1000).toFixed(1)} s` : ''].filter(Boolean).join(', ');
-        const bad = e.event !== 'joined';
-        return h('tr', {}, h('td', {}, ago(w.uptimeS, e.t)), h('td', { style: bad ? 'color:var(--warn)' : 'color:var(--ok)' }, e.event + (e.ssid ? ` ${e.ssid}` : '')), h('td', { title: e.bssid || '' }, det));
-      }) : [h('tr', {}, h('td', { colspan: 3, class: 'muted' }, 'No join attempts yet'))]));
-  }
-
-  // ---- board profile
-  let boards = null;
-  async function loadBoard() {
-    boards = await api('/api/v2/board');
-    const sel = $('#bSel');
-    sel.replaceChildren(h('option', { value: 'auto' }, `Detect automatically (${boards.detected})`),
-      ...boards.profiles.map(p => h('option', { value: p.id }, p.name)));
-    sel.value = boards.setting;
-    showBoard();
-  }
-  function showBoard() {
-    const id = $('#bSel').value, p = boards.profiles.find(x => x.id === (id === 'auto' ? boards.detected : id));
-    if (!p) return;
-    const list = a => { const r = []; for (let i = 0; i < a.length; i++) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; r.push(j > i ? `${a[i]}-${a[j]}` : `${a[i]}`); i = j; } return r.join(', '); };
-    $('#bInfo').innerHTML = '';
-    $('#bInfo').append(p.notes, h('br'), `Outputs: GPIO ${list(p.output)}. Analog (ADC1): GPIO ${list(p.adc1)}. Use with care: GPIO ${list(p.caution)}.`,
-      h('br'), `Default pins: I2C ${p.defaults.i2cSda}/${p.defaults.i2cScl}, 1-Wire ${p.defaults.oneWirePin}, buzzer ${p.defaults.buzzerPin}, LED ${p.defaults.ledPin}.`);
-  }
-  async function saveBoard() {
-    try {
-      const r = await api('/api/v2/board', { body: { board: $('#bSel').value, applyPins: $('#bPins').checked } });
-      toast(r.message, false, 6000);
-      setTimeout(() => { loadBoard().catch(() => {}); loadConfig().catch(() => {}); }, 1500);
-    } catch (e) { toast(e.message, true, 8000); }
-  }
-
-  // ---- saved Wi-Fi networks
-  let nets = [];
-  function renderNets() {
-    const box = $('#nets');
-    box.replaceChildren(...nets.map((n, i) => {
-      const ssid = h('input', { value: n.ssid, placeholder: 'Network name' });
-      const pass = h('input', { type: 'password', autocomplete: 'new-password', placeholder: n.passSet ? '(saved, blank = keep)' : 'Password (blank = open)' });
-      const pr = h('select', {}, [9, 8, 7, 6, 5, 4, 3, 2, 1].map(p => h('option', { value: p, selected: p === n.priority }, `prio ${p}`)));
-      ssid.oninput = () => { n.ssid = ssid.value; };
-      pass.oninput = () => { n.pass = pass.value; };
-      pr.onchange = () => { n.priority = +pr.value; };
-      return h('div', { class: 'netrow' }, ssid, pass, pr, h('button', { class: 'small danger', type: 'button', onclick: () => { nets.splice(i, 1); renderNets(); } }, '✕'));
-    }));
-    if (!nets.length) box.append(h('p', { class: 'muted small' }, 'No networks saved: the board only runs its own access point.'));
-  }
-
-  // ---- turbo timer
-  async function saveTurbo() {
-    const f = $('#turbo'), out = {};
-    for (const el of f.elements) {
-      if (!el.name) continue;
-      out[el.name] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (el.value === '' ? null : +el.value) : el.value;
-    }
-    try { toast((await api('/api/config/turbo', { body: out })).message); } catch (e) { toast(e.message, true, 6000); }
-  }
-
-  async function loadConfig() {
-    const cfg = await api('/api/config');
-    nets = (cfg.system.networks || []).map(n => ({ ssid: n.ssid, pass: '', passSet: n.passSet, priority: n.priority }));
-    renderNets();
-    const tf = $('#turbo'), t = cfg.turbo || {};
-    const opts = (first) => [h('option', { value: '' }, first), ...cfg.sensors.map(x => h('option', { value: x.id }, x.name))];
-    tf.elements.egtId.replaceChildren(...opts('— choose —')); tf.elements.rpmId.replaceChildren(...opts('— none —')); tf.elements.speedId.replaceChildren(...opts('— none —'));
-    for (const el of tf.elements) {
-      if (!el.name || !(el.name in t)) continue;
-      if (el.type === 'checkbox') el.checked = !!t[el.name]; else el.value = t[el.name] ?? '';
-    }
-    const f = form(), s = cfg.system;
-    const eng = f.elements.engineSensorId;
-    eng.innerHTML = '';
-    eng.append(h('option', { value: '' }, '— always running —'), ...cfg.sensors.map(x => h('option', { value: x.id }, x.name)));
-    for (const el of f.elements) {
-      if (!el.name || !(el.name in s)) continue;
-      if (el.type === 'checkbox') el.checked = !!s[el.name];
-      else el.value = s[el.name] ?? '';
-    }
-  }
-
-  async function saveSystem() {
-    const out = {};
-    for (const el of form().elements) {
-      if (!el.name) continue;
-      if (el.type === 'checkbox') out[el.name] = el.checked;
-      else if (el.type === 'number' || el.name === 'oneWireResolution' || el.name === 'i2cKhz' || el.name === 'gpsBaud' || el.name === 'canKbps') out[el.name] = el.value === '' ? null : +el.value;
-      else out[el.name] = el.value;
-    }
-    out.networks = nets.filter(n => n.ssid.trim()).map(n => ({ ssid: n.ssid.trim(), pass: n.pass, priority: n.priority }));
-    try {
-      const r = await api('/api/config/system', { body: out });
-      toast(r.message + '. Network changes reboot the device – reconnect if needed.', false, 6000);
-      setTimeout(() => { loadInfo().catch(() => {}); loadConfig().catch(() => {}); }, 1500);
-    } catch (e) { toast(e.message, true, 6000); }
-  }
-
-  async function ensureAuth() {
-    const r = await fetch('/api/auth/check');   // browser shows the login prompt if needed
-    if (r.status !== 200) throw new Error('Password required (user "admin")');
-  }
-
-  function upload() {
-    const file = $('#otaFile').files[0];
-    if (!file) { toast('Choose a .bin file first', true); return; }
-    const target = $('#otaTarget').value;
-    if (target === 'firmware' && /littlefs/i.test(file.name)) { toast('That looks like a web app image – choose "Web app"', true); return; }
-    // Check the file before sending it: a wrong image only fails after the whole upload.
-    file.slice(0, 16).arrayBuffer().then(buf => {
-      const b = new Uint8Array(buf), chip = b[12] | (b[13] << 8);
-      if (/\.zip$/i.test(file.name)) throw new Error('That is a .zip – unzip it and choose the .bin inside');
-      if (target === 'firmware') {
-        if (/full-flash/i.test(file.name) || b[0] === 0xFF) throw new Error('That is the full USB flash image. For Wi-Fi updates choose carmetrics-firmware.bin');
-        if (/-5\.2\./.test(file.name) && !/^5\.2\./.test(CM.WEB_VERSION) && !confirm('This is a 5.2 file and the board runs 5.1. 5.2 needs an ESP32-S3 with 8 MB flash, installed the first time with the full image over USB. Upload anyway?')) throw new Error('Cancelled');
-        if (b[0] !== 0xE9) throw new Error('Not a firmware file (choose carmetrics-firmware.bin, or "Web app" for littlefs.bin)');
-        const s3 = /S3/i.test(document.body.dataset.chip || '');
-        if (chip === 9 && !s3) throw new Error('That firmware is for an ESP32-S3. This board needs carmetrics-firmware.bin');
-        if (chip === 0 && s3) throw new Error('That firmware is for a classic ESP32. This board needs carmetrics-s3-firmware.bin');
-      } else if (b[0] === 0xE9) throw new Error('That is a firmware file – choose "Firmware" above');
-    }).then(() => ensureAuth()).then(() => {
-      const xhr = new XMLHttpRequest(), fd = new FormData();
-      fd.append('update', file, file.name);
-      xhr.open('POST', '/api/update?target=' + target);
-      xhr.upload.onprogress = e => { if (e.lengthComputable) { const p = Math.round(e.loaded / e.total * 100); $('#otaBar').style.width = p + '%'; $('#otaPct').textContent = p + '%'; } };
-      xhr.onload = () => {
-        let msg = xhr.statusText; try { msg = JSON.parse(xhr.responseText).message; } catch (e) {}
-        toast(msg, xhr.status !== 200, 8000);
-        if (xhr.status === 200) setTimeout(() => location.reload(), 9000);
-      };
-      xhr.onerror = () => toast('Upload failed – connection lost', true);
-      $('#otaGo').disabled = true;
-      xhr.onloadend = () => { $('#otaGo').disabled = false; };
-      xhr.send(fd);
-    }).catch(e => toast(e.message, true));
-  }
-
-  document.addEventListener('DOMContentLoaded', () => {
-    loadInfo().catch(e => toast(e.message, true));
-    loadConfig().catch(e => toast(e.message, true));
-    const hl = () => loadHealth().catch(() => {});
-    hl(); setInterval(hl, 5000);
-    const wl = () => loadWifi().catch(() => {});
-    wl(); setInterval(wl, 5000);
-    $('#wSearch').onclick = async () => {
-      try { toast((await api('/api/v2/wifi/search', { method: 'POST' })).message); setTimeout(wl, 4000); } catch (e) { toast(e.message, true); }
+  // ================================================================ Network
+  async function network(box) {
+    let w; try { w = await get('/network'); } catch (e) { return err(e); }
+    const saved = (S.settings.system.networks || []).map(n => n.ssid);
+    const wifi = h('div');
+    const drawScan = () => {
+      wifi.innerHTML = '';
+      wifi.append(kv([['Status', w.state], w.ssid ? ['Joined', `${w.ssid} · ${w.ip} · ${w.rssi} dBm`] : null, ['Access point', `${S.settings.system.apSsid} · ${w.apClients || 0} connected`]]));
+      const list = h('div');
+      for (const n of (w.scan || []).slice(0, 15)) {
+        const pass = h('input', { type: 'password', placeholder: n.saved ? 'saved password (leave empty)' : 'password', style: 'max-width:200px' });
+        list.append(h('div', { class: 'list-item' }, [h('div', { class: 'grow' }, [h('b', {}, n.ssid || '(hidden)'), h('span', { class: 'muted small' }, ` ${n.rssi} dBm · ch ${n.ch}${n.security ? '' : ' · open'}${n.saved ? ' · saved' : ''}`)]),
+          n.security ? pass : null, h('button', { class: 'small primary', onclick: () => act(() => api('/network/join', { body: { ssid: n.ssid, pass: pass.value } })) }, n.ssid === w.ssid ? 'Joined' : 'Join')]));
+      }
+      wifi.append(h('div', { class: 'row', style: 'margin:8px 0' }, [h('b', {}, 'Networks in range'), h('span', { class: 'muted small' }, w.scanAgeS >= 0 ? `searched ${w.scanAgeS} s ago` : ''),
+        h('span', { class: 'spacer' }), h('button', { class: 'small', onclick: async () => {
+          if (!await act(() => api('/network/scan', { body: {} }), 'Searching…')) return;
+          setTimeout(async () => { try { w = await get('/network'); drawScan(); } catch {} }, 5000);
+        } }, 'Search')]), list.children.length ? list : h('p', { class: 'muted small' }, 'Press Search.'));
+      const other = { ssid: '', pass: '' };
+      wifi.append(h('details', {}, [h('summary', { class: 'small' }, 'Hidden network / type the name'), form(other, [{ k: 'ssid', label: 'Network name' }, { k: 'pass', label: 'Password', type: 'pass' }]),
+        h('button', { class: 'small', onclick: () => act(() => api('/network/join', { body: other })) }, 'Join')]));
+      wifi.append(h('div', { class: 'row', style: 'margin-top:8px' }, [h('b', {}, 'Saved'), ...saved.map(s => h('span', { class: 'chip' }, [s, ' ', h('a', { href: '#system/network', onclick: e => { e.preventDefault(); confirm(`Forget ${s}?`) && act(() => del('/network/saved/' + encodeURIComponent(s))); } }, '×')]))]));
     };
-    loadBoard().catch(e => toast(e.message, true));
-    $('#bSel').onchange = showBoard;
-    $('#bSave').onclick = saveBoard;
-    $('#hCrashClear').onclick = async () => {
-      try { toast((await api('/api/v2/crash/clear', { method: 'POST' })).message); hl(); } catch (e) { toast(e.message, true); }
+    drawScan();
+    box.append(panel('Wi-Fi', wifi));
+    box.append(panel('Access point and names', ...sectionForm('system', [
+      { k: 'apSsid', label: 'Access point name' }, { k: 'apPass', label: 'Access point password (empty = keep)', type: 'pass' },
+      { k: 'hostname', label: 'Host name (http://<name>.local)' }, { k: 'scanWhileApInUse', label: 'Search for networks while a phone is connected', type: 'bool' }],
+      sysPick(['apSsid', 'apPass', 'hostname', 'scanWhileApInUse']), 'Changing the access point restarts the board.')));
+    box.append(panel('Password and access', ...sectionForm('system', [
+      { k: 'adminPass', label: 'Admin password (empty = keep)', type: 'pass' }, { k: 'readNeedsAuth', label: 'Reading needs the password or a key too', type: 'bool' }],
+      sysPick(['adminPass', 'readNeedsAuth']))));
+    box.append(await keysPanel());
+    box.append(panel('Board link', ...sectionForm('system', [
+      { k: 'role', label: 'Role', type: 'select', opts: [['main', 'Main board'], ['sensor', 'Extra board: sensors'], ['relay', 'Extra board: actuators'], ['sensor_relay', 'Extra board: both']] },
+      { k: 'boardEncrypt', label: 'Encrypt the link for boards paired from now on', type: 'bool' },
+      { k: 'canEnabled', label: 'CAN link too (wired)', type: 'bool', redraw: true },
+      { k: 'canTx', label: 'CAN TX pin', type: 'pin', show: o => o.canEnabled }, { k: 'canRx', label: 'CAN RX pin', type: 'pin', input: true, show: o => o.canEnabled },
+      { k: 'canKbps', label: 'CAN speed (kbit/s)', type: 'select', num: true, opts: [[125, '125'], [250, '250'], [500, '500'], [1000, '1000']], show: o => o.canEnabled }],
+      sysPick(['role', 'boardEncrypt', 'canEnabled', 'canTx', 'canRx', 'canKbps']), 'Changing the role restarts the board.')));
+  }
+  async function keysPanel() {
+    const box = h('div');
+    const draw = async () => {
+      box.innerHTML = '';
+      let k; try { k = await get('/keys'); } catch (e) { box.append(h('p', { class: 'muted small' }, e.message)); return; }
+      for (const x of k.items) box.append(h('div', { class: 'list-item' }, [h('div', { class: 'grow' }, [h('b', {}, x.name), h('span', { class: 'muted small' }, ` ${x.scope} · id ${x.id}`)]),
+        h('button', { class: 'small danger', onclick: () => confirm(`Delete key ${x.name}?`) && act(() => del('/keys/' + x.id)).then(draw) }, 'Delete')]));
+      const n = { name: '', scope: 'read' };
+      box.append(form(n, [{ k: 'name', label: 'New key: name' }, { k: 'scope', label: 'Allows', type: 'select', opts: [['read', 'Reading'], ['control', 'Reading + switching outputs, mute, limits'], ['admin', 'Everything']] }]),
+        h('button', { class: 'small', onclick: async () => { const r = await act(() => api('/keys', { body: n })); if (r && r.key) { prompt('Copy the key now (shown once):', r.key); draw(); } } }, 'Make key'));
     };
-    $('#hLeave').onclick = async () => {
-      if (!confirm('Leave safe mode and reboot with your normal settings?')) return;
-      try { toast((await api('/api/v2/safemode/leave', { method: 'POST' })).message); } catch (e) { toast(e.message, true); }
+    draw();
+    return panel('API keys (dashboards, Home Assistant, scripts)', h('p', { class: 'muted small' }, 'Send as "Authorization: Bearer <key>". See docs/API.md.'), box);
+  }
+
+  // ================================================================ Hardware
+  async function hardware(box) {
+    const pins = await loadPins();
+    let prof; try { prof = await get('/hardware/profiles'); } catch (e) { return err(e); }
+    const p = { board: prof.setting, applyPins: false };
+    box.append(panel('Board', form(p, [{ k: 'board', label: 'Board type', type: 'select', opts: [['auto', `Detect (${prof.detected})`]].concat(prof.items.map(x => [x.id, x.name])) },
+      { k: 'applyPins', label: 'Move the bus and default sensor pins to this board\'s defaults', type: 'bool' }]),
+      h('p', { class: 'muted small' }, prof.current.notes), h('button', { class: 'primary', onclick: () => act(() => api('/hardware/profile', { body: p })) }, 'Save')));
+    const table = h('table', {}, [h('tr', {}, ['GPIO', 'Can do', 'Used by', ''].map(t => h('th', {}, t)))]);
+    for (const x of pins.pins) table.append(h('tr', {}, [h('td', {}, x.gpio), h('td', { class: 'small' }, x.abilities.join(', ') + (x.fixed ? ` · ${x.fixed}` : '')), h('td', { class: 'small' }, x.usedBy || ''),
+      h('td', {}, [x.abilities.includes('output') && !x.usedBy ? h('button', { class: 'small', onclick: () => act(() => api(`/pins/${x.gpio}/test`, { body: { mode: 'blink' } }), `GPIO ${x.gpio} blinking for 5 s`) }, 'Blink') : null,
+        h('button', { class: 'small', onclick: async () => { const r = await act(() => api(`/pins/${x.gpio}/test`, { body: { mode: 'read' } }), ' '); if (r) toast(`GPIO ${x.gpio}: ${r.level ? 'HIGH' : 'LOW'}${r.volts !== undefined ? `, ${r.volts} V` : ''}`); } }, 'Read')])]));
+    box.append(panel('Pins', (pins.warnings || []).map(w => h('p', { class: 'bad small' }, w)), table));
+    box.append(panel('Status light', ...sectionForm('system', [
+      { k: 'statusLight.builtin', label: 'Built-in RGB LED', type: 'bool', redraw: true },
+      { k: 'statusLight.builtinPin', label: 'Its pin', type: 'pin', show: o => o.statusLight.builtin, help: '(not used) = the board\'s own (S3 DevKitC: 48, v1.1: 38)' },
+      num('statusLight.builtinBrightness', 'Brightness %', { show: o => o.statusLight.builtin }),
+      { k: 'statusLight.external', label: 'External RGB LED', type: 'bool', redraw: true },
+      { k: 'statusLight.r', label: 'Red pin', type: 'pin', show: o => o.statusLight.external }, { k: 'statusLight.g', label: 'Green pin', type: 'pin', show: o => o.statusLight.external },
+      { k: 'statusLight.b', label: 'Blue pin', type: 'pin', show: o => o.statusLight.external },
+      { k: 'statusLight.commonAnode', label: 'Common anode (long leg to 3.3 V)', type: 'bool', show: o => o.statusLight.external },
+      num('statusLight.externalBrightness', 'Brightness %', { show: o => o.statusLight.external })], sysPick(['statusLight']),
+      'Green OK · amber warning · amber flashing sensor fault · red flashing critical (steady when muted) · blue flashing: extra board without its main board · purple: safe mode.'),
+      h('div', { class: 'row' }, [h('button', { class: 'small', onclick: () => act(() => api('/hardware/status-light/test', { body: { which: 'builtin' } })) }, 'Test built-in'),
+        h('button', { class: 'small', onclick: () => act(() => api('/hardware/status-light/test', { body: { which: 'external' } })) }, 'Test external')])));
+    box.append(panel('Buses, buzzer, LED', ...sectionForm('system', [
+      { k: 'i2cSda', label: 'I2C SDA', type: 'pin' }, { k: 'i2cScl', label: 'I2C SCL', type: 'pin' }, num('i2cKhz', 'I2C kHz'),
+      { k: 'oneWirePin', label: '1-Wire pin', type: 'pin' }, { k: 'oneWireResolution', label: 'DS18B20 resolution', type: 'select', num: true, opts: [[9, '9 bit'], [10, '10 bit'], [11, '11 bit'], [12, '12 bit']] },
+      { k: 'buzzerPin', label: 'Buzzer pin', type: 'pin' }, { k: 'buzzerActiveLow', label: 'Buzzer sounds on LOW', type: 'bool' },
+      { k: 'ledPin', label: 'Warning LED pin', type: 'pin' }, { k: 'ledActiveLow', label: 'LED on when LOW', type: 'bool' }],
+      sysPick(['i2cSda', 'i2cScl', 'i2cKhz', 'oneWirePin', 'oneWireResolution', 'buzzerPin', 'buzzerActiveLow', 'ledPin', 'ledActiveLow']), 'Bus changes restart the board.')));
+    box.append(panel('OLED', ...sectionForm('system', [
+      { k: 'oledType', label: 'Screen', type: 'select', opts: [['none', 'None'], ['ssd1306_128x64', '0.96" SSD1306 128×64'], ['sh1106_128x64', '1.3" SH1106 128×64'], ['ssd1327_128x128', '1.5" SSD1327 128×128'], ['ssd1327_ws_128x128', '1.5" SSD1327 (Waveshare)']] },
+      { k: 'oledFlip', label: 'Upside down', type: 'bool' }, { k: 'oledClock', label: 'Show the clock', type: 'bool' }, num('oledPageSeconds', 'Seconds per page'), num('oledContrast', 'Contrast (0-255)')],
+      sysPick(['oledType', 'oledFlip', 'oledClock', 'oledPageSeconds', 'oledContrast'])), h('a', { class: 'btn small', href: '#dashboard/layout' }, 'OLED pages and dashboard tiles')));
+    box.append(panel(`Running detection (${CM.ui().runningWord || 'engine'})`, ...sectionForm('system', [
+      { k: 'engineSensorId', label: 'Sensor that shows it runs', type: 'sensor' }, num('engineRunningAbove', 'Running above'), num('engineDelaySeconds', 'After (s)'),
+      { k: 'ignitionPin', label: 'Ignition sense pin', type: 'pin', input: true }, { k: 'ignitionActiveLow', label: 'Ignition on when LOW', type: 'bool' },
+      num('sleepAfterMinutes', 'Sleep after ignition off (min, 0 = never)'),
+      { k: 'gpsRxPin', label: 'GPS RX pin (GPS TX)', type: 'pin', input: true }, { k: 'gpsTxPin', label: 'GPS TX pin', type: 'pin' }, num('gpsBaud', 'GPS baud')],
+      sysPick(['engineSensorId', 'engineRunningAbove', 'engineDelaySeconds', 'ignitionPin', 'ignitionActiveLow', 'sleepAfterMinutes', 'gpsRxPin', 'gpsTxPin', 'gpsBaud']))));
+    box.append(panel('Turbo timer', ...sectionForm('turbo', [{ k: 'enabled', label: 'On', type: 'bool' }, { k: 'egtId', label: 'EGT sensor', type: 'sensor' }, num('safeEgt', 'Safe to stop below'),
+      num('minIdleSeconds', 'Idle at least (s)'), { k: 'rpmId', label: 'RPM sensor', type: 'sensor' }, num('idleRpm', 'Idle below RPM'), { k: 'speedId', label: 'Speed sensor', type: 'sensor' }, { k: 'beep', label: 'Beep when OK', type: 'bool' }])));
+    const alt = { altitudeM: null };
+    box.append(panel('Altitude', form(alt, [num('altitudeM', 'Where you are now (m)')]), h('button', { class: 'small', onclick: () => act(() => api('/hardware/altitude', { body: alt })) }, 'Calibrate')));
+  }
+
+  // ================================================================ Data
+  async function data(box) {
+    const u = copy(S.settings.ui);
+    let pr = { items: [] }; try { pr = await get('/presets'); } catch {}
+    const pick = { preset: pr.current || '' };
+    box.append(panel('Names and units', form(u, [
+      { k: 'appName', label: 'App name' }, { k: 'machineName', label: 'Machine name' }, { k: 'runningWord', label: 'What runs (engine, pump, generator)' },
+      ...['dashboard', 'sensors', 'actuators', 'boards', 'system'].map(p => ({ k: `pages.${p}`, label: `Tab: ${p}` })),
+      { k: 'units.temperature', label: 'Temperature', type: 'select', opts: [['C', '°C'], ['F', '°F']] },
+      { k: 'units.pressure', label: 'Pressure', type: 'select', opts: [['', 'as each sensor'], ['bar', 'bar'], ['psi', 'psi'], ['kPa', 'kPa']] },
+      { k: 'units.speed', label: 'Speed', type: 'select', opts: [['', 'as each sensor'], ['km/h', 'km/h'], ['mph', 'mph'], ['kn', 'knots']] }]),
+      h('button', { class: 'primary', onclick: () => act(() => patch('/settings/ui', u), 'Saved') }, 'Save'),
+      h('div', { class: 'row', style: 'margin-top:10px' }, [form(pick, [{ k: 'preset', label: 'Start from a preset', type: 'select', opts: [['', '(choose)']].concat(pr.items.map(x => [x, x])) }]),
+        h('button', { onclick: () => pick.preset && confirm(`Apply the ${pick.preset} preset? Names and units change.`) && act(() => api('/presets/apply', { body: pick })) }, 'Apply')])));
+    const towns = copy(S.settings.weather);
+    box.append(panel('Weather', form(towns, [{ k: 'enabled', label: 'Show the weather (needs internet)', type: 'bool' }, num('refreshMinutes', 'Refresh every (min)'),
+      { k: 'autoSeaLevel', label: 'Correct the altitude with the weather', type: 'bool' }, { k: 'refTown', label: 'Town used for that' }]),
+      townsEditor(towns), h('button', { class: 'primary', onclick: () => act(() => patch('/settings/weather', towns), 'Saved') }, 'Save')));
+    let cs = {}; try { cs = await get('/cloud'); } catch {}
+    box.append(panel('Metrics upload (Zabbix / InfluxDB)', ...sectionForm('cloud', [
+      { k: 'enabled', label: 'On', type: 'bool' }, { k: 'protocol', label: 'Send to', type: 'select', opts: [['zabbix', 'Zabbix'], ['influx', 'InfluxDB']], redraw: true },
+      num('intervalMs', 'Sample every (ms)'), num('uploadEverySec', 'Upload every (s)'), num('bufferKB', 'Keep offline (KB)'),
+      { k: 'onlyEngineRunning', label: 'Only while running', type: 'bool' }, { k: 'sendSystem', label: 'Include board health', type: 'bool' },
+      { k: 'zbxServer', label: 'Zabbix server', show: o => o.protocol === 'zabbix' }, num('zbxPort', 'Port', { show: o => o.protocol === 'zabbix' }),
+      { k: 'zbxHost', label: 'Host name in Zabbix', show: o => o.protocol === 'zabbix' }, { k: 'zbxPacked', label: 'One packed item', type: 'bool', show: o => o.protocol === 'zabbix' },
+      { k: 'zbxPskIdentity', label: 'PSK identity', show: o => o.protocol === 'zabbix' }, { k: 'zbxPsk', label: 'PSK (empty = keep)', type: 'pass', show: o => o.protocol === 'zabbix' },
+      { k: 'influxUrl', label: 'InfluxDB write URL', wide: true, show: o => o.protocol === 'influx' }, { k: 'influxAuth', label: 'Authorization (empty = keep)', type: 'pass', show: o => o.protocol === 'influx' },
+      { k: 'influxMeasurement', label: 'Measurement', show: o => o.protocol === 'influx' }]),
+      h('pre', { class: 'small' }, JSON.stringify(cs, null, 1).slice(0, 600)),
+      h('div', { class: 'row' }, [h('button', { class: 'small', onclick: () => act(() => api('/cloud/flush', { body: {} })) }, 'Upload now'),
+        h('button', { class: 'small danger', onclick: () => confirm('Delete data waiting to be uploaded?') && act(() => del('/cloud/backlog')) }, 'Delete waiting data')])));
+    box.append(panel('Alarm recordings and history', ...sectionForm('blackbox', [{ k: 'enabled', label: 'Record 30 s before and after each alarm', type: 'bool' }, num('keepEvents', 'Keep the last')]),
+      ...sectionForm('system', [num('historyIntervalSeconds', 'Chart history: a point every (s)'), num('tzOffsetMinutes', 'Time zone (minutes from UTC)')], sysPick(['historyIntervalSeconds', 'tzOffsetMinutes']))));
+    box.append(panel('Backup', h('div', { class: 'row' }, [
+      h('a', { class: 'btn', href: '/api/v1/backup' }, 'Download settings'),
+      h('label', { class: 'btn' }, ['Restore from file', h('input', { type: 'file', accept: '.json', class: 'hidden', onchange: async e => {
+        const f = e.target.files[0]; if (!f) return;
+        let j; try { j = JSON.parse(await f.text()); } catch { return toast('Not a settings file', true); }
+        if (confirm('Replace all settings with this file?')) act(() => api('/backup', { body: j }));
+      } })]),
+      h('button', { class: 'danger', onclick: () => confirm('Sensors, actuators and layout back to defaults? Network and passwords are kept.') && act(() => api('/settings/reset', { body: { keep: ['system'] } })) }, 'Reset to defaults')])));
+    const fwIn = (target, label) => h('label', { class: 'btn' }, [label, h('input', { type: 'file', accept: '.bin', class: 'hidden', onchange: async e => {
+      const f = e.target.files[0]; if (!f) return;
+      toast('Uploading ' + f.name + '…', false, 120000);
+      await act(() => api('/firmware' + (target ? '?target=' + target : ''), { method: 'PUT', raw: f }));
+    } })]);
+    box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'First the firmware (…-firmware.bin), then the web app (littlefs.bin) from the same build.'),
+      h('div', { class: 'row' }, [fwIn('', 'Firmware file'), fwIn('webapp', 'Web app file')])));
+  }
+  function townsEditor(w) {
+    const box = h('div');
+    const draw = () => {
+      box.innerHTML = '';
+      (w.towns || []).forEach((t, i) => box.append(h('span', { class: 'chip' }, [t.name, ' ', h('a', { href: '#system/data', onclick: e => { e.preventDefault(); w.towns.splice(i, 1); draw(); } }, '×')])));
+      if (typeof KENYA_TOWNS !== 'undefined' && (w.towns || []).length < 4) {
+        const sel = h('select', { style: 'width:auto', onchange: e => { const t = KENYA_TOWNS.find(x => x[0] === e.target.value); if (t) { (w.towns ||= []).push({ name: t[0], lat: t[1], lon: t[2] }); draw(); } } },
+          [h('option', { value: '' }, 'Add a town…')].concat(KENYA_TOWNS.map(t => h('option', { value: t[0] }, t[0]))));
+        box.append(sel);
+      }
     };
-    const restore = slot => async () => {
-      if (!confirm(slot === 'good' ? 'Restore the last known-good settings?' : 'Undo the last settings change?')) return;
-      try { toast((await api('/api/v2/config/restore', { body: { slot } })).message); setTimeout(loadConfig, 1500); } catch (e) { toast(e.message, true, 6000); }
-    };
-    $('#undoCfg').onclick = restore('previous');
-    $('#goodCfg').onclick = restore('good');
-    $('#sysSave').onclick = saveSystem;
-    $('#turboSave').onclick = saveTurbo;
-    $('#netAdd').onclick = () => { if (nets.length >= 8) return toast('At most 8 networks', true); nets.push({ ssid: '', pass: '', priority: 5 }); renderNets(); };
-    $('#otaGo').onclick = upload;
-    $('#reboot').onclick = async () => {
-      if (!confirm('Reboot the ESP32?')) return;
-      try { toast((await api('/api/reboot', { method: 'POST' })).message); } catch (e) { toast(e.message, true); }
-    };
-    $('#import').onchange = async ev => {
-      const f = ev.target.files[0];
-      if (!f) return;
-      try {
-        const json = JSON.parse(await f.text());
-        if (json.system) { delete json.system.apPass; delete json.system.staPass; delete json.system.adminPass; }
-        toast((await api('/api/config/import', { body: json })).message);
-        setTimeout(loadConfig, 1200);
-      } catch (e) { toast(e.message, true, 6000); }
-      ev.target.value = '';
-    };
-    const tz = form().elements.tzOffsetMinutes;
-    tz.title = `Your browser: ${-new Date().getTimezoneOffset()}`;
-  });
+    draw();
+    return box;
+  }
+
+  let el = null;
+  async function show(main, sub) {
+    el = main;
+    const s = SECTIONS.some(x => x[0] === sub) ? sub : 'status';
+    main.innerHTML = '';
+    const box = h('div');
+    main.append(h('div', { class: 'seg' }, SECTIONS.map(([k, t]) => h('a', { href: `#system/${k}`, class: k === s ? 'active' : '' }, t))), box);
+    if (s === 'hardware' || s === 'network') await loadPins();
+    await ({ status, network, hardware, data })[s](box);
+  }
+  page('system', { show, leave: () => { el = null; } });
 })();

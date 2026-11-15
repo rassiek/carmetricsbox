@@ -1,0 +1,19 @@
+{
+ "ui": {
+  "appName": "Monitor",
+  "machineName": "",
+  "pages": {
+   "dashboard": "Dashboard",
+   "sensors": "Sensors",
+   "actuators": "Outputs",
+   "boards": "Boards",
+   "system": "System"
+  },
+  "runningWord": "running",
+  "units": {
+   "temperature": "C",
+   "pressure": "",
+   "speed": ""
+  }
+ }
+}

@@ -75,6 +75,14 @@ def main():
         total_in += len(raw)
         total_out += len(packed)
         print(f"  {name:22s} {len(raw):8d} -> {len(packed):7d}")
+    # Presets stay plain JSON: the firmware reads them itself (POST /api/v1/presets/apply).
+    pdir = os.path.join(SRC, "presets")
+    if os.path.isdir(pdir):
+        os.makedirs(os.path.join(out_dir, "presets"))
+        for name in sorted(os.listdir(pdir)):
+            if name.endswith(".json"):
+                shutil.copy(os.path.join(pdir, name), os.path.join(out_dir, "presets", name))
+                total_in += os.path.getsize(os.path.join(pdir, name)); total_out += os.path.getsize(os.path.join(pdir, name))
     print(f"web app: {total_in} bytes -> {total_out} bytes gzipped")
 
     tool = find_mklittlefs(args.mklittlefs)

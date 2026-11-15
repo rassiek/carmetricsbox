@@ -1,0 +1,19 @@
+{
+ "ui": {
+  "appName": "CarMetrics",
+  "machineName": "",
+  "pages": {
+   "dashboard": "Dashboard",
+   "sensors": "Sensors",
+   "actuators": "Actuators",
+   "boards": "Boards",
+   "system": "System"
+  },
+  "runningWord": "engine",
+  "units": {
+   "temperature": "C",
+   "pressure": "",
+   "speed": ""
+  }
+ }
+}

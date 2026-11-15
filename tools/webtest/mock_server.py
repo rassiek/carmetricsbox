@@ -1,387 +1,322 @@
 #!/usr/bin/env python3
-"""Mock CarMetrics ESP32 API for UI testing. Serves web/ and fakes the REST + SSE endpoints."""
-import base64, json, math, os, random, sys, threading, time
+"""A pretend main board for testing the web app on a PC: API v1 (docs/API.md) with
+in-memory settings, live values that drift, two paired boards, a WebSocket.
+
+usage: python3 mock_server.py <web dir> [port]
+"""
+import base64, copy, hashlib, json, math, os, random, re, socket, struct, sys, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs, unquote
 
-WEB = sys.argv[1]
+WEB = sys.argv[1] if len(sys.argv) > 1 else 'web'
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8099
-ADMIN = "carmetrics"
 T0 = time.time()
+LOCK = threading.RLock()
 
-def ds(i, n, l, st, gmin, gmax, w, c, addr=""):
-    return dict(id=i, name=n, unit="°C", type="ds18b20", enabled=True, address=addr, pin=-1, sckPin=-1, soPin=-1,
-                adsAddress=72, adsChannel=0, bmpField="temperature", divider=1, inMin=0, inMax=1, outMin=0, outMax=1,
-                faultLowV=None, faultHighV=None, offset=0, smoothing=1, decimals=0, gaugeMin=gmin, gaugeMax=gmax,
-                oledStyle=st, oledLabel=l, warnHigh=w, critHigh=c, warnLow=None, critLow=None, hysteresis=1, engineRunningOnly=False)
+def S(id, name, type, unit, **k):
+    d = dict(id=id, name=name, type=type, unit=unit, enabled=True, decimals=1, gaugeMin=0, gaugeMax=120, smoothing=0.3,
+             oledStyle='text', oledLabel='', warnLow=None, warnHigh=None, critLow=None, critHigh=None, hysteresis=1,
+             engineRunningOnly=False, faultAlarm=True, pin=-1, sckPin=-1, soPin=-1, adsAddress=72, adsChannel=0, address='')
+    d.update(k); return d
 
-def an(i, n, u, pin, div, i0, i1, o0, o1, **kw):
-    d = ds(i, n, "", "bar", 0, 100, None, None)
-    d.update(unit=u, type="adc", pin=pin, divider=div, inMin=i0, inMax=i1, outMin=o0, outMax=o1, smoothing=0.3)
-    d.update(kw)
-    return d
-
-cfg = {
-    "version": "4.0.0",
-    "system": dict(board="auto", role="main", canEnabled=False, canTx=-1, canRx=-1, canKbps=500, boardEncrypt=False, apSsid="CarMetrics", apPass="", hostname="carmetrics", adminPass="",
-                   networks=[dict(ssid="Phone", **{"pass": ""}, passSet=True, priority=8)], scanWhileApInUse=True,
-                   ignitionPin=-1, ignitionActiveLow=True, sleepAfterMinutes=0, gpsRxPin=-1, gpsTxPin=-1, gpsBaud=9600,
-                   i2cSda=21, i2cScl=22, oneWirePin=4, oneWireResolution=11, oledType="ssd1327_128x128", oledFlip=False,
-                   oledClock=True, oledPageSeconds=4, oledContrast=255, buzzerPin=18, buzzerActiveLow=False, ledPin=19,
-                   ledActiveLow=False, engineSensorId="bat_voltage", engineRunningAbove=13.2, engineDelaySeconds=5,
-                   seaLevelHpa=1013.25, historyIntervalSeconds=5, tzOffsetMinutes=180),
-    "sensors": [
-        ds("coolant_temp", "Coolant", "CT", "bar", 15, 120, 100, 105, "28FF641E8C160321"),
-        ds("intake_temp", "Intake air", "I", "text", 0, 80, 55, 65, "28FF0A2B8C1603AA"),
-        ds("gearbox_temp", "Gearbox", "G", "text", 0, 120, 90, 105),
-        ds("transfer_case_temp", "Transfer case", "T", "text", 0, 120, 90, 105),
-        dict(ds("egt", "EGT", "EGT", "bar", 0, 800, 600, 700), type="max6675", sckPin=5, pin=17, soPin=16, offset=-8, hysteresis=10),
-        an("boost_pressure", "Boost", "psi", 32, 1.5, 0.5, 4.5, 0, 30, decimals=1, gaugeMax=25, warnHigh=17, critHigh=20, faultLowV=0.2, faultHighV=4.8, oledLabel="BST"),
-        an("oil_pressure", "Oil pressure", "psi", 34, 1.5, 0.5, 4.5, 0, 100, warnLow=15, critLow=7, warnHigh=85, faultLowV=0.2, faultHighV=4.8, engineRunningOnly=True, oledLabel="OIL"),
-        an("bat_voltage", "Starter battery", "V", 35, 5, 0, 1, 0, 1, decimals=1, gaugeMin=8, gaugeMax=16, warnLow=11.8, critLow=11.2, warnHigh=14.8, critHigh=15.2, oledStyle="text", oledLabel="B"),
-        an("aux_voltage", "Aux battery", "V", 33, 5, 0, 1, 0, 1, enabled=False, decimals=1, gaugeMin=8, gaugeMax=16, oledStyle="text", oledLabel="A"),
-        dict(ds("cabin_temp", "Cabin", "C", "text", 0, 50, 40, None), type="bmp"),
-        dict(ds("altitude", "Altitude", "^", "text", 0, 3000, None, None), type="bmp", unit="m", bmpField="altitude"),
-        dict(ds("b1_eb_coolant", "Engine bay Coolant (bay)", "", "off", 15, 120, 100, 105), type="remote", board=1, remoteIndex=0, remoteId="eb_coolant", decimals=1),
+CFG = {
+    'version': 6,
+    'ui': {'appName': 'CarMetrics', 'machineName': 'Defender', 'pages': {'dashboard': 'Dashboard', 'sensors': 'Sensors', 'actuators': 'Actuators', 'boards': 'Boards', 'system': 'System'},
+           'runningWord': 'engine', 'units': {'temperature': 'C', 'pressure': '', 'speed': ''}, 'preset': 'car'},
+    'sensors': [
+        S('coolant_temp', 'Coolant', 'ds18b20', '°C', warnHigh=98, critHigh=105, oledLabel='CLT'),
+        S('egt', 'EGT', 'max6675', '°C', gaugeMax=900, warnHigh=650, critHigh=720, pin=5, sckPin=18, soPin=19, decimals=0),
+        S('boost_pressure', 'Boost', 'ads1115', 'psi', gaugeMax=30, warnHigh=22, critHigh=26, adsChannel=0),
+        S('oil_pressure', 'Oil pressure', 'ads1115', 'psi', gaugeMax=100, warnLow=15, critLow=8, adsChannel=1),
+        S('bat_voltage', 'Battery', 'ads1115', 'V', gaugeMin=10, gaugeMax=16, warnLow=12, critLow=11.5, adsChannel=2, divider=5, decimals=2),
+        S('cabin_temp', 'Cabin', 'bmp', '°C', gaugeMax=50, bmpField='temperature'),
+        dict(S('b1_gearbox_temp', 'Engine bay Gearbox', 'remote', '°C', warnHigh=110), board=1, remoteId='gearbox_temp', remoteIndex=0),
     ],
-    "weather": dict(enabled=True, refTown="Nairobi", autoSeaLevel=True, refreshMinutes=20,
-                    towns=[dict(name="Nairobi", lat=-1.2864, lon=36.8172), dict(name="Naivasha", lat=-0.7167, lon=36.431), dict(name="Mombasa", lat=-4.0435, lon=39.6682)]),
-    "cloud": dict(enabled=False, protocol="zabbix", intervalMs=60000, uploadEverySec=60, bufferKB=256, onlyEngineRunning=True,
-                  zbxServer="", zbxPort=10051, zbxHost="carmetrics", zbxPacked=True, zbxPskIdentity="", zbxPsk="", zbxPskSet=False,
-                  influxUrl="", influxAuth="", influxAuthSet=False, influxMeasurement="carmetrics"),
-    "turbo": dict(enabled=True, egtId="egt", safeEgt=200, minIdleSeconds=60, rpmId="", idleRpm=1000, speedId="", beep=True),
-    "layout": dict(tiles=[], oled=[]),
-    "blackbox": dict(enabled=True, keepEvents=10),
-    "relays": [dict(id="relay1", name="Relay 1", pin=26, mode="on_off", activeLow=True, defaultOn=False, blinkMs=500, enabled=True),
-               dict(id="relay2", name="Fog lights", pin=27, mode="blink", activeLow=True, defaultOn=False, blinkMs=500, enabled=True)],
+    'relays': [
+        dict(id='fan', name='Fan', pin=13, type='pwm', mode='on_off', activeLow=False, defaultOn=False, blinkMs=500, enabled=True, safeState='off',
+             freqHz=25000, kickMs=500, minDuty=20, maxDuty=100, rampPerS=20, safeDuty=0, rule='threshold', ruleSensor='coolant_temp', onAt=95, offAt=90),
+        dict(id='lights', name='Spot lights', pin=26, type='relay', mode='on_off', activeLow=True, defaultOn=False, blinkMs=500, enabled=True, safeState='off', rule='manual'),
+    ],
+    'system': {'board': 'auto', 'role': 'main', 'boardEncrypt': False, 'canEnabled': False, 'canTx': -1, 'canRx': -1, 'canKbps': 500,
+               'apSsid': 'CarMetrics', 'apPass': '', 'networks': [{'ssid': 'Home', 'pass': '', 'passSet': True, 'priority': 5}], 'scanWhileApInUse': True,
+               'statusLight': {'builtin': True, 'builtinPin': -1, 'builtinBrightness': 15, 'external': False, 'r': -1, 'g': -1, 'b': -1, 'commonAnode': False, 'externalBrightness': 80},
+               'ignitionPin': -1, 'ignitionActiveLow': False, 'sleepAfterMinutes': 0, 'gpsRxPin': -1, 'gpsTxPin': -1, 'gpsBaud': 9600,
+               'hostname': 'carmetrics', 'adminPass': '', 'readNeedsAuth': False, 'i2cSda': 8, 'i2cScl': 9, 'i2cKhz': 100, 'oneWirePin': 15, 'oneWireResolution': 11,
+               'oledType': 'ssd1327_128x128', 'oledFlip': False, 'oledClock': True, 'oledPageSeconds': 4, 'oledContrast': 200,
+               'buzzerPin': 16, 'buzzerActiveLow': True, 'ledPin': 17, 'ledActiveLow': False, 'engineSensorId': 'bat_voltage', 'engineRunningAbove': 13.2,
+               'engineDelaySeconds': 5, 'seaLevelHpa': 1013.25, 'historyIntervalSeconds': 5, 'tzOffsetMinutes': 180},
+    'weather': {'enabled': True, 'refTown': 'Nairobi', 'autoSeaLevel': True, 'refreshMinutes': 30, 'towns': [{'name': 'Nairobi', 'lat': -1.2864, 'lon': 36.8172}]},
+    'cloud': {'enabled': False, 'protocol': 'zabbix', 'intervalMs': 1000, 'uploadEverySec': 60, 'bufferKB': 256, 'onlyEngineRunning': True, 'sendSystem': False,
+              'zbxServer': '', 'zbxPort': 10051, 'zbxHost': 'carmetrics', 'zbxPacked': True, 'zbxPskIdentity': '', 'zbxPsk': '', 'zbxPskSet': False,
+              'influxUrl': '', 'influxAuth': '', 'influxAuthSet': False, 'influxMeasurement': 'carmetrics'},
+    'turbo': {'enabled': True, 'egtId': 'egt', 'safeEgt': 300, 'minIdleSeconds': 30, 'rpmId': '', 'idleRpm': 1000, 'speedId': '', 'beep': True},
+    'layout': {'tiles': [], 'oled': [], 'oledColumns': 0},
+    'blackbox': {'enabled': True, 'keepEvents': 10},
 }
-rev = 1
-relay_state = {r["id"]: dict(on=False, out=False, blinkMs=r["blinkMs"]) for r in cfg["relays"]}
-muted_until = 0
-# other boards (phase 3): one paired, one found
-board_shares = {1: {"sensors": [dict(id="eb_coolant", name="Coolant (bay)", type="ds18b20", unit="°C", decimals=1, enabled=True, pin=4)],
-                    "relays": [dict(id="fan", name="Fan", pin=26, mode="on_off", activeLow=True, defaultOn=False, blinkMs=500, enabled=True, safeState="on")]}}
-board_relay = {"fan": False}
-board_names = {}
-board_cmds = []
-board_fw = None
-found_boards = [dict(mac="24:6F:28:AA:BB:CC", name="carmetrics", firmware="5.0.0-dev", role="relay", chip="ESP32", rssi=-55, ageS=1)]
-clock_set = False   # like a freshly booted ESP32: no time until the web app sends it
-lock = threading.Lock()
+REV = [1]
+ACT = {'fan': {'value': 0, 'on': False, 'by': 'rule', 'manual': False}, 'lights': {'value': 0, 'on': False, 'by': 'manual', 'manual': False}}
+STATE = {'muted': False, 'level': 'ok'}
+KEYS = []
+BOARDS = [
+    {'id': 1, 'name': 'Engine bay', 'mac': 'AA:BB:CC:00:00:01', 'role': 'sensor_relay', 'chip': 'ESP32', 'firmware': '5.3.0-beta.1', 'online': True, 'ageS': 0,
+     'rssi': -61, 'rssiAtBoard': -63, 'uptimeS': 5400, 'level': 'ok', 'relaysSafe': False, 'safeMode': False, 'received': 900, 'lost': 3, 'lossPct': 0,
+     'commandsIn': 2, 'commandsFailed': 0, 'muted': False, 'encrypted': False, 'sameChip': False,
+     'config': {'pending': False, 'status': 'accepted', 'message': '', 'hasShare': True, 'upToDate': True},
+     'points': [{'id': 'gearbox_temp', 'name': 'Gearbox', 'unit': '°C', 'relay': False, 'decimals': 1, 'value': 74.2, 'status': 'ok', 'level': 'ok'},
+                {'id': 'pump', 'name': 'Pump', 'unit': '', 'relay': True, 'decimals': 0, 'value': 0, 'status': 'ok', 'level': 'ok'}]},
+    {'id': 2, 'name': 'Dash display', 'mac': 'AA:BB:CC:00:00:02', 'role': 'display', 'chip': 'ESP32-S3', 'firmware': '5.3.0-beta.1', 'online': True, 'ageS': 0,
+     'rssi': -48, 'rssiAtBoard': -50, 'uptimeS': 5000, 'level': 'ok', 'relaysSafe': False, 'safeMode': False, 'received': 800, 'lost': 0, 'lossPct': 0,
+     'commandsIn': 0, 'commandsFailed': 0, 'muted': False, 'encrypted': False, 'sameChip': True, 'display': {'catalogSent': True, 'sensors': 7, 'relays': 3},
+     'config': {'pending': False, 'status': 'accepted', 'message': '', 'hasShare': False, 'upToDate': True}, 'points': []},
+]
+SHARES = {1: {'sensors': [S('gearbox_temp', 'Gearbox', 'ds18b20', '°C', warnHigh=110)],
+              'relays': [dict(id='pump', name='Pump', pin=26, type='relay', mode='on_off', activeLow=True, enabled=True, rule='manual', safeState='off', blinkMs=500, defaultOn=False)]}}
+FOUND = [{'mac': 'AA:BB:CC:00:00:09', 'name': 'Relay X8', 'firmware': '5.3.0-beta.1', 'role': 'relay', 'chip': 'ESP32', 'rssi': -70, 'ageS': 2}]
+EVENTS = [{'seq': 3, 'bytes': 4200, 'epoch': int(T0) - 3600, 'uptimeS': 1200, 'reason': 'coolant_temp warn'}]
+
+def bump(): REV[0] += 1
 
 def value(s, t):
-    base = {"coolant_temp": 88 + 18 * math.sin(t / 20), "intake_temp": 38, "egt": 420 + 200 * math.sin(t / 15),
-            "boost_pressure": 9 + 8 * math.sin(t / 7), "oil_pressure": 45 + 20 * math.sin(t / 11), "bat_voltage": 14.1,
-            "cabin_temp": 24.5, "altitude": 1661, "b1_eb_coolant": 88.4}.get(s["id"])
-    if s["id"] == "transfer_case_temp": return None, "unassigned"
-    if s["id"] == "gearbox_temp": return None, "not_found"
-    if base is None: return 21.0 + random.random(), "ok"
-    return base + random.random() * 0.4, "ok"
+    base = {'coolant_temp': 99 + 3 * math.sin(t / 20), 'egt': 420 + 80 * math.sin(t / 15), 'boost_pressure': 12 + 6 * math.sin(t / 7),
+            'oil_pressure': 45 + 5 * math.sin(t / 9), 'bat_voltage': 14.1 + 0.1 * math.sin(t / 5), 'cabin_temp': 24.6, 'b1_gearbox_temp': 74 + math.sin(t / 30)}
+    return round(base.get(s['id'], 50), 2)
 
-def level(s, v, st):
-    if st in ("fault", "not_found"): return "fault"
-    if v is None: return "ok"
-    for key, lv in (("critHigh", "crit"), ("critLow", "crit"), ("warnHigh", "warn"), ("warnLow", "warn")):
-        th = s.get(key)
-        if th is None: continue
-        if ("High" in key and v >= th) or ("Low" in key and v <= th): return lv
-    return "ok"
+def level(s, v):
+    if v is None: return 'ok'
+    if (s.get('critHigh') is not None and v >= s['critHigh']) or (s.get('critLow') is not None and v <= s['critLow']): return 'crit'
+    if (s.get('warnHigh') is not None and v >= s['warnHigh']) or (s.get('warnLow') is not None and v <= s['warnLow']): return 'warn'
+    return 'ok'
 
-def state():
+def addr(s): return f"b{s['board']}.{s['remoteId']}" if s['type'] == 'remote' else f"local.{s['id']}"
+
+def points(meta=False, only=None):
     t = time.time() - T0
-    out = {"t": int(t * 1000), "rev": rev, "engine": True, "sensors": {}, "relays": relay_state}
-    order = ["ok", "warn", "fault", "crit"]
-    worst = "ok"
-    for s in cfg["sensors"]:
-        if not s["enabled"]:
-            out["sensors"][s["id"]] = {"v": None, "st": "disabled", "lvl": "ok"}; continue
-        v, st = value(s, t)
-        lv = level(s, v, st)
-        if order.index(lv) > order.index(worst): worst = lv
-        e = {"v": None if v is None else round(v, s["decimals"] + 1), "st": st, "lvl": lv}
-        if s["type"] in ("adc", "ads1115") and v is not None:
-            e["volts"] = round(s["inMin"] + (v - s["outMin"]) * (s["inMax"] - s["inMin"]) / (s["outMax"] - s["outMin"]), 3)
-        out["sensors"][s["id"]] = e
-    out["level"] = worst
-    egt = out["sensors"].get("egt", {}).get("v")
-    if cfg["turbo"]["enabled"] and egt is not None:
-        out["turbo"] = {"phase": "cooling" if egt > cfg["turbo"]["safeEgt"] else "ok", "leftS": 25, "safe": cfg["turbo"]["safeEgt"], "egt": round(egt)}
-    if not clock_set: out["clock"] = False
-    else: out["epoch"] = int(time.time()); out["clockSrc"] = "browser"
-    out["muted"] = time.time() < muted_until
-    if out["muted"]: out["muteLeftS"] = int(muted_until - time.time())
-    return out
+    items, worst = [], 'ok'
+    order = {'ok': 0, 'warn': 1, 'fault': 2, 'crit': 3}
+    for s in CFG['sensors']:
+        v = value(s, t) if s['enabled'] else None
+        lv = level(s, v)
+        if order[lv] > order[worst]: worst = lv
+        x = {'a': addr(s), 'v': v, 'st': 'ok' if s['enabled'] else 'disabled', 'lvl': lv}
+        if meta: x.update(kind='sensor', name=s['name'], label=s.get('oledLabel', ''), unit=s['unit'], decimals=s['decimals'], min=s['gaugeMin'], max=s['gaugeMax'],
+                          board=f"b{s['board']}" if s['type'] == 'remote' else 'local',
+                          limits={'wl': s.get('warnLow'), 'wh': s.get('warnHigh'), 'cl': s.get('critLow'), 'ch': s.get('critHigh')})
+        items.append(x)
+    for r in CFG['relays']:
+        st = ACT.setdefault(r['id'], {'value': 0, 'on': False, 'by': 'manual', 'manual': False})
+        x = {'a': 'local.' + r['id'], 'v': st['value'], 'st': 'ok', 'lvl': 'ok'}
+        if meta: x.update(kind='actuator', type=r['type'], name=r['name'], board='local', unit='%' if r['type'] != 'relay' else '')
+        items.append(x)
+    items.append({'a': 'local.sys_heap', 'v': 151.2, 'st': 'ok', 'lvl': 'ok', **({'kind': 'system', 'name': 'heap', 'board': 'local'} if meta else {})})
+    if only: items = [i for i in items if i['a'] in only]
+    STATE['level'] = worst
+    d = {'t': int(t * 1000), 'epoch': int(time.time()), 'level': worst, 'muted': STATE['muted'], 'running': True, 'rev': REV[0], 'items': items,
+         'turbo': {'phase': 'cooling', 'leftS': 42}}
+    return d
 
-history = {s["id"]: [] for s in cfg["sensors"]}
-def hist_fill():
-    for k in range(120):
-        t = (time.time() - T0) - (120 - k) * 5
-        for s in cfg["sensors"]:
-            v, st = value(s, t)
-            history[s["id"]].append(None if v is None else round(v, 2))
-hist_fill()
+def find(lst, id):
+    for i, x in enumerate(lst):
+        if x.get('id') == id: return i
+    return -1
+
+def board_list(q, kind):
+    b = q.get('board', ['local'])[0]
+    if b == 'local': return [s for s in CFG[kind] if s.get('type') != 'remote'] if kind == 'sensors' else CFG[kind]
+    n = int(b[1:]); return SHARES.setdefault(n, {'sensors': [], 'relays': []})[kind]
+
+def map_limits(item, body):
+    for k, v in body.items():
+        if k == 'limits':
+            for a, b in (('wl', 'warnLow'), ('wh', 'warnHigh'), ('cl', 'critLow'), ('ch', 'critHigh')):
+                if a in v: item[b] = v[a]
+        else: item[k] = v
+
+def merge(d, s):
+    for k, v in s.items():
+        if isinstance(v, dict) and isinstance(d.get(k), dict): merge(d[k], v)
+        else: d[k] = v
+
+class Err(Exception):
+    def __init__(self, code, msg, field=None): self.code, self.msg, self.field = code, msg, field
+
+def ok(msg='Done', **k): return {'ok': True, 'message': msg, **k}
+
+def route(m, path, q, body, scope):
+    p = path.split('/') if path else []
+    need = lambda s: None if scope >= s else (_ for _ in ()).throw(Err(401, 'password needed'))
+    if m == 'GET' and path == 'info':
+        return {'appName': CFG['ui']['appName'], 'machineName': CFG['ui']['machineName'], 'firmware': '5.3.0-beta.1', 'build': 'mock', 'variant': 's3-8mb',
+                'api': [1], 'protocol': 1, 'role': 'main', 'board': {'id': 'esp32s3_n16r8', 'name': 'ESP32-S3 N16R8'}, 'chip': 'esp32s3', 'capabilities': ['actuators', 'boards'],
+                'uptimeS': int(time.time() - T0), 'epoch': int(time.time()), 'hostname': 'carmetrics', 'ip': '192.168.1.50', 'apIp': '192.168.4.1'}
+    if m == 'GET' and path == 'points':
+        only = q.get('a', [''])[0]; return points(q.get('meta', ['0'])[0] == '1', only.split(',') if only else None)
+    if m == 'GET' and path == 'settings':
+        d = copy.deepcopy(CFG); d['rev'] = REV[0]; return d
+    if m == 'GET' and p[:1] == ['settings'] and len(p) == 2: return CFG[p[1]]
+    if m == 'PATCH' and p[:1] == ['settings'] and len(p) == 2:
+        need(3)
+        if p[1] == 'sensors': CFG['sensors'] = body
+        else:
+            body = {k: v for k, v in body.items() if not (k.lower().endswith('pass') or k.endswith('Psk') or k == 'influxAuth') or v}
+            merge(CFG[p[1]], body)
+        bump(); return ok('Saved')
+    if m == 'POST' and path == 'system/time': return ok('Time set')
+    if m == 'GET' and path == 'alerts': return {'level': STATE['level'], 'muted': STATE['muted'], 'items': []}
+    if m == 'POST' and path == 'alerts/mute':
+        STATE['muted'] = (body or {}).get('minutes', 15) > 0; return ok('Muted' if STATE['muted'] else 'Unmuted')
+    if p[:1] in (['sensors'], ['actuators']):
+        kind = 'sensors' if p[0] == 'sensors' else 'relays'
+        if m == 'GET' and path == 'sensors/discover':
+            return {'running': False, 'ageMs': 500, 'i2c': [{'addr': '0x48', 'driver': 'ads1115'}, {'addr': '0x76', 'driver': 'bme280'}],
+                    'onewire': {'devices': [{'address': '28FF641E8016034A', 'tempC': 21.5, 'assignedTo': ''}]},
+                    'analog': [{'source': 'ads1115@0x48/0', 'volts': 1.82, 'assignedTo': 'boost_pressure'}, {'source': 'ads1115@0x48/3', 'volts': 0.01, 'assignedTo': ''}, {'source': 'gpio4', 'volts': 0.4, 'assignedTo': ''}]}
+        if m == 'POST' and path == 'sensors/discover': need(3); return ok('Searching')
+        lst = board_list(q, kind)
+        if m == 'GET' and len(p) == 1:
+            items = copy.deepcopy(lst)
+            if kind == 'relays' and q.get('board', ['local'])[0] == 'local':
+                for a in items: a['state'] = ACT.get(a['id'], {})
+            return {'board': q.get('board', ['local'])[0], 'items': items}
+        if m == 'POST' and len(p) == 1:
+            need(3)
+            id = body.get('id') or re.sub(r'[^a-z0-9]+', '_', body.get('name', 'x').lower()).strip('_') or 'x'
+            if find(lst, id) >= 0: raise Err(409, f"'{id}' already exists", 'id')
+            item = {}; map_limits(item, body); item['id'] = id
+            if kind == 'relays' and item.get('pin', -1) < 0 and item.get('enabled', True): raise Err(400, f"Actuator '{id}': choose its pin", 'pin')
+            (CFG[kind] if q.get('board', ['local'])[0] == 'local' else lst).append(item); bump(); return ok(f"'{id}' added")
+        i = find(lst, p[1]) if len(p) > 1 else -1
+        if i < 0: raise Err(404, f"No '{p[1] if len(p) > 1 else ''}'")
+        if m == 'GET' and len(p) == 2: return lst[i]
+        if m == 'PATCH' and len(p) == 2: need(2); map_limits(lst[i], body); bump(); return ok('Saved')
+        if m == 'DELETE' and len(p) == 2: need(3); (CFG[kind] if q.get('board', ['local'])[0] == 'local' else lst).remove(lst[i]); bump(); return ok('Removed')
+        if m == 'POST' and len(p) == 3 and p[2] == 'command':
+            need(2); st = ACT.setdefault(p[1], {})
+            r = lst[i]
+            if body.get('auto'): st.update(manual=False, by='rule')
+            elif 'on' in body: st.update(on=body['on'], value=(100 if r['type'] != 'relay' else 1) if body['on'] else 0, manual=True, by='manual')
+            elif 'duty' in body: st.update(value=body['duty'], on=body['duty'] > 0, manual=True, by='manual')
+            elif 'angle' in body: st.update(value=body['angle'], manual=True, by='manual')
+            elif 'direction' in body: st.update(value={'forward': 1, 'reverse': -1}.get(body['direction'], 0) * body.get('speed', 100), manual=True, by='manual')
+            else: raise Err(400, 'Nothing to do')
+            return ok('Done')
+    if m == 'GET' and path == 'boards':
+        return {'role': 'main', 'link': {'type': 'espnow', 'channel': 6, 'ok': True, 'rx': 1200, 'tx': 1300, 'txFail': 2, 'queueDrops': 0}, 'found': FOUND, 'items': BOARDS}
+    if p[:1] == ['boards'] and m != 'GET':
+        need(3)
+        if m == 'POST' and len(p) == 1:
+            n = max(b['id'] for b in BOARDS) + 1
+            BOARDS.append(dict(copy.deepcopy(BOARDS[0]), id=n, name=body['name'], mac=body['mac'], points=[])); return ok('Paired', id=n)
+        if path == 'boards/firmware-file': return ok('Firmware file stored on this board')
+        b = next((x for x in BOARDS if str(x['id']) == p[1]), None)
+        if not b: raise Err(404, 'Unknown board')
+        if m == 'PATCH': b['name'] = body['name']; return ok('Renamed')
+        if m == 'DELETE': BOARDS.remove(b); return ok('Board forgotten')
+        if p[2:] == ['command']: return ok('Sent')
+        if p[2:] == ['firmware']: b['fw'] = {'state': 'sending', 'version': '5.3.0-beta.1', 'error': '', 'percent': 35, 'seconds': 12}; return ok('Sending the firmware')
+    if m == 'GET' and path == 'system':
+        return {'firmware': {'version': '5.3.0-beta.1', 'build': 'mock', 'core': '3.3.12'}, 'chip': {'model': 'ESP32-S3', 'flashMB': 16, 'psramKB': 8192},
+                'board': {'id': 'esp32s3_n16r8', 'name': 'ESP32-S3 N16R8', 'setting': 'auto'}, 'uptime': {'s': int(time.time() - T0) + 5400, 'resetReason': 'power on'},
+                'memory': {'free': 160000, 'min': 120000, 'largest': 90000, 'psramFree': 7900000}, 'cpu': [12, 30], 'loop': {'avgUs': 900, 'maxUs': 12000},
+                'storage': {'fsUsed': 300000, 'fsTotal': 1500000}, 'clients': {'websocket': 1, 'events': 0}, 'tasks': [{'name': 'loop', 'stackFree': 3500}], 'safeMode': False}
+    if m == 'GET' and path == 'network':
+        return {'state': 'joined', 'ssid': 'Home', 'ip': '192.168.1.50', 'rssi': -58, 'apClients': 1, 'scanAgeS': 20,
+                'scan': [{'ssid': 'Home', 'rssi': -58, 'ch': 6, 'security': True, 'saved': True}, {'ssid': 'Phone hotspot', 'rssi': -66, 'ch': 1, 'security': True, 'saved': False}], 'log': []}
+    if m == 'POST' and path in ('network/scan', 'network/join', 'system/reboot', 'settings/reset', 'settings/restore', 'backup', 'presets/apply', 'hardware/profile',
+                                'hardware/status-light/test', 'hardware/altitude', 'cloud/flush', 'weather/refresh'):
+        need(3)
+        if path == 'network/join': CFG['system']['networks'].insert(0, {'ssid': body['ssid'], 'pass': '', 'passSet': True, 'priority': 9})
+        if path == 'presets/apply':
+            merge(CFG, json.load(open(os.path.join(WEB, 'presets', body['preset'] + '.json')))); CFG['ui']['preset'] = body['preset']; bump()
+        return ok('Done')
+    if m == 'DELETE' and p[:2] == ['network', 'saved']:
+        CFG['system']['networks'] = [n for n in CFG['system']['networks'] if n['ssid'] != unquote(p[2])]; return ok('Forgotten')
+    if m == 'GET' and path == 'presets': return {'items': ['blank', 'boat', 'car', 'farm'], 'current': CFG['ui']['preset']}
+    if m == 'GET' and path == 'pins':
+        used = {8: 'I2C SDA', 9: 'I2C SCL', 15: '1-Wire', 16: 'buzzer', 17: 'warning LED', 13: "actuator 'fan'", 26: "actuator 'lights'", 48: 'built-in RGB light'}
+        pins = [{'gpio': g, 'abilities': ['output'] + (['analog'] if 1 <= g <= 10 else []) + (['boot_pin'] if g in (0, 3, 45, 46, 48) else []), **({'usedBy': used[g]} if g in used else {})}
+                for g in list(range(0, 22)) + list(range(38, 49))]
+        return {'board': 'esp32s3_n16r8', 'boardName': 'ESP32-S3 N16R8', 'chip': 'esp32s3', 'notes': '', 'pins': pins, 'warnings': []}
+    if m == 'POST' and re.fullmatch(r'pins/\d+/test', path): return {'gpio': int(p[1]), 'level': 1, 'volts': 3.3} if body.get('mode') == 'read' else {'gpio': int(p[1]), 'seconds': 5}
+    if m == 'GET' and path == 'hardware/profiles':
+        prof = {'id': 'esp32s3_n16r8', 'name': 'ESP32-S3 N16R8 (16 MB flash, 8 MB PSRAM)', 'notes': 'Same pins as N8R8.'}
+        return {'chip': 'esp32s3', 'setting': 'auto', 'detected': 'esp32s3_n16r8', 'current': prof, 'items': [prof, {'id': 'esp32s3_n8r8', 'name': 'ESP32-S3 DevKitC-1 N8R8', 'notes': ''}]}
+    if m == 'GET' and path == 'keys': need(3); return {'items': KEYS}
+    if m == 'POST' and path == 'keys':
+        need(3); KEYS.append({'id': '%04x' % random.randint(0, 65535), 'name': body['name'], 'scope': body['scope']}); return ok('Copy the key now', key='cm_' + '%032x' % random.getrandbits(128))
+    if m == 'DELETE' and p[:1] == ['keys']: KEYS[:] = [k for k in KEYS if k['id'] != p[1]]; return ok('Key deleted')
+    if m == 'GET' and path == 'weather':
+        return {'enabled': True, 'towns': [{'name': 'Nairobi', 'temp': 23.4, 'code': 2, 'wind': 11, 'rh': 55}]}
+    if m == 'GET' and path == 'cloud': return {'recording': False, 'backlogFiles': 0}
+    if m == 'GET' and path == 'events': return {'enabled': True, 'keep': 10, 'items': EVENTS}
+    if m == 'GET' and p[:1] == ['events'] and len(p) == 2:
+        rows = [[98 + i / 10, 400 + i] for i in range(60)]; return {'seq': 3, 'reason': 'coolant_temp warn', 'interval': 1, 'before': 30, 'ids': ['coolant_temp', 'egt'], 'rows': rows}
+    if m == 'GET' and path == 'history':
+        n = 120
+        return {'interval': 5, 'len': n, 'count': n, 'ageMs': 1000, 'series': {s['id']: [round(value(s, i * 5), 1) for i in range(n)] for s in CFG['sensors']}}
+    if m == 'GET' and path == 'backup': need(3); return CFG
+    raise Err(404, 'No such address: ' + path)
 
 class H(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+    protocol_version = 'HTTP/1.1'
     def log_message(self, *a): pass
-    def send_json(self, code, obj, extra=None):
-        b = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b)))
+    def scope(self):
+        a = self.headers.get('Authorization', '')
+        if a.startswith('Basic ') and base64.b64decode(a[6:]).decode() == 'admin:carmetrics': return 3
+        return 1
+    def send(self, code, obj, ctype='application/json', extra=None):
+        b = obj if isinstance(obj, bytes) else json.dumps(obj).encode()
+        self.send_response(code); self.send_header('Content-Type', ctype); self.send_header('Content-Length', str(len(b)))
         for k, v in (extra or {}).items(): self.send_header(k, v)
         self.end_headers(); self.wfile.write(b)
-    def authed(self):
-        a = self.headers.get("Authorization", "")
-        if a.startswith("Basic ") and base64.b64decode(a[6:]).decode() == "admin:" + ADMIN: return True
-        self.send_json(401, {"ok": False, "message": "auth"}, {"WWW-Authenticate": 'Basic realm="CarMetrics"'})
-        return False
-    def body(self):
-        n = int(self.headers.get("Content-Length", 0)); return self.rfile.read(n) if n else b""
-    def do_GET(self):
-        global rev
-        p = self.path.split("?")[0]
-        if p == "/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
-            return self.websocket()
-        if p == "/events":
-            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            i = 0
-            try:
-                while True:
-                    i += 1
-                    self.wfile.write(f"id: {i}\nevent: state\ndata: {json.dumps(state())}\n\n".encode()); self.wfile.flush()
-                    time.sleep(1)
-            except Exception: return
-        if p == "/api/config": return self.send_json(200, dict(cfg, revision=rev))
-        if p == "/api/state": return self.send_json(200, state())
-        if p == "/api/history": return self.send_json(200, {"interval": 5, "len": 360, "count": 120, "ageMs": 1000, "series": history})
-        if p == "/api/info": return self.send_json(200, dict(version="4.0.0", build="Oct 30 2026", uptimeS=int(time.time() - T0) + 3700, heapFree=180000, heapMin=150000,
-                fsUsed=60000, fsTotal=589824, sketchSize=1037125, sketchFree=1703936, apSsid="CarMetrics", apIp="192.168.4.1", staSsid="", ip="",
-                rssi=0, hostname="carmetrics", stationHpa=834.2, seaLevelHpa=1016.4, seaLevelSource="weather: Nairobi", internet=True, ntp=True, bmp="BMP180", oled="ok", timeSynced=clock_set, timeSource="browser", resetReason=1, sseClients=1))
-        if p == "/api/v2/board":
-            r = lambda a, b: list(range(a, b + 1))
-            valid = [x for x in r(0, 39) if x not in r(6, 11) + [20, 24] + r(28, 31)]
-            dev = dict(id="esp32_devkit", name="ESP32 DevKit (WROOM-32, 4 MB)", chip="esp32", flashMB=4, psramMB=0, valid=valid,
-                       output=[x for x in valid if x < 34 and x not in (0, 12)], adc1=r(32, 39), caution=[1, 2, 3, 5, 15],
-                       defaults=dict(i2cSda=21, i2cScl=22, oneWirePin=4, buzzerPin=18, ledPin=19, egtSck=5, egtCs=17, egtSo=16),
-                       notes="Your current board. GPIO34-39 are input only. Analog inputs: GPIO32-39.")
-            wro = dict(dev, id="esp32_wrover", name="ESP32 WROVER (4-8 MB flash, PSRAM)", psramMB=8, notes="GPIO16/17 are used by the PSRAM.")
-            return self.send_json(200, dict(chip="esp32", setting=cfg["system"].get("board", "auto"), detected="esp32_devkit", current=dev, profiles=[dev, wro]))
-        if p == "/api/v2/system":
-            up = int(time.time() - T0) + 3700
-            return self.send_json(200, dict(chip=dict(model="ESP32-D0WD-V3", revision=3, cores=2, mhz=240, flashMB=4, psramKB=0, target="esp32", tempC=48.5),
-                board=dict(id="esp32_devkit", name="ESP32 DevKit (WROOM-32, 4 MB)", setting="auto"),
-                firmware=dict(version="5.0.0-dev", build="Oct 31 2026", core="2.0.17", idf="v4.4.7", slot="app0", state="confirmed", rollbackAvailable=True, sketchKB=1255, slotKB=1664),
-                uptime=dict(s=up, boots=42, resetReason="power on", history=["power on", "restart", "power on", "low voltage (brown-out)"]),
-                safeMode=False, crashCount=0, memory=dict(free=182000, min=151000, largest=110592, psramFree=0, historyKB=10, historyIn="RAM", fsUsed=60000, fsTotal=589824),
-                cpu=[18, 9], loop=dict(avgUs=840, maxUs=6200), tasks=[dict(name="loop", stackFree=4920), dict(name="oled", stackFree=2810), dict(name="net", stackFree=7400)],
-                storage=dict(fsUsed=118784, fsTotal=589824, webApp=44544, blackBox=10240, uploadBuffer=0, settingsUsed=60, settingsTotal=504, ageS=20),
-                crash=dict(task="async_tcp", pc="0x400d5a1c", cause="read from a bad address (null pointer?)", causeCode=28, address="0x00000000", backtrace="0x400d5a19 0x400d6f2e 0x40089a3d", corrupted=False, thisFirmware=False),
-                wifi=dict(connected=True, ssid="Phone", rssi=-61, channel=6, apClients=1), flash=dict(configWrites=1, bufferWrites=0, bufferKB=0),
-                clients=dict(events=1, websocket=0)))
-        if p == "/api/v2/boards":
-            pts = [dict(id=s["id"], name=s["name"], unit=s["unit"], relay=False, decimals=s["decimals"], value=88.4, status="ok", level="ok") for s in board_shares.get(1, {}).get("sensors", [])]
-            pts += [dict(id=r["id"], name=r["name"], unit="", relay=True, decimals=0, value=1 if board_relay.get(r["id"]) else 0, status="ok", level="ok") for r in board_shares.get(1, {}).get("relays", [])]
-            boards = [dict(id=1, encrypted=True, sameChip=True, fw=board_fw, name="Engine bay", mac="24:6F:28:01:02:03", role="sensor + relay", chip="ESP32", firmware="5.0.0-dev", online=True, ageS=0,
-                           rssi=-48, rssiAtBoard=-51, uptimeS=4000, level="ok", relaysSafe=False, safeMode=False, received=3990, lost=12,
-                           config=dict(pending=False, status="accepted", message="", hasShare=True, upToDate=True), points=pts,
-                           lossPct=0, commandsIn=0, commandsFailed=0, muted=False)] if 1 in board_shares else []
-            boards.append(dict(id=2, encrypted=False, sameChip=False, name=board_names.get(2, "Dash"), mac="34:85:18:0A:0B:0C", role="display", chip="ESP32-S3", firmware="5.1.0-beta.11",
-                               online=True, ageS=0, rssi=-40, rssiAtBoard=-42, uptimeS=600, level="ok", relaysSafe=False, safeMode=False, received=600, lost=3, lossPct=1,
-                               commandsIn=4, commandsFailed=0, muted=False, config=dict(pending=False, status="accepted", message="", hasShare=False, upToDate=True), points=[],
-                               display=dict(catalogSent=True, sensors=9, relays=2, ip="192.168.4.3")))
-            return self.send_json(200, dict(role="main", firmware="5.1.0-beta.9", chip="ESP32", link=dict(type="ESP-NOW", ok=True, channel=11, rx=4000, tx=4100, txFail=0, queueDrops=0),
-                                            found=found_boards, boards=boards))
-        if p == "/api/v2/boards/config":
-            from urllib.parse import urlparse, parse_qs
-            bid = int(parse_qs(urlparse(self.path).query).get("id", ["0"])[0])
-            if bid not in board_shares: return self.send_json(404, {"ok": False, "message": "Unknown board"})
-            return self.send_json(200, dict(id=bid, name="Engine bay", **board_shares[bid]))
-        if p == "/api/v2/wifi":
-            up = int(time.time() - T0) + 3700
-            return self.send_json(200, dict(uptimeS=up, state="connected", ssid="HouseLAN", channel=6, saved=2, apClients=1, rssi=-58, ip="192.168.1.40",
-                remembered=dict(ssid="HouseLAN", channel=6, bssid="A4:2B:B0:11:22:33"), scanAgeS=95, scanTotal=7,
-                scan=[dict(ssid="HouseLAN", rssi=-58, ch=6, security="WPA2", saved=True), dict(ssid="Neighbour", rssi=-80, ch=11, security="WPA2/WPA3", saved=False),
-                      dict(ssid="(hidden)", rssi=-85, ch=1, security="WPA2", saved=False)],
-                log=[dict(t=up - 90, event="joined", ssid="HouseLAN", bssid="A4:2B:B0:11:22:33", ch=6, rssi=-58, **{"try": 2}, ms=2400, note="192.168.1.40"),
-                     dict(t=up - 95, event="failed", ssid="HouseLAN", bssid="A4:2B:B0:11:22:33", ch=6, rssi=-60, **{"try": 1}, reason=15, reasonText="4-way handshake timeout (wrong password?)", ms=5100),
-                     dict(t=up - 400, event="no saved network in range", note="5 network(s) seen", ms=2600)]))
-        if p == "/api/blackbox":
-            return self.send_json(200, dict(enabled=True, keep=10, events=[dict(seq=3, bytes=5200, epoch=int(time.time()) - 3600, uptimeS=1820, reason="coolant_temp warn"),
-                                                                        dict(seq=2, bytes=5100, epoch=0, uptimeS=640, reason="hot shutdown: EGT 412 C")]))
-        if p == "/api/blackbox/event":
-            ids = [x["id"] for x in cfg["sensors"] if x["enabled"]]
-            rows = [[round(95 + 0.25 * k + (0.5 if i == 0 else i), 2) if i < 8 else None for i in range(len(ids))] for k in range(61)]
-            return self.send_json(200, dict(seq=3, epoch=int(time.time()) - 3600, uptimeS=1820, reason="coolant_temp warn", interval=1, before=30, ids=ids, rows=rows))
-        if p == "/api/v2/points":
-            st = state()
-            pts = [dict(a="local." + s["id"], k="sensor", n=s["name"], u=s["unit"], v=st["sensors"][s["id"]]["v"]) for s in cfg["sensors"]]
-            return self.send_json(200, dict(board="local", rev=rev, points=pts))
-        if p == "/api/weather":
-            mk = lambda n, t, msl, sfc, el: dict(name=n, time="2026-10-31T11:45", code=2, temp=t, feels=t-1, rh=55, precip=0.0, cloud=40, msl=msl, sfc=sfc, wind=14, windDir=60, gust=28, elevation=el)
-            return self.send_json(200, dict(enabled=True, sta=True, ageS=240, error="", seaLevel=dict(hpa=1016.4, source="weather", town="Nairobi"),
-                towns=[mk("Nairobi", 23.4, 1016.4, 832.1, 1661), mk("Naivasha", 24.9, 1015.8, 813.0, 1890), mk("Mombasa", 30.2, 1012.9, 1010.8, 17)]))
-        if p == "/api/cloud":
-            return self.send_json(200, dict(enabled=cfg["cloud"]["enabled"], sta=True, internet=True, ntp=True, timeSynced=True, recording=True,
-                ramChunks=1, backlogFiles=3, backlogBytes=11264, pendingRecords=88, sentRecords=1520, droppedRecords=0, lastOkAgeS=42, lastTryAgeS=42, lastError="", recordBytes=142, fsFree=480000))
-        if p == "/api/onewire": return self.send_json(200, {"lastScanAgeMs": 3000, "scanPending": False, "devices": [
-                {"address": "28FF641E8C160321", "tempC": 88.1, "assignedTo": "coolant_temp"},
-                {"address": "28FF0A2B8C1603AA", "tempC": 38.4, "assignedTo": "intake_temp"},
-                {"address": "28FFB2C18C160377", "tempC": 61.0, "assignedTo": ""}]})
-        if p in ("/api/auth/check", "/api/config/export"):
-            if self.authed(): self.send_json(200, {"ok": True, "message": "ok"} if p.endswith("check") else cfg)
-            return
-        f = os.path.join(WEB, "index.html" if p == "/" else p.lstrip("/"))
-        if os.path.isfile(f):
-            b = open(f, "rb").read()
-            ct = {"html": "text/html", "js": "application/javascript", "css": "text/css", "png": "image/png"}.get(f.rsplit(".", 1)[-1], "application/octet-stream")
-            self.send_response(200); self.send_header("Content-Type", ct + ("; charset=utf-8" if "text" in ct or "javascript" in ct else "")); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
-        else:
-            self.send_json(404, {"ok": False, "message": "Not found"})
-    # Minimal WebSocket (RFC 6455) like the ESP32's /ws: state every second, commands answered with an ack.
-    def websocket(self):
-        global muted_until
-        import hashlib, struct
-        key = self.headers["Sec-WebSocket-Key"]
-        acc = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
-        self.send_response(101); self.send_header("Upgrade", "websocket"); self.send_header("Connection", "Upgrade")
-        self.send_header("Sec-WebSocket-Accept", acc); self.end_headers()
-        wlock = threading.Lock(); alive = [True]
-        def send(obj):
-            b = json.dumps(obj).encode()
-            hdr = bytes([0x81, len(b)]) if len(b) < 126 else bytes([0x81, 126]) + struct.pack(">H", len(b)) if len(b) < 65536 else bytes([0x81, 127]) + struct.pack(">Q", len(b))
-            with wlock: self.wfile.write(hdr + b); self.wfile.flush()
-        def reader():
-            try:
-                while alive[0]:
-                    h = self.rfile.read(2)
-                    if len(h) < 2: break
-                    op, n = h[0] & 15, h[1] & 127
-                    if n == 126: n = struct.unpack(">H", self.rfile.read(2))[0]
-                    elif n == 127: n = struct.unpack(">Q", self.rfile.read(8))[0]
-                    mask = self.rfile.read(4); data = bytes(c ^ mask[i % 4] for i, c in enumerate(self.rfile.read(n)))
-                    if op == 8: break
-                    if op != 1: continue
-                    m = json.loads(data)
-                    if m.get("type") == "cmd" and m.get("cmd") == "mute":
-                        mins = m.get("minutes", 5); muted_until = time.time() + 60 * mins if mins > 0 else 0
-                        send({"type": "ack", "id": m.get("id", 0), "ok": True})
-                    else: send({"type": "ack", "id": m.get("id", 0), "ok": False, "message": "Password required"})
-            except Exception: pass
-            alive[0] = False
-        threading.Thread(target=reader, daemon=True).start()
+    def api(self, m):
+        u = urlparse(self.path)
+        path = u.path[len('/api/v1'):].strip('/')
+        n = int(self.headers.get('Content-Length') or 0)
+        raw = self.rfile.read(n) if n else b''
+        body = None
+        if raw and self.headers.get('Content-Type', '').startswith('application/json'):
+            try: body = json.loads(raw)
+            except Exception: return self.send(400, {'error': {'code': 'invalid', 'message': 'Body is not valid JSON'}})
         try:
-            send({"type": "hello", "board": "local", "fw": "5.0.0-dev", "rev": rev})
-            while alive[0]:
-                send(state()); time.sleep(1)
+            with LOCK: r = route(m, path, parse_qs(u.query), body if body is not None else {}, self.scope())
+            self.send(200, r)
+        except Err as e:
+            if e.code == 401 and not self.headers.get('Authorization'):
+                return self.send(401, {'error': {'code': 'auth', 'message': e.msg}}, extra={'WWW-Authenticate': 'Basic realm="CarMetrics"'})
+            err = {'code': {400: 'invalid', 401: 'auth', 404: 'not_found', 409: 'conflict'}.get(e.code, 'invalid'), 'message': e.msg}
+            if e.field: err['field'] = e.field
+            self.send(e.code, {'error': err})
+    def do_GET(self):
+        if self.path.startswith('/api/v1/ws'): return self.websocket()
+        if self.path.startswith('/api/'): return self.api('GET')
+        f = urlparse(self.path).path.lstrip('/') or 'index.html'
+        fp = os.path.join(WEB, f)
+        if not os.path.isfile(fp): return self.send(404, b'not found', 'text/plain')
+        ct = {'.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json'}.get(os.path.splitext(f)[1], 'application/octet-stream')
+        self.send(200, open(fp, 'rb').read(), ct)
+    def do_POST(self): self.api('POST')
+    def do_PATCH(self): self.api('PATCH')
+    def do_DELETE(self): self.api('DELETE')
+    def do_PUT(self): self.api('PUT')
+
+    # minimal WebSocket: hello, then points every second
+    def websocket(self):
+        key = self.headers.get('Sec-WebSocket-Key', '')
+        acc = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+        self.send_response(101); self.send_header('Upgrade', 'websocket'); self.send_header('Connection', 'Upgrade'); self.send_header('Sec-WebSocket-Accept', acc); self.end_headers()
+        def frame(s):
+            b = s.encode(); hdr = bytes([0x81]) + (bytes([len(b)]) if len(b) < 126 else bytes([126]) + struct.pack('>H', len(b)) if len(b) < 65536 else bytes([127]) + struct.pack('>Q', len(b)))
+            self.wfile.write(hdr + b); self.wfile.flush()
+        try:
+            frame(json.dumps({'type': 'hello', 'api': 1, 'firmware': '5.3.0-beta.1', 'rev': REV[0]}))
+            while True:
+                with LOCK: p = points()
+                frame(json.dumps({'type': 'points', 't': p['t'], 'level': p['level'], 'muted': p['muted'], 'running': True, 'rev': p['rev'], 'turbo': p['turbo'],
+                                  'v': {i['a']: [i['v'], i['st'], i['lvl']] for i in p['items']}}))
+                time.sleep(1)
         except Exception: pass
-        alive[0] = False
-        self.close_connection = True
 
-    def do_POST(self):
-        global rev, muted_until, clock_set
-        p = self.path.split("?")[0]
-        raw = self.body()
-        j = json.loads(raw) if raw and self.headers.get("Content-Type", "").startswith("application/json") else None
-        if p == "/api/alerts/mute":
-            muted_until = time.time() + j.get("minutes", 5) * 60 if j.get("minutes", 5) > 0 else 0
-            return self.send_json(200, {"ok": True, "message": "Muted"})
-        if p == "/api/time":
-            clock_set = True
-            return self.send_json(200, {"ok": True, "message": "Time set"})
-        if p == "/api/v2/command":
-            j = (j or {})
-            if j.get("cmd") == "mute":
-                muted_until = time.time() + 60 * j.get("minutes", 5) if j.get("minutes", 5) > 0 else 0
-                return self.send_json(200, {"ok": True, "message": "ok"})
-        if p == "/api/v2/boards/accept":
-            if not self.authed(): return
-            found_boards.clear()
-            return self.send_json(200, {"ok": True, "message": "Paired as board 2. Set up its sensors and relays next."})
-        if p == "/api/v2/boards/forget":
-            if not self.authed(): return
-            board_shares.pop(j.get("id"), None)
-            return self.send_json(200, {"ok": True, "message": "Board forgotten"})
-        if p == "/api/v2/boards/config":
-            if not self.authed(): return
-            sh = board_shares.setdefault(j["id"], {"sensors": [], "relays": []})
-            if "sensors" in j: sh["sensors"] = j["sensors"]
-            if "relays" in j: sh["relays"] = j["relays"]
-            return self.send_json(200, {"ok": True, "message": "Saved. Sending it to the board; the Boards page shows when it is accepted."})
-        if p == "/api/v2/boards/firmware":
-            if not self.authed(): return
-            global board_fw
-            board_fw = dict(state="sending", version="5.1.0-beta.9", error="", percent=42, seconds=31) if j.get("source") != "cancel" else dict(state="failed", version="5.1.0-beta.9", error="cancelled", percent=0, seconds=0)
-            return self.send_json(200, {"ok": True, "message": "Sending the firmware; the board restarts when it has all of it"})
-        if p == "/api/v2/boards/command":
-            if not self.authed(): return
-            board_cmds.append(j)
-            return self.send_json(200, {"ok": True, "message": "Sending the settings again" if j.get("cmd") == "resend" else "Sent"})
-        if p == "/api/v2/boards/rename":
-            if not self.authed(): return
-            board_names[j["id"]] = j["name"]
-            return self.send_json(200, {"ok": True, "message": "Renamed"})
-        if p == "/api/v2/boards/relay":
-            if not self.authed(): return
-            rl = board_shares[j["id"]]["relays"][j["index"]]
-            board_relay[rl["id"]] = bool(j["on"])
-            return self.send_json(200, {"ok": True, "message": "Sent"})
-        if p == "/api/v2/crash/clear":
-            if not self.authed(): return
-            return self.send_json(200, {"ok": True, "message": "Crash report cleared"})
-        if p == "/api/v2/wifi/search":
-            if not self.authed(): return
-            return self.send_json(200, {"ok": True, "message": "Searching for networks"})
-        if p == "/api/onewire/scan": return self.send_json(202, {"ok": True, "message": "Scanning"})
-        if not self.authed(): return
-        with lock:
-            if p == "/api/config/sensors":
-                ids = [s["id"] for s in j]
-                if len(set(ids)) != len(ids): return self.send_json(400, {"ok": False, "message": "Duplicate id"})
-                cfg["sensors"] = j; rev += 1
-                for s in j: history.setdefault(s["id"], [])
-                return self.send_json(200, {"ok": True, "message": "Sensors saved"})
-            if p == "/api/config/relays":
-                cfg["relays"] = j; rev += 1
-                for r in j: relay_state.setdefault(r["id"], dict(on=False, out=False, blinkMs=r["blinkMs"]))
-                return self.send_json(200, {"ok": True, "message": "Relays saved"})
-            if p == "/api/config/system":
-                for k, v in j.items():
-                    if k.endswith("Pass") and not v: continue
-                    cfg["system"][k] = v
-                rev += 1
-                return self.send_json(200, {"ok": True, "message": "System settings saved"})
-            if p in ("/api/config/turbo", "/api/config/layout"):
-                k = p.rsplit("/", 1)[1]; cfg[k] = j; rev += 1
-                return self.send_json(200, {"ok": True, "message": ("Turbo timer" if k == "turbo" else "Layout") + " saved"})
-            if p == "/api/blackbox/clear":
-                return self.send_json(200, {"ok": True, "message": "Recordings deleted"})
-            if p in ("/api/config/weather", "/api/config/cloud"):
-                k = p.rsplit("/", 1)[1]
-                for kk, v in j.items():
-                    if kk in ("zbxPsk", "influxAuth") and not v: continue
-                    cfg[k][kk] = v
-                rev += 1
-                return self.send_json(200, {"ok": True, "message": k.title() + " settings saved"})
-            if p == "/api/v2/board":
-                cfg["system"]["board"] = (j or {}).get("board", "auto"); rev += 1
-                return self.send_json(200, {"ok": True, "message": "Board saved"})
-            if p == "/api/v2/config/restore":
-                return self.send_json(200, {"ok": True, "message": "Restored the previous configuration"})
-            if p == "/api/v2/safemode/leave":
-                return self.send_json(200, {"ok": True, "message": "Leaving safe mode. Rebooting...", "reboot": True})
-            if p == "/api/altitude/calibrate":
-                return self.send_json(200, {"ok": True, "message": "Sea-level reference set to 1014.9 hPa"})
-            if p in ("/api/cloud/flush", "/api/cloud/clear"):
-                return self.send_json(200, {"ok": True, "message": "ok"})
-            if p == "/api/relays/control":
-                rs = relay_state[j["id"]]
-                if "on" in j: rs["on"] = rs["out"] = j["on"]
-                if "blinkMs" in j: rs["blinkMs"] = j["blinkMs"]
-                return self.send_json(200, {"ok": True, "message": "ok"})
-            if p == "/api/update":
-                return self.send_json(200, {"ok": True, "message": "Update installed. Rebooting...", "reboot": True})
-            if p in ("/api/reboot", "/api/config/reset", "/api/config/import"):
-                return self.send_json(200, {"ok": True, "message": "ok"})
-        self.send_json(404, {"ok": False, "message": "Not found"})
-
-ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+if __name__ == '__main__':
+    ThreadingHTTPServer.daemon_threads = True
+    print(f'mock board on http://127.0.0.1:{PORT}/', flush=True)
+    ThreadingHTTPServer(('127.0.0.1', PORT), H).serve_forever()

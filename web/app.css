@@ -149,3 +149,43 @@ body.dash { overflow: hidden; height: 100vh; height: 100dvh; }
 .mini { width: 160px; height: 36px; color: var(--accent); }
 .netrow { display: grid; grid-template-columns: 2fr 2fr 90px auto; gap: 6px; margin-bottom: 6px; }
 @media (max-width: 560px) { .netrow { grid-template-columns: 1fr 1fr; } }
+
+/* ---- 5.3 single-page app */
+#toast { opacity: 0; pointer-events: none; transition: opacity .2s; }
+#toast.show { opacity: 1; } #toast.bad { border-color: var(--crit); color: #ffd6d6; }
+.seg { display: flex; gap: 2px; margin: 0 0 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 3px; width: fit-content; max-width: 100%; overflow-x: auto; }
+.seg a { color: var(--muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; white-space: nowrap; }
+.seg a.active { color: var(--text); background: var(--panel2); }
+.tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.tiles .tile { display: flex; flex-direction: column; align-items: center; cursor: pointer; min-height: 0; }
+.tiles .tile.size2 { grid-column: span 2; }
+.tiles .tname { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.tiles .tval { margin-top: -18px; }
+.tiles .w-number .tval, .tiles .w-spark .tval { margin-top: 8px; }
+.tiles .tile .num { font-size: 26px; } .tiles .w-number .num { font-size: 40px; }
+.dial { width: 100%; max-width: 170px; display: block; }
+.dial path { fill: none; stroke-width: 9; }
+.dial .track { stroke: var(--panel2); } .dial .zw { stroke: var(--warn); } .dial .zc { stroke: var(--crit); }
+.dial .needle { stroke: var(--text); stroke-width: 3; stroke-linecap: round; transition: transform .5s; }
+.dial .hub { fill: var(--text); }
+.tile.lvl-warn { border-color: var(--warn); } .tile.lvl-crit { border-color: var(--crit); background: #2a1215; animation: blink .8s steps(2) infinite; }
+.tile.lvl-fault { border-color: var(--fault); }
+canvas.spark { width: 100%; height: 50px; } canvas.chart { width: 100%; height: auto; display: block; }
+.turbo { background: var(--warn); color: #000; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; font-weight: 600; }
+.weather .wrow { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; } .weather .wtemp { font-size: 20px; font-weight: 700; }
+.list-item .grow { flex: 1; min-width: 0; } .list-item .val { font-weight: 700; min-width: 70px; text-align: right; }
+.list-item.warn .val { color: var(--warn); } .list-item.crit .val { color: var(--crit); } .list-item.fault .val { color: var(--fault); }
+.list-item input[type=range] { width: 120px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; } .chip { background: var(--panel2); }
+.chip.warn { background: var(--warn); color: #000; } .chip.crit { background: var(--crit); color: #fff; } .chip.fault { background: var(--fault); color: #000; }
+button.on { background: var(--ok); border-color: var(--ok); color: #002010; font-weight: 600; }
+.bad { color: var(--crit); }
+.board.off { opacity: .75; }
+.modal { position: fixed; inset: 0; background: #000a; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal .panel { max-width: 460px; width: 100%; }
+table.kv th { width: 34%; vertical-align: top; } pre { white-space: pre-wrap; word-break: break-all; background: #0e1520; padding: 8px; border-radius: 6px; }
+details summary { cursor: pointer; margin: 6px 0; }
+label.btn { display: inline-block; color: var(--text); font-size: 15px; margin: 0; }
+.banner.crit a { color: #fff; }
+@media (max-width: 560px) { .tiles { grid-template-columns: repeat(2, 1fr); } .tiles .tile.size2 { grid-column: span 2; } header .brand #machine { display: none; } }
+table.kv { display: table; } table.kv tr { display: table-row; } table.kv th, table.kv td { display: table-cell; }

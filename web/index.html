@@ -10,11 +10,26 @@
   <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="app.css">
   <script src="app.js"></script>
-</head>
-<body class="dash">
-  <div id="turbo" class="turbo hidden"></div>
-  <div id="tiles"></div>
-  <p id="empty" class="muted hidden" style="padding:16px">No enabled sensors. Add some on the <a href="settings.html">Sensors</a> page.</p>
+  <script src="schema.js"></script>
   <script src="dashboard.js"></script>
+  <script src="lists.js"></script>
+  <script src="boards.js"></script>
+  <script src="system.js"></script>
+  <script src="layout.js"></script>
+  <script src="towns.js"></script>
+</head>
+<body>
+  <header>
+    <span class="brand"><span id="brand">CarMetrics</span> <span id="machine" class="muted"></span></span>
+    <nav>
+      <a id="tab-dashboard" href="#dashboard">Dashboard</a><a id="tab-sensors" href="#sensors">Sensors</a><a id="tab-actuators" href="#actuators">Actuators</a><a id="tab-boards" href="#boards">Boards</a><a id="tab-system" href="#system">System</a>
+    </nav>
+    <span id="level" class="pill">--</span>
+    <button id="mute" class="small hidden">Mute</button>
+    <span id="conn" class="pill">connecting</span>
+  </header>
+  <div id="safe" class="banner crit hidden">Safe mode: the board restarted after crashes, outputs are off. See <a href="#system/status">System → Status</a>.</div>
+  <main id="main"></main>
+  <div id="toast"></div>
 </body>
 </html>

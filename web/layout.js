@@ -2,7 +2,32 @@
 // Layout editor: dashboard tiles and the OLED screen (order, labels, styles,
 // thresholds) with a live preview drawn the way the firmware draws it.
 (() => {
-  const { $, h, api, toast, live } = CM;
+  const { $, h, toast, live } = CM;
+  const MARKUP = `
+    <div class="panel">
+      <div class="row"><h3 style="margin:0">Dashboard tiles</h3><span class="spacer"></span>
+        <button id="tAuto" class="small">Automatic</button></div>
+      <p class="muted small">Which sensors show on the Gauges view, their order, width and style (Dial, Number or Trend). "Automatic" shows every enabled sensor in the Sensors order.</p>
+      <div id="tList"></div>
+      <div class="row" style="margin-top:8px"><select id="tAdd" style="width:auto"></select><button id="tAddBtn" class="small">Add tile</button></div>
+    </div>
+    <div class="panel" id="oledPanel">
+      <div class="row"><h3 style="margin:0">OLED screen</h3><span class="spacer"></span>
+        <label class="small" style="margin:0">Values per text line</label>
+        <select id="oCols" style="width:auto"><option value="0">Automatic</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+        <button id="oAbbr" class="small" title="CLT coolant, IT intake, GBT gearbox, TCT transfer case, CT cabin, EGT, BST boost, OIL">Suggested labels</button>
+        <button id="oAuto" class="small">Automatic order</button></div>
+      <p class="muted small">What shows on the OLED, in which order and style. <b>Label</b>: up to 3 characters. <b>Text</b> values share a line; <b>Bar</b> and <b>Marker</b>
+        get a line each, with ticks at the thresholds: drag the sliders to set them. Pages that don't fit split automatically and rotate.</p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:1;min-width:280px"><div id="oList"></div>
+          <div class="row" style="margin-top:8px"><select id="oAdd" style="width:auto"></select><button id="oAddBtn" class="small">Add</button>
+            <button id="oBreak" class="small">Add page break</button></div></div>
+        <div><div class="muted small" style="margin-bottom:4px">Preview (live values)</div><div id="oPreview" style="display:flex;gap:8px;flex-wrap:wrap"></div></div>
+      </div>
+    </div>
+    <div class="row"><button id="save" class="primary">Save layout</button><a class="btn" href="#dashboard/gauges">Back to gauges</a><a class="btn" href="#system/hardware">OLED type &amp; contrast</a>
+      <span id="dirty" class="pill warn hidden">unsaved changes</span></div>`;
   let sensors = [], tiles = [], oled = [], cols = 0, autoOrder = true, oledType = 'ssd1327_128x128', saved = '', savedSensors = '';
   let values = {};   // live values by sensor id
 
@@ -57,7 +82,7 @@
     tl.replaceChildren(...(tiles.length ? tiles.map((t, i) => h('div', { class: 'lay-row' },
       h('span', { class: 'name' }, name(t.id)),
       sel(t.size, [[1, 'Normal'], [2, 'Wide']], v => { t.size = +v; }),
-      sel(t.widget, [['bar', 'Value + bar'], ['number', 'Value only'], ['spark', 'Value + trend line']], v => { t.widget = v; }),
+      sel(t.widget, [['bar', 'Dial'], ['number', 'Value only'], ['spark', 'Value + trend line']], v => { t.widget = v; }),
       ...arrows(tiles, i))) : [h('p', { class: 'muted' }, 'Automatic: every enabled sensor.')]));
     const used = new Set(tiles.map(t => t.id));
     $('#tAdd').replaceChildren(...sensors.filter(s => s.enabled && !used.has(s.id)).map(s => h('option', { value: s.id }, s.name)));
@@ -135,7 +160,7 @@
   }
 
   async function load() {
-    const cfg = await api('/api/config');
+    const cfg = await CM.get('/settings');
     sensors = cfg.sensors;
     oledType = (cfg.system && cfg.system.oledType) || oledType;
     tiles = (cfg.layout && cfg.layout.tiles) || [];
@@ -148,13 +173,14 @@
 
   async function save() {
     try {
-      if (sensorSnap() !== savedSensors) await api('/api/config/sensors', { body: sensors });   // labels, styles, thresholds
-      const r = await api('/api/config/layout', { body: { tiles, oled: autoOrder ? [] : oled, oledColumns: cols } });
+      if (sensorSnap() !== savedSensors) await CM.patch('/settings/sensors', sensors);   // labels, styles, thresholds
+      const r = await CM.patch('/settings/layout', { tiles, oled: autoOrder ? [] : oled, oledColumns: cols });
       toast(r.message); saved = snapshot(); savedSensors = sensorSnap(); dirty();
     } catch (e) { toast(e.message, true, 6000); }
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
+  CM.layoutEditor = main => {
+    main.innerHTML = MARKUP;
     $('#tAuto').onclick = () => { tiles = []; render(); };
     $('#oAuto').onclick = () => { autoOrder = true; render(); };
     $('#oAbbr').onclick = () => {   // the short names used in the car
@@ -181,10 +207,10 @@
     $('#oBreak').onclick = () => { autoOrder = false; oled.push('|'); render(); };
     $('#save').onclick = save;
     load().catch(e => toast(e.message, true));
-    live(st => {   // live values for the preview
-      if (!st || !st.sensors) return;
-      for (const [id, v] of Object.entries(st.sensors)) values[id] = v.v;
-      if (document.activeElement?.type !== 'range') drawPreview();
-    });
+  };
+  live(st => {   // live values for the preview
+    if (!st || !st.sensors) return;
+    for (const [id, v] of Object.entries(st.sensors)) values[id] = v.v;
+    if ($('#oPreview') && document.activeElement?.type !== 'range') drawPreview();
   });
 })();

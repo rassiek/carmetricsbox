@@ -1,0 +1,19 @@
+{
+ "ui": {
+  "appName": "FarmMetrics",
+  "machineName": "Generator",
+  "pages": {
+   "dashboard": "Overview",
+   "sensors": "Sensors",
+   "actuators": "Pumps",
+   "boards": "Boards",
+   "system": "System"
+  },
+  "runningWord": "generator",
+  "units": {
+   "temperature": "C",
+   "pressure": "bar",
+   "speed": ""
+  }
+ }
+}

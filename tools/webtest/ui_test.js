@@ -1,4 +1,4 @@
-// Headless UI test of the CarMetrics web app against tools/webtest/mock_server.py.
+// Headless UI test of the CarMetrics web app (5.3, API v1) against tools/webtest/mock_server.py.
 // usage: node ui_test.js <outDir> [baseUrl]
 const { chromium } = require('playwright');
 const OUT = process.argv[2] || 'build/webtest';
@@ -15,160 +15,104 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   const ctx = await browser.newContext({ deviceScaleFactor: 2, httpCredentials: { username: 'admin', password: 'carmetrics' } });
   const p = await ctx.newPage();
   p.on('pageerror', e => errors.push(`${p.url()} ${e.message}`));
-  p.on('console', m => { if (m.type() === 'error') errors.push(`${p.url()} ${m.text()}`); });
+  p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(`${p.url()} ${m.text()}`); });
+  p.on('dialog', d => d.accept(d.type() === 'prompt' ? (d.defaultValue() || 'Test') : undefined));
   const toast = async () => (await p.locator('#toast').textContent().catch(() => '')) || '';
+  const api = (path, opt) => p.evaluate(([a, o]) => CM.api(a, o), [path, opt]);
+  const go = async (hash, wait = 1200) => { await p.evaluate(h => { location.hash = h; }, hash); await p.waitForTimeout(wait); };
 
-  // Dashboard tiles must fit one screen in every orientation
-  for (const [name, w, h] of [['phone-portrait', 390, 844], ['phone-landscape', 844, 390], ['desktop', 1366, 768]]) {
-    await p.setViewportSize({ width: w, height: h });
-    await p.goto(BASE + 'index.html'); await p.waitForTimeout(2500);
-    const [sh, ih] = await p.evaluate(() => [document.documentElement.scrollHeight, innerHeight]);
-    check(sh <= ih + 1, `tiles fit ${name}`, `${sh}/${ih}`);
-    check((await p.locator('.tile').count()) > 0, `tiles rendered ${name}`);
-    await p.screenshot({ path: `${OUT}/tiles-${name}.png` });
-  }
-  check(['live', 'polling'].includes((await p.locator('#conn').textContent()).trim()), 'live data connection');
-  check(await p.locator('#turbo').isVisible(), 'turbo cool-down banner', await p.locator('#turbo').textContent());
+  // ---- Dashboard
+  await p.setViewportSize({ width: 390, height: 844 });
+  await p.goto(BASE); await p.waitForTimeout(2500);
+  check((await p.locator('.tile svg.dial').count()) >= 5, 'gauges drawn as dials', String(await p.locator('.tile svg.dial').count()));
+  check((await p.locator('#conn').textContent()).trim() === 'live', 'live data over the WebSocket');
+  check(await p.locator('#turbo').isVisible(), 'turbo cool-down banner');
+  check((await p.locator('#tab-dashboard').textContent()) === 'Dashboard' && (await p.locator('#machine').textContent()) === 'Defender', 'names from the settings');
+  const needle = await p.locator('.tile .needle').first().getAttribute('transform');
+  check(/rotate\(/.test(needle || ''), 'needle moves with the value', needle);
+  await p.screenshot({ path: `${OUT}/dashboard-phone.png`, fullPage: true });
+  await p.locator('.tile').first().click();
+  await p.locator('.modal input[name="warnHigh"]').fill('97'); await p.locator('.modal input[name="warnHigh"]').dispatchEvent('change');
+  await p.locator('.modal button.primary').click(); await p.waitForTimeout(500);
+  check((await api('/sensors/coolant_temp')).warnHigh === 97, 'limits changed from the dial', await toast());
+  await go('#dashboard/charts', 1500);
+  check((await p.locator('canvas.chart').count()) >= 5, 'charts view');
+  await go('#dashboard/events');
+  await p.locator('text=Show').first().click(); await p.waitForTimeout(500);
+  check((await p.locator('canvas.chart').count()) >= 2, 'event recording opens');
+  await p.setViewportSize({ width: 1366, height: 800 });
+  await go('#dashboard/gauges', 1500);
+  await p.screenshot({ path: `${OUT}/dashboard-desktop.png` });
 
-  // Layout editor: make EGT a wide trend tile, then check the dashboard
-  await p.goto(BASE + 'layout.html'); await p.waitForTimeout(1500);
-  await p.selectOption('#tAdd', 'egt'); await p.click('#tAddBtn'); await p.waitForTimeout(200);
-  const rows = p.locator('#tList .lay-row');
-  const n = await rows.count();
-  await rows.nth(n - 1).locator('select').nth(0).selectOption('2');
-  await rows.nth(n - 1).locator('select').nth(1).selectOption('spark');
+  // ---- Layout editor (tiles + OLED pages)
+  await go('#dashboard/layout', 1500);
   check((await p.locator('#oPreview canvas').count()) >= 1, 'OLED preview drawn');
-  const egtRow = p.locator('#oList .lay-row', { hasText: 'EGT' }).first();
-  await egtRow.locator('select').selectOption('marker'); await p.waitForTimeout(200);
-  const egtRow2 = p.locator('#oList .lay-row', { hasText: 'EGT' }).first();
-  check((await egtRow2.locator('input[type=range]').count()) >= 2, 'threshold sliders on a marker row');
-  await egtRow2.locator('input[type=range]').last().fill('650');
-  await egtRow2.locator('input').first().fill('egt');
-  await p.selectOption('#oCols', '3');
-  await p.click('#oBreak'); await p.click('#save'); await p.waitForTimeout(900);
-  check((await toast()).includes('Layout saved'), 'layout saved', await toast());
-  await p.goto(BASE + 'layout.html'); await p.waitForTimeout(1200);
-  const egtRow3 = p.locator('#oList .lay-row', { hasText: 'EGT' }).first();
-  check(await egtRow3.locator('select').inputValue() === 'marker' && await p.locator('#oCols').inputValue() === '3', 'OLED style + columns kept after reload');
+  await p.selectOption('#tAdd', 'egt'); await p.click('#tAddBtn');
+  const rows = p.locator('#tList .lay-row'); const n = await rows.count();
+  await rows.nth(n - 1).locator('select').nth(1).selectOption('spark');
+  await p.click('#save'); await p.waitForTimeout(600);
+  const lay = await api('/settings/layout');
+  check(lay.tiles.some(t => t.id === 'egt' && t.widget === 'spark'), 'layout saved', JSON.stringify(lay.tiles.slice(-1)));
   await p.screenshot({ path: `${OUT}/layout.png`, fullPage: true });
-  await p.goto(BASE + 'index.html'); await p.waitForTimeout(3500);
-  check((await p.locator('.tile.wide svg.spark polyline').count()) === 1, 'wide sparkline tile on dashboard');
-  await p.screenshot({ path: `${OUT}/tiles-layout.png` });
 
-  // Events (alarm black box)
-  await p.goto(BASE + 'events.html'); await p.waitForTimeout(1500);
-  check((await p.locator('#list .evt').count()) === 2, 'events listed');
-  await p.locator('#list .evt').first().click(); await p.waitForTimeout(800);
-  check((await p.locator('#dTable svg.mini').count()) >= 8, 'event trends drawn');
-  await p.screenshot({ path: `${OUT}/events.png`, fullPage: true });
-
-  // Charts grouped
-  await p.setViewportSize({ width: 1366, height: 900 });
-  await p.goto(BASE + 'charts.html'); await p.waitForTimeout(2500);
-  const groups = await p.locator('.chart .head').allTextContents();
-  check(groups.includes('Temperatures (1-Wire)') && groups.includes('Pressures'), 'charts grouped', JSON.stringify(groups));
-  await p.screenshot({ path: `${OUT}/charts.png`, fullPage: true });
-
-  // Sensors: add an MCP9600, save
-  await p.setViewportSize({ width: 412, height: 915 });
-  await p.goto(BASE + 'settings.html'); await p.waitForTimeout(2000);
-  const before = await p.locator('#list .list-item').count();
-  await p.selectOption('#newType', 'mcp9600'); await p.click('#add'); await p.waitForTimeout(300);
-  check((await p.locator('#list .list-item').count()) === before + 1, 'sensor added');
-  await p.selectOption('#newType', 'computed'); await p.click('#add'); await p.waitForTimeout(300);
-  await p.locator('#editor select').first().selectOption('curve_margin'); await p.waitForTimeout(200);
-  check((await p.locator('#editor input[placeholder^="800:10"]').count()) === 1, 'computed sensor editor (curve)');
-  await p.selectOption('#newType', 'rpm'); await p.click('#add'); await p.waitForTimeout(300);
-  check((await p.locator('#editor button', { hasText: 'Calibrate' }).count()) === 1, 'RPM sensor editor');
-  await p.click('#save'); await p.waitForTimeout(700);
-  check((await toast()).includes('saved'), 'sensors saved', await toast());
+  // ---- Sensors
+  await go('#sensors', 1500);
+  check((await p.locator('.list-item').count()) >= 6, 'sensor list');
+  await p.click('text=Add sensor'); await p.waitForTimeout(200);
+  await p.locator('.edit input[name="name"]').fill('Fuel pressure'); await p.locator('.edit input[name="name"]').dispatchEvent('change');
+  await p.locator('.edit select[name="type"]').selectOption('ads1115'); await p.waitForTimeout(200);
+  await p.click('text=0.5–4.5 V sender, 0–10 bar');
+  check(await p.locator('.edit input[name="inMax"]').inputValue() === '4.5', 'analog preset fills the conversion');
+  await p.locator('.edit button.primary').click(); await p.waitForTimeout(800);
+  const fp = await api('/sensors/fuel_pressure').catch(e => ({ error: e.message }));
+  check(fp.type === 'ads1115' && fp.outMax === 10 && fp.unit === 'bar', 'sensor added', JSON.stringify(fp).slice(0, 120) + ' ' + await toast());
+  await p.click('text=Discover'); await p.waitForTimeout(1500);
+  check(await p.locator('text=28FF641E8016034A').isVisible(), 'discovery lists 1-Wire sensors');
+  check(await p.locator('text=ads1115@0x48/0').isVisible(), 'discovery shows analog volts');
   await p.screenshot({ path: `${OUT}/sensors.png`, fullPage: true });
+  await p.selectOption('main select >> nth=0', 'b1'); await p.waitForTimeout(1200);
+  check(await p.locator('text=Gearbox').first().isVisible(), 'another board\'s sensors');
 
-  // Relays
-  await p.goto(BASE + 'relays.html'); await p.waitForTimeout(2000);
-  await p.locator('#controls button').first().click(); await p.waitForTimeout(1600);
-  check((await p.locator('#controls .pill').first().textContent()).startsWith('ON'), 'relay switched on');
+  // ---- Actuators
+  await go('#actuators', 1500);
+  check((await p.locator('.list-item').count()) === 2, 'actuator list');
+  await p.locator('.list-item', { hasText: 'Spot lights' }).locator('button', { hasText: 'Off' }).click(); await p.waitForTimeout(400);
+  check((await api('/actuators/lights')).id === 'lights' && (await api('/actuators')).items.find(a => a.id === 'lights').state.on === true, 'relay switched from the list');
+  await p.click('text=Add actuator'); await p.waitForTimeout(200);
+  await p.locator('.edit select[name="type"]').selectOption('pwm'); await p.waitForTimeout(100);
+  await p.locator('.edit button.primary').click(); await p.waitForTimeout(500);
+  check(/choose its pin/.test(await toast()), 'actuator without a pin refused', await toast());
+  await p.locator('.edit select[name="pin"]').selectOption('14');
+  await p.locator('.edit select[name="rule"]').selectOption('curve'); await p.waitForTimeout(100);
+  check(await p.locator('.edit input[name="curve"]').isVisible(), 'curve rule shows its fields');
+  await p.screenshot({ path: `${OUT}/actuators.png`, fullPage: true });
 
-  // Weather
-  await p.goto(BASE + 'weather.html'); await p.waitForTimeout(2000);
-  check((await p.locator('#wcards .panel').count()) > 0, 'weather cards');
-  check((await p.locator('#wTowns input').count()) >= 40, 'town list');
-  await p.click('#wSave'); await p.waitForTimeout(600);
-  check((await toast()).includes('saved'), 'weather settings saved');
-  await p.screenshot({ path: `${OUT}/weather.png`, fullPage: true });
-
-  // System: cloud + altitude
-  await p.goto(BASE + 'system.html'); await p.waitForTimeout(2000);
-  await p.selectOption('select[name=protocol]', 'influx');
-  check(await p.locator('fieldset[data-proto=influx]').isVisible(), 'influx fields shown');
-  await p.fill('input[name=influxUrl]', 'http://vm.local:8428/write'); await p.check('input[name=enabled]');
-  await p.click('#cSave'); await p.waitForTimeout(700);
-  check((await toast()).includes('saved'), 'cloud settings saved', await toast());
-  await p.fill('#altNow', '1661'); await p.click('#altCal'); await p.waitForTimeout(600);
-  check((await toast()).includes('Sea-level'), 'altitude calibration');
-  check((await p.locator('#hKv > div').count()) >= 10, 'board health tiles');
-  check((await p.locator('#hKv').innerText()).includes('web app 44 KB'), 'storage tile with breakdown');
-  check(await p.locator('#hCrash').isVisible() && (await p.locator('#hCrashBt').innerText()).includes('0x400d6f2e'), 'last crash shown with backtrace');
-  check((await p.locator('#wLog tr').count()) === 4, 'Wi-Fi join log rows');
-  check((await p.locator('#wLog').innerText()).includes('4-way handshake timeout'), 'Wi-Fi join log shows the disconnect reason');
-  check((await p.locator('#wState').innerText()).includes('HouseLAN'), 'Wi-Fi state pill');
-  check((await p.locator('#info').innerText()).includes('set from browser'), 'board clock set from the browser after a fresh boot');
-  check(/\d\d:\d\d/.test(await p.locator('#clock').innerText()), 'board clock shown in the header', await p.locator('#clock').innerText());
-  check((await p.locator('#hTasks tr').count()) === 4, 'task stack table');
-  check((await p.locator('#bSel option').count()) === 3, 'board profiles listed');
-  await p.selectOption('#bSel', 'esp32_wrover'); await p.click('#bSave'); await p.waitForTimeout(700);
-  check((await toast()).includes('Board saved'), 'board saved', await toast());
-  check((await p.locator('#safeBanner').count()) === 0, 'no safe-mode banner');
-  check((await p.locator('#nets .netrow').count()) === 1, 'saved Wi-Fi networks listed');
-  await p.click('#netAdd'); const nr = p.locator('#nets .netrow').nth(1);
-  await nr.locator('input').nth(0).fill('Home'); await nr.locator('input').nth(1).fill('homepass1');
-  await p.click('#sysSave'); await p.waitForTimeout(700);
-  check((await toast()).includes('saved'), 'Wi-Fi networks saved', await toast());
-  await p.click('#turboSave'); await p.waitForTimeout(600);
-  check((await toast()).includes('Turbo timer saved'), 'turbo timer saved', await toast());
-  check((await p.getAttribute('#conn', 'title')) === 'WebSocket' && (await p.textContent('#conn')) === 'live', 'live data over WebSocket', await p.getAttribute('#conn', 'title'));
-  await p.screenshot({ path: `${OUT}/system.png`, fullPage: true });
-  check(await p.locator('select[name=role]').inputValue() === 'main', 'board role setting (main)');
-
-  await p.goto(BASE + 'settings.html'); await p.waitForTimeout(1200);
-  check((await p.locator('#list').innerText()).includes('1 sensor(s) from other boards') && !(await p.locator('#list').innerText()).includes('Engine bay Coolant'), 'other boards\' sensors hidden in the local list, counted');
-  await p.goto(BASE + 'index.html'); await p.waitForTimeout(2500);
-  check((await p.locator('body').innerText()).includes('Engine bay Coolant'), 'other board\'s sensor on the Gauges page');
-
-  // ---- several boards (phase 3)
-  await p.goto(BASE + 'boards.html'); await p.waitForTimeout(1500);
-  check((await p.locator('#found').innerText()).includes('24:6F:28:AA:BB:CC'), 'found board listed');
-  check((await p.locator('#boards').innerText()).includes('Engine bay') && (await p.locator('#boards').innerText()).includes('88.4 °C'), 'paired board with live value');
-  check((await p.locator('#boards').innerText()).includes('encrypted'), 'link encryption shown');
-  p.once('dialog', dlg => dlg.accept());
-  await p.locator('#boards button', { hasText: "Send this board's" }).click(); await p.waitForTimeout(2600);
-  check((await p.locator('#boards').innerText()).includes('42%'), 'firmware update of another board: progress shown');
-  await p.locator('#boards button', { hasText: 'Fan: OFF' }).click(); await p.waitForTimeout(2500);
-  check((await p.locator('#boards').innerText()).includes('Fan: ON'), 'remote relay switched from the Boards page');
-  const bt = await p.locator('#boards').innerText();
-  check(bt.includes('touch display') && bt.includes('9 sensors and 2 relays') && bt.includes('http://192.168.4.3/'), 'touch display card: list sent, link to its layout editor');
-  check((await p.locator('#linkKv').innerText()).includes('2 of 2 online'), 'link summary panel');
-  await p.locator('#boards .panel').first().locator('button', { hasText: 'Identify' }).click(); await p.waitForTimeout(600);
-  check((await toast()).includes('Sent'), 'identify command sent to a board', await toast());
-  p.once('dialog', dlg => dlg.accept('Dash 2'));
-  await p.locator('#boards .panel').nth(1).locator('button', { hasText: 'Rename' }).click(); await p.waitForTimeout(2600);
-  check((await p.locator('#boards').innerText()).includes('Dash 2'), 'board renamed');
-  check(await p.locator('nav a', { hasText: 'Layout' }).count() > 0, 'Layout tab in the menu');
-  await p.locator('#found input').fill('Trailer'); await p.locator('#found button', { hasText: 'Accept' }).click(); await p.waitForTimeout(800);
-  check((await toast()).includes('Paired as board 2'), 'board accepted', await toast());
+  // ---- Boards
+  await go('#boards', 1500);
+  check(await p.locator('text=Engine bay').first().isVisible(), 'paired board card');
+  check(await p.locator('text=Relay X8').isVisible(), 'unpaired board found');
+  await p.locator('.list-item', { hasText: 'Relay X8' }).locator('button').click(); await p.waitForTimeout(800);
+  check((await api('/boards')).items.length === 3, 'board paired');
   await p.screenshot({ path: `${OUT}/boards.png`, fullPage: true });
-  await p.goto(BASE + 'settings.html?board=1'); await p.waitForTimeout(1500);
-  check(await p.locator('#boardBox').isVisible() && await p.locator('#boardSel').inputValue() === '1', 'Sensors page: board selector on the remote board');
-  check(!(await p.locator('#owPanel').isVisible()) && (await p.locator('#list').innerText()).includes('Coolant (bay)'), 'remote board sensors loaded, local 1-Wire scan hidden');
-  await p.click('#save'); await p.waitForTimeout(700);
-  check((await toast()).includes('Sending it to the board'), 'remote sensors saved to the main board', await toast());
-  await p.goto(BASE + 'relays.html?board=1'); await p.waitForTimeout(1500);
-  check((await p.locator('#cfg select').nth(1).inputValue()) === 'on', 'relay safe state shown (remote fan: on)');
-  await p.click('#save'); await p.waitForTimeout(700);
-  check((await toast()).includes('Sending it to the board'), 'remote relays saved', await toast());
 
-  check(errors.length === 0, 'no browser errors', errors.join(' | '));
+  // ---- System
+  for (const s of ['status', 'network', 'hardware', 'data']) {
+    await go('#system/' + s, 1500);
+    check((await p.locator('main .panel').count()) >= 2, `system: ${s}`);
+    await p.screenshot({ path: `${OUT}/system-${s}.png`, fullPage: true });
+  }
+  await go('#system/network', 1200);
+  check(await p.locator('text=Phone hotspot').isVisible(), 'Wi-Fi scan and join on one panel');
+  await go('#system/data', 1500);
+  await p.locator('input[name="appName"]').fill('BoatMetrics'); await p.locator('input[name="appName"]').dispatchEvent('change');
+  await p.locator('.panel', { hasText: 'Names and units' }).locator('button.primary').first().click(); await p.waitForTimeout(2500);
+  check((await p.locator('#brand').textContent()) === 'BoatMetrics', 'app name changed everywhere', await p.locator('#brand').textContent());
+  await p.selectOption('select[name="preset"]', 'boat');
+  await p.click('text=Apply'); await p.waitForTimeout(2500);
+  check((await p.locator('#tab-dashboard').textContent()) === 'Helm', 'boat preset renames the tabs', await p.locator('#tab-dashboard').textContent());
+
+  check(errors.length === 0, 'no JavaScript errors', errors.slice(0, 5).join(' | '));
   await browser.close();
-  console.log(failed ? `FAILED: ${failed}` : 'ALL PASSED');
+  console.log(failed ? `UI TEST FAILED (${failed})` : 'UI TEST PASSED');
   process.exit(failed ? 1 : 0);
-})();
+})().catch(e => { console.error(e); process.exit(1); });

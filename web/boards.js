@@ -1,165 +1,75 @@
 'use strict';
+// Boards tab: other boards (workers, displays): pair, rename, commands, firmware, live values.
 (() => {
-  const { $, h, api, toast } = CM;
-  const dur = s => s < 90 ? s + ' s' : s < 5400 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
-  const sig = r => r ? `${r} dBm` : '–';
-  const fmt = (v, d) => v === null || v === undefined ? '–' : Number(v).toFixed(d);
-  const lvlCls = { ok: 'ok', warn: 'warn', crit: 'crit', fault: 'fault' };
-  let names = {};   // found boards: name typed so far (kept across refreshes)
+  const { h, api, get, patch, del, toast, act, err, S, fmt, page } = CM;
+  let timer = null, el = null, openFw = null;
 
-  async function accept(mac) {
-    try { toast((await api('/api/v2/boards/accept', { body: { mac, name: names[mac] || '' } })).message, false, 6000); load(); }
-    catch (e) { toast(e.message, true, 6000); }
-  }
-  async function forget(b) {
-    if (!confirm(`Forget "${b.name}"? It goes back to unpaired and loses the settings sent to it.`)) return;
-    try { toast((await api('/api/v2/boards/forget', { body: { id: b.id } })).message); load(); } catch (e) { toast(e.message, true); }
-  }
-  async function firmware(b, source) {
-    try { toast((await api('/api/v2/boards/firmware', { body: { id: b.id, source } })).message, false, 6000); setTimeout(load, 800); }
-    catch (e) { toast(e.message, true, 8000); }
-  }
-  async function uploadFirmware(b, file) {
-    if (!file) return toast('Choose a carmetrics-...-firmware.bin file first', true);
-    if (/full-flash/i.test(file.name)) return toast('That is the full USB image; choose the ...-firmware.bin file', true, 8000);
-    const fd = new FormData(); fd.append('file', file, file.name);
-    toast('Uploading the file to this board…', false, 20000);
-    try {
-      const r = await fetch('/api/v2/boards/firmware/upload', { method: 'POST', body: fd });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.message || r.statusText);
-      await firmware(b, 'upload');
-    } catch (e) { toast(e.message, true, 8000); }
-  }
-  function fwBox(b, d) {
-    const f = b.fw;
-    const box = h('div', { class: 'small', style: 'margin-top:10px;border-top:1px solid var(--line);padding-top:8px' });
-    if (f && (f.state === 'offering' || f.state === 'sending')) {
-      box.append(h('div', { class: 'row', style: 'gap:8px' }, h('span', {}, `Updating to ${f.version}: ${f.state === 'offering' ? 'waiting for the board' : f.percent + '%'} (${f.seconds} s)`),
-        h('div', { class: 'progress', style: 'flex:1' }, h('div', { style: `width:${f.percent}%` })), h('button', { class: 'small', onclick: () => firmware(b, 'cancel') }, 'Cancel')));
-      return box;
-    }
-    if (f && f.state === 'done') box.append(h('p', { style: 'margin:0 0 6px;color:var(--ok)' }, `Firmware ${f.version} sent; the board restarts and shows its new version here.`));
-    if (f && f.state === 'failed') box.append(h('p', { style: 'margin:0 0 6px;color:var(--crit)' }, `Update failed: ${f.error}`));
-    const file = h('input', { type: 'file', accept: '.bin', style: 'max-width:240px' });
-    box.append(h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, h('b', {}, 'Firmware'),
-      b.sameChip ? h('button', { class: 'small', disabled: !b.online, onclick: () => { if (confirm(`Send this board's firmware (${d.firmware}) to "${b.name}"? It restarts when done.`)) firmware(b, 'self'); } }, `Send this board's (${d.firmware})`) : h('span', { class: 'muted' }, `${b.chip}: needs a file for its chip`),
-      file, h('button', { class: 'small', disabled: !b.online, onclick: () => uploadFirmware(b, file.files[0]) }, 'Send file')));
-    box.append(h('p', { class: 'muted', style: 'margin:4px 0 0' }, 'A file is stored in this board\'s spare firmware slot first (its own "previous firmware" for rollback is replaced). Sending takes about 1–3 minutes; sensors and alarms keep running.'));
-    return box;
-  }
-  async function boardCmd(b, cmd, extra = {}) {
-    try { toast((await api('/api/v2/boards/command', { body: Object.assign({ id: b.id, cmd }, extra) })).message); setTimeout(load, 800); }
-    catch (e) { toast(e.message, true); }
-  }
-  async function rename(b) {
-    const name = prompt(`New name for "${b.name}" (its sensors on this board are renamed too):`, b.name);
-    if (!name || name === b.name) return;
-    try { toast((await api('/api/v2/boards/rename', { body: { id: b.id, name } })).message); load(); } catch (e) { toast(e.message, true); }
-  }
-  function actions(b) {
-    return h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap;margin-top:8px' },
-      h('button', { class: 'small', disabled: !b.online, title: 'Short beep on the board (a display flashes its screen)', onclick: () => boardCmd(b, 'identify') }, 'Identify'),
-      b.role !== 'display' ? h('button', { class: 'small', disabled: !b.online, onclick: () => boardCmd(b, 'mute', { minutes: b.muted ? 0 : 15 }) }, b.muted ? 'Unmute' : 'Mute 15 min') : '',
-      h('button', { class: 'small', title: 'Send its settings again, even if it says it has them', onclick: () => boardCmd(b, 'resend') }, b.role === 'display' ? 'Resend list' : 'Resend settings'),
-      h('button', { class: 'small', onclick: () => rename(b) }, 'Rename'),
-      h('button', { class: 'small', disabled: !b.online, onclick: () => { if (confirm(`Restart "${b.name}"?`)) boardCmd(b, 'reboot'); } }, 'Restart'));
-  }
-  function linkLine(b) {
-    return `${b.role}, ${b.chip}, firmware ${b.firmware || '?'} · ${b.encrypted ? 'encrypted' : 'not encrypted'} · signal ${sig(b.rssi)} here, ${sig(b.rssiAtBoard)} there · ` +
-      `up ${dur(b.uptimeS)} · ${b.lossPct ?? 0}% lost (${b.lost} of ${b.received + b.lost})` + (b.online && b.ageS > 1 ? ` · last heard ${dur(b.ageS)} ago` : '');
-  }
-  function displayCard(b, d) {
-    const st = h('span', { class: 'pill ' + (b.online ? 'ok' : 'warn') }, b.online ? 'online' : (b.ageS < 0 ? 'not seen yet' : `offline ${dur(b.ageS)}`));
-    const x = b.display || {};
-    const where = x.ip ? h('span', {}, 'Its layout editor: ', h('a', { href: `http://${x.ip}/`, target: '_blank' }, `http://${x.ip}/`), ' (it is on this board\'s access point)')
-      : h('span', { class: 'muted' }, 'Its layout editor: connect to the display\'s own access point (CarMetrics-Display-…) and open http://192.168.4.1/, or let it join this board\'s access point (display Settings → Wi-Fi).');
-    return h('div', { class: 'panel' },
-      h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, h('h3', { style: 'margin:0' }, `${b.name} `, h('span', { class: 'muted small' }, `board ${b.id} · touch display`)), h('span', { class: 'spacer' }), st),
-      h('p', { class: 'muted small' }, linkLine(b)),
-      h('p', { class: 'small' }, x.catalogSent ? `Has the list of ${x.sensors} sensors and ${x.relays} relays; values sent every second.` : b.config.pending ? 'Sending it the list of sensors and relays…' : 'Waiting for it to take the list of sensors and relays.',
-        b.commandsIn ? ` ${b.commandsIn} command${b.commandsIn > 1 ? 's' : ''} from it (${b.commandsFailed} refused).` : ''),
-      h('p', { class: 'small' }, where),
-      fwBox(b, d), actions(b),
-      h('div', { class: 'row', style: 'margin-top:10px' }, h('span', { class: 'spacer' }), h('button', { class: 'small danger', onclick: () => forget(b) }, 'Forget')));
-  }
-
-  async function relay(b, index, on) {
-    try { await api('/api/v2/boards/relay', { body: { id: b.id, index, on } }); setTimeout(load, 700); } catch (e) { toast(e.message, true); }
-  }
-
-  function renderNode(d) {
-    const n = d.node;
-    $('#nodePanel').classList.remove('hidden');
-    $('#intro').textContent = `This is an extra board (role: ${d.role.replace('_', ' + ')}). It finds the main board by itself over ESP-NOW.`;
-    const tiles = [
-      ['Paired', n.paired ? `yes, board ${n.id}` : 'not yet', n.paired ? '' : 'press Accept on the main board\'s Boards page'],
-      ['Link to main board', n.linkUp ? 'up' : 'down', n.mainInRange ? 'main board in range' : 'searching channels…'],
-      ['Radio channel', String(d.link.channel || '–'), 'follows the main board'],
-      ['Encryption', n.encrypted ? 'on' : 'off', n.encrypted ? 'key from pairing' : 'turned on in the main board\'s settings'],
-      ['Settings', n.configRev ? 'received' : 'none yet', n.configRev ? 'rev ' + n.configRev.toString(16) : 'set up on the main board'],
-      ['Messages', `${d.link.rx} in / ${d.link.tx} out`, d.link.txFail ? `${d.link.txFail} failed` : ''],
-    ];
-    $('#nodeKv').replaceChildren(...tiles.map(([a, b, c]) => h('div', {}, h('span', {}, a), h('b', {}, b), h('span', {}, c))));
-  }
-
-  function renderMain(d) {
-    $('#intro').textContent = 'Extra boards (engine bay sensors, relays near the loads, touch displays) join this one over ESP-NOW. ' +
-      'This board stays the only web app: set up their sensors and relays on the Sensors and Relays pages (board selector). Their sensors then also appear on the Gauges, Charts, OLED (Layout page), alarms, black box and cloud upload here.';
-    $('#foundPanel').classList.toggle('hidden', !d.found.length);
-    $('#found').replaceChildren(...d.found.map(f => {
-      const name = h('input', { value: names[f.mac] ?? f.name, placeholder: 'Name, e.g. Engine bay', style: 'max-width:200px' });
-      name.oninput = () => { names[f.mac] = name.value; };
-      return h('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap;margin:6px 0' },
-        h('b', {}, f.name || f.mac), h('span', { class: 'muted small' }, `${f.role}, ${f.chip}, ${f.firmware}, ${sig(f.rssi)}, ${f.mac}`),
-        h('span', { class: 'spacer' }), name, h('button', { class: 'primary', onclick: () => accept(f.mac) }, 'Accept'));
-    }));
-    $('#noBoards').classList.toggle('hidden', d.boards.length > 0 || d.found.length > 0);
-    const l = d.link;
-    $('#linkKv').replaceChildren(...[
-      ['Link', l.ok ? l.type : 'none', l.channel ? 'radio channel ' + l.channel + ' (follows the joined Wi-Fi)' : ''],
-      ['Messages', `${l.rx} in / ${l.tx} out`, `${l.txFail || 0} not delivered, ${l.queueDrops || 0} dropped (busy)`],
-      ['Boards', `${d.boards.filter(b => b.online).length} of ${d.boards.length} online`, d.found.length ? `${d.found.length} waiting to be accepted` : ''],
-      d.can ? ['CAN', d.can.state, `${d.can.rx} in / ${d.can.tx} out, ${d.can.busErrors} bus errors`] : null,
-    ].filter(Boolean).map(([a, b2, c]) => h('div', {}, h('span', {}, a), h('b', {}, b2), h('span', {}, c))));
-    $('#linkPanel').classList.remove('hidden');
-    $('#boards').replaceChildren(...d.boards.map(b => {
-      if (b.role === 'display') return displayCard(b, d);
-      const st = h('span', { class: 'pill ' + (b.online ? 'ok' : 'warn') }, b.online ? 'online' : (b.ageS < 0 ? 'not seen yet' : `offline ${dur(b.ageS)}`));
-      const lvl = h('span', { class: 'pill ' + (lvlCls[b.level] || '') }, b.level === 'ok' ? 'OK' : b.level.toUpperCase());
-      const c = b.config;
-      const cfgText = !c.hasShare ? 'no settings yet' : c.pending ? 'sending settings…' : c.status === 'accepted' ? (c.upToDate ? 'settings up to date' : 'settings accepted') : `settings REFUSED: ${c.message}`;
-      const sensors = b.points.filter(p => !p.relay), relays = b.points.filter(p => p.relay);
-      const rows = sensors.map(p => h('tr', {}, h('td', {}, p.name), h('td', { style: 'text-align:right' }, p.status === 'ok' ? `${fmt(p.value, p.decimals)} ${p.unit}` : p.status),
-        h('td', {}, p.level && p.level !== 'ok' ? h('span', { class: 'pill ' + (lvlCls[p.level] || '') }, p.level) : '')));
-      const relayBtns = relays.map((p, i) => {
-        const on = p.value === 1;
-        return h('button', { class: on ? 'primary' : '', disabled: !b.online, onclick: () => relay(b, i, !on) }, `${p.name}: ${on ? 'ON' : 'OFF'}`);
-      });
-      return h('div', { class: 'panel' },
-        h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, h('h3', { style: 'margin:0' }, `${b.name} `, h('span', { class: 'muted small' }, `board ${b.id}`)),
-          h('span', { class: 'spacer' }), lvl, st),
-        h('p', { class: 'muted small' }, linkLine(b) + (b.relaysSafe ? ' · relays in safe state (link was lost)' : '') + (b.safeMode ? ' · SAFE MODE' : '') + (b.muted ? ' · muted' : '')),
-        h('p', { class: 'small', style: c.status === 'refused' ? 'color:var(--crit)' : '' }, cfgText),
-        sensors.length ? h('table', { class: 'small' }, rows) : h('p', { class: 'muted small' }, 'No sensors on this board.'),
-        relayBtns.length ? h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-top:8px' }, relayBtns) : '',
-        fwBox(b, d), actions(b),
-        h('div', { class: 'row', style: 'margin-top:10px;gap:8px' },
-          h('a', { href: `settings.html?board=${b.id}` }, h('button', {}, 'Sensors…')), h('a', { href: `relays.html?board=${b.id}` }, h('button', {}, 'Relays…')),
-          h('span', { class: 'spacer' }), h('button', { class: 'small danger', onclick: () => forget(b) }, 'Forget')));
-    }));
+  const sig = r => r == null || r === 0 ? '' : r > -60 ? 'strong' : r > -75 ? 'good' : r > -85 ? 'weak' : 'very weak';
+  function boardCard(b, d) {
+    const q = `/boards/${b.id}`;
+    const cmd = (c, m) => act(() => api(`${q}/command`, { body: { cmd: c, minutes: m } }));
+    const cfg = b.config || {};
+    const state = !b.online ? 'offline' : cfg.pending ? 'sending settings' : cfg.status === 'refused' ? 'settings refused' : cfg.upToDate ? 'up to date' : 'online';
+    const fw = b.fw;
+    const fwBox = h('div', { class: 'small' + (openFw === b.id || fw ? '' : ' hidden') }, [
+      fw ? h('div', { class: 'row' }, [`Firmware ${fw.version}: ${fw.state}`, fw.state === 'sending' ? h('div', { class: 'progress' }, h('div', { style: `width:${fw.percent}%` })) : null,
+        fw.state === 'sending' ? `${fw.percent} %` : null, fw.error ? h('span', { class: 'bad' }, fw.error) : null,
+        ['offering', 'sending'].includes(fw.state) ? h('button', { class: 'small', onclick: () => act(() => api(`${q}/firmware`, { body: { source: 'cancel' } })) }, 'Cancel') : null]) : null,
+      b.sameChip ? h('button', { class: 'small', onclick: () => act(() => api(`${q}/firmware`, { body: { source: 'self' } })) }, `Send this board's firmware (${S.info.firmware})`) : h('span', { class: 'muted' }, `A ${b.chip}: needs its own file. `),
+      h('label', {}, 'Or send a firmware file (…-firmware.bin):'),
+      h('input', { type: 'file', accept: '.bin', onchange: async e => {
+        const f = e.target.files[0]; if (!f) return;
+        toast('Uploading…', false, 60000);
+        if (await act(() => api('/boards/firmware-file', { method: 'PUT', raw: f }))) act(() => api(`${q}/firmware`, { body: { source: 'file' } }));
+      } })]);
+    const pts = (b.points || []).map(p => h('span', { class: 'chip' + (p.level && p.level !== 'ok' ? ' ' + p.level : '') },
+      `${p.name}: ${p.relay ? (p.value ? 'on' : 'off') : fmt(p.value, p.unit, p.decimals).join(' ')}`));
+    return h('div', { class: 'panel board ' + (b.online ? '' : 'off') }, [
+      h('div', { class: 'row' }, [h('b', {}, `${b.name}`), h('span', { class: 'muted small' }, `b${b.id} · ${b.role} · ${b.chip} · ${b.firmware}`), h('span', { class: 'spacer' }),
+        h('span', { class: 'pill ' + (b.online ? 'ok' : 'crit') }, state)]),
+      h('div', { class: 'muted small' }, b.online ? `signal ${b.rssi} dBm (${sig(b.rssi)}) · loss ${b.lossPct} % · up ${Math.round(b.uptimeS / 60)} min${b.relaysSafe ? ' · outputs in safe state' : ''}${b.safeMode ? ' · SAFE MODE' : ''}${b.encrypted ? ' · encrypted' : ''}`
+                                              : `last heard ${b.ageS < 0 ? 'never' : b.ageS + ' s ago'}`),
+      cfg.status === 'refused' ? h('div', { class: 'bad small' }, `Settings refused: ${cfg.message}`) : null,
+      b.display ? h('div', { class: 'small muted' }, `Display: ${b.display.sensors} values, ${b.display.relays} switches${b.display.ip ? ' · ' + b.display.ip : ''}`) : null,
+      h('div', { class: 'chips' }, pts),
+      h('div', { class: 'row', style: 'margin-top:8px' }, [
+        b.role !== 'display' ? h('a', { class: 'btn small', href: '#sensors', onclick: () => sessionStorage.setItem('cmBoard', 'b' + b.id) }, 'Sensors') : null,
+        b.role !== 'display' ? h('a', { class: 'btn small', href: '#actuators', onclick: () => sessionStorage.setItem('cmBoard', 'b' + b.id) }, 'Actuators') : null,
+        h('button', { class: 'small', onclick: () => cmd('identify') }, 'Identify'),
+        h('button', { class: 'small', onclick: () => cmd('resend') }, 'Resend settings'),
+        h('button', { class: 'small', onclick: () => confirm(`Restart ${b.name}?`) && cmd('reboot') }, 'Restart'),
+        h('button', { class: 'small', onclick: () => { openFw = openFw === b.id ? null : b.id; fwBox.classList.toggle('hidden'); } }, 'Firmware'),
+        h('button', { class: 'small', onclick: () => { const n = prompt('New name', b.name); if (n) act(() => patch(q, { name: n })).then(load); } }, 'Rename'),
+        h('span', { class: 'spacer' }),
+        h('button', { class: 'small danger', onclick: () => confirm(`Forget ${b.name}? It keeps its settings until paired again.`) && act(() => del(q)).then(load) }, 'Forget')]),
+      fwBox]);
   }
 
   async function load() {
-    const d = await api('/api/v2/boards').catch(e => { throw new Error(e.message === 'Not found' ? 'This firmware has no Boards support yet: upload the firmware of this release (System page)' : e.message); });
-    const l = d.link;
-    $('#linkPill').textContent = l.ok ? `${l.type}${l.channel ? ', channel ' + l.channel : ''}` + (d.can ? `, CAN ${d.can.state}` : '') : 'no link';
-    $('#linkPill').className = 'pill ' + (l.ok ? 'ok' : 'warn');
-    if (d.role !== 'main') renderNode(d); else renderMain(d);
+    if (!el) return;
+    if (el.querySelector('input[type=file]') && document.activeElement && document.activeElement.type === 'file') return;
+    let d;
+    try { d = await get('/boards'); } catch (e) { return err(e); }
+    const box = h('div');
+    if (d.node) {   // this is a worker board
+      box.append(h('div', { class: 'panel' }, [h('h3', {}, 'This is an extra board'),
+        h('p', {}, d.node.paired ? `Paired as b${d.node.id}: link ${d.node.linkUp ? 'up' : 'DOWN'}${d.node.encrypted ? ', encrypted' : ''}. Its sensors and actuators are set up from the main board.` : 'Not paired yet: open the main board\'s Boards tab and press Pair next to this board.')]));
+    }
+    if (d.found) {
+      const found = d.found.filter(f => !(d.items || []).some(b => b.mac === f.mac));
+      box.append(h('div', { class: 'panel' }, [h('h3', {}, 'Boards nearby, not paired'),
+        found.length ? h('div', {}, found.map(f => h('div', { class: 'list-item' }, [h('div', { class: 'grow' }, [h('b', {}, f.name || f.mac), h('span', { class: 'muted small' }, ` ${f.role} · ${f.chip} · ${f.firmware} · ${f.rssi} dBm`)]),
+          h('button', { class: 'primary small', onclick: () => { const n = prompt('Name for this board', f.name || 'Engine bay'); if (n) act(() => api('/boards', { body: { mac: f.mac, name: n } })).then(load); } }, 'Pair')])))
+          : h('p', { class: 'muted small' }, 'None heard. A new board shows here a few seconds after it is switched on (role: sensor, relay or display).')]));
+      for (const b of d.items || []) box.append(boardCard(b, d));
+      if (d.uploaded) box.append(h('p', { class: 'muted small' }, `Firmware file on this board: ${d.uploaded.version} (${d.uploaded.chip}, ${Math.round(d.uploaded.size / 1024)} KB)`));
+      box.append(h('p', { class: 'muted small' }, `Radio: channel ${d.link.channel}, sent ${d.link.tx}, received ${d.link.rx}, failed ${d.link.txFail}`));
+    }
+    el.innerHTML = ''; el.append(box);
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
-    const tick = () => { if (document.activeElement?.tagName !== 'INPUT' && !document.querySelector('#boards input[type=file]:not([value=""])')?.files?.length) load().catch(e => toast(e.message, true)); };
-    tick(); setInterval(tick, 2000);
+  page('boards', {
+    show: main => { el = main; load(); clearInterval(timer); timer = setInterval(load, 3000); },
+    leave: () => { clearInterval(timer); el = null; },
   });
 })();

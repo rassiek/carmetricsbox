@@ -66,7 +66,7 @@ void httpTask(void*) {
     String base = "http://" + WiFi.gatewayIP().toString();
     HttpCmd* c = nullptr;
     if (xQueueReceive(httpQ, &c, 0) == pdTRUE && c) {
-      http.begin(base + "/api/v2/display/command");
+      http.begin(base + "/api/v1/displays/command");
       http.setTimeout(2000);
       http.setAuthorization("admin", cfg->mainAdmin.c_str());
       http.addHeader("Content-Type", "application/json");
@@ -82,7 +82,7 @@ void httpTask(void*) {
     uint32_t now = millis();
     if (espnowFresh(now) || now - lastPoll < 1000) continue;
     lastPoll = now;
-    http.begin(base + "/api/v2/display/values");
+    http.begin(base + "/api/v1/displays/values");
     http.setTimeout(1500);
     int code = http.GET();
     if (code != 200) { http.end(); continue; }
@@ -94,7 +94,7 @@ void httpTask(void*) {
     bool needCatalog;
     { Net::Lock lk; needCatalog = rev != model->rev(); }
     if (needCatalog) {
-      http.begin(base + "/api/v2/display/catalog");
+      http.begin(base + "/api/v1/displays/catalog");
       http.setTimeout(2000);
       if (http.GET() == 200) {
         String j = http.getString();

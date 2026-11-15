@@ -121,7 +121,7 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | Request | Reply / effect |
 |---|---|
 | `GET /settings` | all sections (passwords blank) + `rev` |
-| `GET` / `PATCH /settings/{section}` | `ui` (names, units, preset), `system` (network, passwords, pins, buses, OLED, status light, buzzer, ignition, GPS, running detection), `weather`, `cloud`, `turbo`, `layout` (dashboard pages and tiles, OLED pages), `blackbox`. PATCH merges: send only what changes; a blank password keeps the old one |
+| `GET` / `PATCH /settings/{section}` | `ui` (names, units, preset), `system` (network, passwords, pins, buses, OLED, status light, buzzer, ignition, GPS, running detection), `weather`, `cloud`, `turbo`, `layout` (dashboard tiles, OLED pages), `blackbox`; `PATCH /settings/sensors` takes the whole sensor list (array). PATCH merges: send only what changes; a blank password keeps the old one |
 | `GET /backup` / `POST /backup` | export / import everything (JSON) |
 | `POST /settings/reset` `{"keep":["system"]}` | back to defaults (default: keep `system`) |
 | `POST /settings/restore` `{"slot":"previous"|"good"}` | one-step undo / the last settings that ran well |

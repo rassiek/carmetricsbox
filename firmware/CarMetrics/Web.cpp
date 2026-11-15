@@ -161,6 +161,10 @@ void pointsToJson(JsonObject o, bool meta, const std::vector<String>& only) {   
   if (gSys.ignition >= 0) o["ignition"] = gSys.ignition == 1;
   if (Health::safeMode()) o["safeMode"] = true;
   o["rev"] = gSys.configRevision;
+  if (gConfig.turbo.enabled && gSys.turbo.phase != TURBO_OFF) {
+    JsonObject t = o["turbo"].to<JsonObject>();
+    t["phase"] = gSys.turbo.phase == TURBO_COOLING ? "cooling" : "ok"; t["leftS"] = gSys.turbo.leftS;
+  }
   JsonArray a = o["items"].to<JsonArray>();
   for (size_t i = 0; i < gConfig.sensors.size() && i < gSensorRt.size(); i++) {
     const SensorConfig& c = gConfig.sensors[i]; const SensorRuntime& r = gSensorRt[i];
@@ -485,7 +489,11 @@ void hActCommand(Ctx& c) {
 }
 
 int boardId(Ctx& c) { return c.p[0].toInt(); }
-void hBoards(Ctx& c) { JsonDocument d; Boards::toJson(d.to<JsonObject>()); sendJson(c.req, 200, d); }
+void hBoards(Ctx& c) {
+  JsonDocument d; Boards::toJson(d.to<JsonObject>());
+  if (!d["boards"].isNull()) { d["items"] = d["boards"]; d.remove("boards"); }
+  sendJson(c.req, 200, d);
+}
 void hBoardPair(Ctx& c) {
   int id = -1;
   String err = Boards::accept(c.body["mac"] | "", c.body["name"] | "", id);
@@ -526,7 +534,12 @@ void hSettings(Ctx& c) {
   JsonDocument one; one.set(d[c.p[0]]); sendJson(c.req, 200, one);
 }
 void hSettingsPatch(Ctx& c) {
-  if (!isSection(c.p[0])) { sendError(c.req, 404, "Sections: ui, system, weather, cloud, turbo, layout, blackbox"); return; }
+  if (c.p[0] == "sensors") {   // the whole list at once, mirrors of other boards' sensors included (layout editor)
+    if (!c.body.is<JsonArray>()) { sendError(c.req, 400, "Send the sensor list as a JSON array"); return; }
+    changeConfig(c.req, [&](Config& cfg, String& err) { return sensorsFromJson(c.body.as<JsonVariantConst>(), cfg.sensors, err); }, "Saved");
+    return;
+  }
+  if (!isSection(c.p[0])) { sendError(c.req, 404, "Sections: ui, system, weather, cloud, turbo, layout, blackbox, sensors"); return; }
   if (!c.body.is<JsonObject>()) { sendError(c.req, 400, "Send the fields to change as a JSON object"); return; }
   JsonDocument patch; patch[c.p[0]] = c.body;
   patchSettings(c.req, patch.as<JsonVariantConst>(), "Saved");
@@ -845,7 +858,8 @@ String livePoints() {
   {
     StateLock lk;
     JsonDocument p; pointsToJson(p.to<JsonObject>(), false, {});
-    d["t"] = p["t"]; d["level"] = p["level"]; d["muted"] = p["muted"]; d["running"] = p["running"];
+    d["t"] = p["t"]; d["level"] = p["level"]; d["muted"] = p["muted"]; d["running"] = p["running"]; d["rev"] = p["rev"];
+    if (!p["turbo"].isNull()) d["turbo"] = p["turbo"];
     if (!p["epoch"].isNull()) d["epoch"] = p["epoch"];
     JsonObject v = d["v"].to<JsonObject>();
     for (JsonObject x : p["items"].as<JsonArray>()) {

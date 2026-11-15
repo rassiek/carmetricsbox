@@ -4,7 +4,7 @@
 #include <ArduinoJson.h>
 #include "Hw.h"
 
-#define DISP_VERSION "5.1.0-beta.11"
+#define DISP_VERSION "5.3.0-beta.1"
 
 struct DispSettings {
   String name;                       // shown on the main board's Boards page ("Dash")

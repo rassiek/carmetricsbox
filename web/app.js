@@ -1,212 +1,229 @@
-// CarMetrics shared helpers: API, live events, header, toast
 'use strict';
+// Web app core: API v1 client, live data (WebSocket, polling fallback), names and
+// units from the settings, the 5 tabs, small DOM helpers. Pages register with CM.page().
 const CM = (() => {
-  const WEB_VERSION = '__CM_VERSION__';   // replaced by tools/build_web.py with the release label
+  const A = '/api/v1';
   const $ = (s, el = document) => el.querySelector(s);
-  const h = (tag, attrs = {}, ...kids) => {
-    const el = document.createElement(tag);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  function h(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) {
-      if (k === 'class') el.className = v;
-      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-      else if (v === true) el.setAttribute(k, '');
-      else if (v !== false && v != null) el.setAttribute(k, v);
+      if (v === undefined || v === null || v === false) continue;
+      if (k.startsWith('on')) e[k] = v;
+      else if (k === 'class') e.className = v;
+      else if (k === 'html') e.innerHTML = v;
+      else if (k === 'value') e.value = v;
+      else if (k === 'checked' || k === 'selected' || k === 'disabled') e[k] = !!v;
+      else e.setAttribute(k, v === true ? '' : v);
     }
-    for (const k of kids.flat()) if (k != null) el.append(k.nodeType ? k : String(k));
-    return el;
-  };
-
-  async function api(path, opts = {}) {
-    const init = { method: opts.method || (opts.body !== undefined ? 'POST' : 'GET'), headers: {} };
-    if (opts.body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body);
-    }
-    const r = await fetch(path, init);
-    let data = null;
-    try { data = await r.json(); } catch (e) { /* not json */ }
-    if (r.status === 401) throw new Error('Password required (user "admin")');
-    if (!r.ok) throw new Error((data && data.message) || `${r.status} ${r.statusText}`);
-    return data;
+    for (const c of kids.flat(3)) if (c !== null && c !== undefined && c !== false) e.append(c.nodeType ? c : document.createTextNode(c));
+    return e;
   }
 
-  let toastTimer;
-  function toast(msg, isErr = false, ms = 3500) {
-    let t = $('#toast');
-    if (!t) { t = h('div', { id: 'toast' }); document.body.append(t); }
-    t.textContent = msg;
-    t.className = isErr ? 'err' : '';
-    t.classList.remove('hidden');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+  // ---- API: errors come back as {error:{code,message,field}}
+  async function api(path, { method, body, raw } = {}) {
+    const opt = { method: method || (body !== undefined ? 'POST' : 'GET'), headers: {} };
+    if (raw) { opt.body = raw; opt.headers['Content-Type'] = 'application/octet-stream'; }
+    else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers['Content-Type'] = 'application/json'; }
+    const r = await fetch(A + path, opt);
+    const t = await r.text();
+    let j = null; try { j = t ? JSON.parse(t) : {}; } catch { j = { text: t }; }
+    if (!r.ok) {
+      const e = new Error((j && j.error && j.error.message) || `${r.status} ${r.statusText}`);
+      e.field = j && j.error && j.error.field; e.status = r.status; throw e;
+    }
+    return j;
+  }
+  const get = p => api(p), patch = (p, b) => api(p, { method: 'PATCH', body: b }), del = p => api(p, { method: 'DELETE' });
+
+  let toastT;
+  function toast(msg, bad = false, ms = 3500) {
+    const t = $('#toast'); if (!t || !msg) return;
+    t.textContent = msg; t.className = bad ? 'show bad' : 'show';
+    clearTimeout(toastT); toastT = setTimeout(() => t.className = '', ms);
+  }
+  // Run an API call from a button: shows the reply or the error.
+  async function act(fn, okMsg) {
+    try { const r = await fn(); toast(okMsg || (r && r.message) || 'Done'); return r || true; }
+    catch (e) { toast(e.message, true, 6000); return null; }
   }
 
-  // ---- live state: WebSocket (two-way, v2), then Server-Sent Events, then polling
+  // ---- state shared by the pages
+  const S = { info: {}, settings: null, meta: {}, values: {}, level: 'ok', muted: false, rev: null, conn: 'connecting' };
+  const ui = () => (S.settings && S.settings.ui) || {};
+
+  // Units: values come in the sensor's unit; the person's preference converts the common ones.
+  function conv(v, unit) {
+    const u = ui();
+    if (v === null || v === undefined || isNaN(v)) return [v, unit];
+    const un = u.units || {};
+    if (unit === '°C' && un.temperature === 'F') return [v * 9 / 5 + 32, '°F'];
+    if (un.pressure && ['bar', 'psi', 'kPa'].includes(unit) && unit !== un.pressure) {
+      const kpa = unit === 'bar' ? v * 100 : unit === 'psi' ? v * 6.89476 : v;
+      return [un.pressure === 'bar' ? kpa / 100 : un.pressure === 'psi' ? kpa / 6.89476 : kpa, un.pressure];
+    }
+    if (un.speed && unit === 'km/h' && un.speed !== 'km/h') return [un.speed === 'mph' ? v / 1.609344 : v / 1.852, un.speed];
+    return [v, unit];
+  }
+  function fmt(v, unit, dec = 1) {
+    const [x, u] = conv(v, unit);
+    if (x === null || x === undefined || isNaN(x)) return ['--', u || ''];
+    return [Number(x).toFixed(u === '°F' ? 0 : dec), u || ''];
+  }
+
+  // ---- live data
   const listeners = [];
-  let lastState = null, ws = null, es = null, lastLive = 0, lastAny = 0, rev = null, polling = false, mode = '';
-  let wsFails = 0, wsSeq = 0;
-  const wsWaiting = new Map();
-  function live(fn) { listeners.push(fn); if (lastState) fn(lastState); }
-  function handleState(s) {
-    lastAny = Date.now();
-    if (rev !== null && s.rev !== rev) onConfigChanged();
-    rev = s.rev;
-    lastState = s;
-    if (s.clock === false) syncTime();
-    listeners.forEach(fn => fn(s));
-    updateHeader(s);
+  function live(cb) { listeners.push(cb); if (Object.keys(S.values).length) cb(legacy()); }
+  // {sensors:{id:{v,st,lvl}}} for the layout editor; sensor id = mirror id for other boards
+  function legacy() {
+    const s = {};
+    for (const [a, x] of Object.entries(S.values)) {
+      const [b, id] = a.split(/\.(.*)/);
+      s[b === 'local' ? id : `${b}_${id}`] = x;
+    }
+    return { sensors: s, level: S.level, muted: S.muted };
   }
-  function connectWs() {
-    if (!('WebSocket' in window)) return connectSse();
-    try { ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`); } catch (e) { return connectSse(); }
-    let opened = false;
-    ws.onopen = () => { opened = true; wsFails = 0; mode = 'ws'; if (es) { es.close(); es = null; } };
-    ws.onmessage = ev => {
-      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (m.sensors) { lastLive = Date.now(); handleState(m); }
-      else if (m.type === 'config') onConfigChanged();
-      else if (m.type === 'ack' && wsWaiting.has(m.id)) { wsWaiting.get(m.id)(m); wsWaiting.delete(m.id); }
+  function emit() { for (const cb of listeners) try { cb(legacy()); } catch (e) { console.error(e); } header(); }
+  function takePoints(m) {
+    if (m.items) for (const x of m.items) S.values[x.a] = { v: x.v, st: x.st, lvl: x.lvl };
+    if (m.v) for (const [a, x] of Object.entries(m.v)) S.values[a] = { v: x[0], st: x[1], lvl: x[2] };
+    if (m.level) S.level = m.level;
+    if (m.muted !== undefined) S.muted = m.muted;
+    if (m.running !== undefined) S.running = m.running;
+    if (m.type === 'points' || m.items) S.turbo = m.turbo || null;
+    if (m.rev !== undefined && S.rev !== null && String(m.rev) !== String(S.rev)) reloadSettings();
+    if (m.rev !== undefined) S.rev = m.rev;
+    emit();
+  }
+  let ws, pollT, wsTries = 0;
+  function connect() {
+    try { ws = new WebSocket(`ws://${location.host}${A}/ws`); } catch { return poll(); }
+    ws.onmessage = e => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.type === 'points') { S.conn = 'live'; takePoints(m); }
+      else if (m.type === 'alerts') { S.alerts = m; S.level = m.level; S.muted = m.muted; emit(); }
+      else if (m.type === 'config') reloadSettings();
     };
-    ws.onclose = () => {
-      ws = null;
-      if (!opened) wsFails++;
-      if (wsFails >= 2) connectSse();               // no WebSocket on this firmware / proxy: use events
-      else setTimeout(connectWs, 3000);
-    };
+    ws.onopen = () => { wsTries = 0; clearInterval(pollT); pollT = null; };
+    ws.onclose = () => { S.conn = 'polling'; header(); poll(); setTimeout(connect, Math.min(30000, 2000 * ++wsTries)); };
   }
-  function connectSse() {
-    if (es) es.close();
-    mode = 'sse';
-    es = new EventSource('/events');
-    es.addEventListener('state', ev => { lastLive = Date.now(); handleState(JSON.parse(ev.data)); });
-    es.addEventListener('config', () => onConfigChanged());
-    // Events are only the fallback (and capped at 3 on the device): try the WebSocket again in a minute.
-    setTimeout(() => { if (mode === 'sse' && !ws) { wsFails = 0; connectWs(); } }, 60000);
+  function poll() {
+    if (pollT) return;
+    const once = () => get('/points').then(p => { if (S.conn !== 'live') S.conn = 'polling'; takePoints(p); }).catch(() => { S.conn = 'offline'; header(); });
+    once(); pollT = setInterval(once, 2000);
   }
-  // Send a command over the WebSocket when open (falls back to HTTP): {cmd:'mute', minutes:5}
-  function command(c) {
-    if (ws && ws.readyState === 1) {
-      return new Promise((res, rej) => {
-        const id = ++wsSeq;
-        wsWaiting.set(id, m => m.ok ? res(m) : rej(new Error(m.message || 'failed')));
-        ws.send(JSON.stringify(Object.assign({ type: 'cmd', id }, c)));
-        setTimeout(() => { if (wsWaiting.delete(id)) rej(new Error('No reply from device')); }, 4000);
-      });
-    }
-    return api('/api/v2/command', { body: c });
-  }
-  async function poll() {
-    if (polling) return;
-    polling = true;
-    try { handleState(await api('/api/state')); } catch (e) { /* offline */ }
-    polling = false;
-  }
-  let configCb = null;
-  function onConfig(fn) { configCb = fn; }
-  function onConfigChanged() { if (configCb) configCb(); }
-  let deadSince = 0;
-  setInterval(() => {
-    const now = Date.now(), liveOk = now - lastLive < 3500;
-    if (!liveOk) {
-      poll();
-      if (!deadSince) deadSince = now;
-      if (now - deadSince > 15000) { deadSince = now; if (mode === 'sse') connectSse(); else if (!ws) connectWs(); }
-    } else deadSince = 0;
-    const online = now - lastAny < 5000;
-    const c = $('#conn');
-    if (c) {
-      c.textContent = !online ? 'offline' : liveOk ? 'live' : 'polling';
-      c.title = mode === 'ws' ? 'WebSocket' : mode === 'sse' ? 'Server-sent events' : '';
-      c.className = 'pill ' + (!online ? 'fault' : liveOk ? 'ok' : '');
-    }
-    document.body.classList.toggle('stale', !online);
-  }, 1500);
-
-  // Board profile (valid pins etc.), fetched once per page
-  let boardP = null;
-  function board() { return boardP || (boardP = api('/api/v2/board').catch(() => null)); }
-
-  // ---- header
-  const pages = [['index.html', 'Gauges'], ['charts.html', 'Charts'], ['settings.html', 'Sensors'],
-                 ['relays.html', 'Relays'], ['boards.html', 'Boards'], ['layout.html', 'Layout'], ['weather.html', 'Weather'], ['events.html', 'Events'], ['system.html', 'System']];
-  function header() {
-    const here = location.pathname.split('/').pop() || 'index.html';
-    const hd = h('header', {},
-      h('span', { class: 'brand', title: 'Web app ' + WEB_VERSION }, 'CarMetrics', h('small', { id: 'relLabel', class: 'muted', style: 'font-weight:400;font-size:11px;margin-left:6px' }, WEB_VERSION.startsWith('__') ? 'dev' : WEB_VERSION)),
-      h('nav', {}, pages.map(([href, name]) => h('a', { href, class: href === here ? 'active' : '' }, name))),
-      h('span', { id: 'clock', class: 'pill', title: 'Board clock' }, '--:--'),
-      h('span', { id: 'engine', class: 'pill' }, 'engine ?'),
-      h('span', { id: 'alert', class: 'pill ok' }, 'OK'),
-      h('button', { id: 'mute', class: 'small hidden', onclick: toggleMute }, 'Mute'),
-      h('span', { id: 'conn', class: 'pill' }, '...'));
-    document.body.prepend(hd);
-  }
-  function updateHeader(s) {
-    const a = $('#alert'), m = $('#mute'), e = $('#engine');
-    if (a) {
-      a.textContent = { ok: 'OK', warn: 'WARNING', crit: 'CRITICAL', fault: 'SENSOR FAULT' }[s.level] || s.level;
-      a.className = 'pill ' + s.level;
-    }
-    if (m) {
-      m.classList.toggle('hidden', s.level === 'ok' && !s.muted);
-      m.textContent = s.muted ? `Muted ${Math.ceil((s.muteLeftS || 0) / 60)}m` : 'Mute';
-    }
-    const c = $('#clock');
-    if (c) {
-      const t = s.epoch ? new Date(s.epoch * 1000) : null;
-      c.textContent = t ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'clock not set';
-      c.title = t ? `Board clock, set from ${s.clockSrc || 'browser'}` : 'The board has no time yet (no internet, GPS or browser)';
-      c.className = 'pill ' + (t ? '' : 'warn');
-    }
-    if (e) { e.textContent = s.engine ? 'engine on' : 'engine off'; e.className = 'pill ' + (s.engine ? 'ok' : ''); }
-    let b = $('#safeBanner');
-    if (s.safe && !b) {
-      b = h('div', { id: 'safeBanner', class: 'banner' }, 'SAFE MODE: the device restarted after repeated crashes. Relays are off and internet features are paused. ',
-        h('a', { href: 'system.html#health' }, 'Details'));
-      document.querySelector('header').after(b);
-    } else if (!s.safe && b) b.remove();
-  }
-  async function toggleMute() {
+  let settingsWaiters = [];
+  async function reloadSettings() {
     try {
-      const muted = lastState && lastState.muted;
-      await command({ cmd: 'mute', minutes: muted ? 0 : 5 });
+      const [st, pm] = await Promise.all([get('/settings'), get('/points?meta=1')]);
+      S.settings = st; S.rev = st.rev;
+      S.meta = {}; for (const x of pm.items) S.meta[x.a] = x;
+      takePoints(pm);
+      applyNames();
+      for (const f of settingsWaiters) f(); settingsWaiters = [];
+      if (current && pages[current].onSettings) pages[current].onSettings();
     } catch (e) { toast(e.message, true); }
   }
+  const ready = () => S.settings ? Promise.resolve() : new Promise(r => settingsWaiters.push(r));
 
-  // The ESP32 has no battery-backed clock: after every reboot it needs the time
-  // again (internet, GPS or this browser). Send it whenever the board says it
-  // has none - not just once per tab, which missed reboots and OTA updates.
-  let lastTimeSync = 0;
-  async function syncTime() {
-    if (Date.now() - lastTimeSync < 30000) return;
-    lastTimeSync = Date.now();
-    try { await api('/api/time', { body: { epochMs: Date.now() } }); } catch (e) { lastTimeSync = 0; }
+  // ---- tabs
+  const TABS = [['dashboard', 'Dashboard'], ['sensors', 'Sensors'], ['actuators', 'Actuators'], ['boards', 'Boards'], ['system', 'System']];
+  const pages = {};
+  let current = null;
+  function page(name, def) { pages[name] = def; }
+  function applyNames() {
+    const u = ui();
+    document.title = (u.machineName ? u.machineName + ' · ' : '') + (u.appName || 'CarMetrics');
+    $('#brand').textContent = u.appName || 'CarMetrics';
+    $('#machine').textContent = u.machineName || '';
+    for (const [id, def] of TABS) { const a = $(`#tab-${id}`); if (a) a.textContent = (u.pages && u.pages[id]) || def; }
+  }
+  function show() {
+    const [name, sub] = (location.hash.slice(1) || 'dashboard').split('/');
+    const n = pages[name] ? name : 'dashboard';
+    for (const [id] of TABS) $(`#tab-${id}`).classList.toggle('active', id === n);
+    if (current && pages[current].leave) pages[current].leave();
+    current = n;
+    const main = $('#main'); main.innerHTML = '';
+    ready().then(() => { if (current === n) pages[n].show(main, sub); });
+  }
+  function header() {
+    const p = $('#level');
+    const lv = S.level || 'ok';
+    p.className = 'pill ' + lv;
+    p.textContent = { ok: 'OK', warn: 'Warning', crit: 'CRITICAL', fault: 'Sensor fault' }[lv] || lv;
+    $('#mute').textContent = S.muted ? 'Unmute' : 'Mute';
+    $('#mute').classList.toggle('hidden', lv === 'ok' && !S.muted);
+    $('#conn').textContent = S.conn;
+    $('#conn').className = 'pill ' + (S.conn === 'live' ? 'ok' : S.conn === 'offline' ? 'crit' : '');
   }
 
-  function fmt(v, dec) { return v === null || v === undefined || Number.isNaN(v) ? '--' : Number(v).toFixed(dec); }
-  const statusText = { ok: '', waiting: 'waiting', unassigned: 'not assigned', not_found: 'not found', fault: 'FAULT', disabled: 'disabled', link_lost: 'LINK LOST' };
+  document.addEventListener('DOMContentLoaded', async () => {
+    $('#mute').onclick = () => act(() => api('/alerts/mute', { body: { minutes: S.muted ? 0 : 15 } }));
+    window.addEventListener('hashchange', show);
+    try { S.info = await get('/info'); if (S.info.safeMode) $('#safe').classList.remove('hidden'); } catch {}
+    // The board has no clock of its own until it reaches the internet: lend it ours.
+    if (!S.info.epoch) api('/system/time', { body: { epoch: Math.floor(Date.now() / 1000) } }).catch(() => {});
+    await reloadSettings();
+    show();
+    connect();
+  });
 
-  // Firmware and web app are uploaded separately: say so when they don't match
-  // (e.g. only littlefs.bin was uploaded and new pages call missing firmware APIs).
-  async function checkVersion() {
-    if (WEB_VERSION.startsWith('__')) return;   // development copy, not built
-    const i = await api('/api/info').catch(() => null);
-    if (!i || i.version === WEB_VERSION) return;
-    document.querySelector('header').after(h('div', { class: 'banner' },
-      `Firmware ${i.version} and web app ${WEB_VERSION} are from different releases. Upload both files of one release on the System page (firmware, then web app), or flash the full image over USB.`));
+  // ---- small form helpers shared by the pages
+  // Field schema: {k, label, type:'text'|'num'|'bool'|'select'|'pin'|'sensor'|'pass', opts:[[v,t]], show:o=>bool, help, step, wide}
+  function form(obj, fields, onchange) {
+    const box = h('div', { class: 'fields' });
+    const redraw = () => {
+      box.innerHTML = '';
+      for (const f of fields) {
+        if (f.show && !f.show(obj)) continue;
+        const v = getPath(obj, f.k);
+        let inp;
+        const set = x => { setPath(obj, f.k, x); if (f.redraw) redraw(); if (onchange) onchange(obj, f.k); };
+        if (f.type === 'bool') {
+          inp = h('input', { type: 'checkbox', checked: !!v, onchange: e => set(e.target.checked) });
+          box.append(h('label', { class: 'check' + (f.wide ? ' wide' : ''), title: f.help || '' }, [inp, f.label]));
+          continue;
+        }
+        if (f.type === 'select' || f.type === 'sensor' || f.type === 'pin') {
+          let opts = f.opts || [];
+          if (typeof opts === 'function') opts = opts(obj);
+          if (f.type === 'sensor') opts = [['', '(none)']].concat(sensorChoices());
+          if (f.type === 'pin') opts = pinChoices(f.input);
+          inp = h('select', { onchange: e => set(f.type === 'pin' ? +e.target.value : (f.num ? +e.target.value : e.target.value)) },
+                  opts.map(([ov, ot]) => h('option', { value: ov, selected: String(ov) === String(v ?? '') }, ot)));
+        } else {
+          inp = h('input', { type: f.type === 'num' ? 'number' : f.type === 'pass' ? 'password' : 'text', value: v ?? '', step: f.step || 'any',
+                             placeholder: f.placeholder || '', autocomplete: 'off' });
+          inp.onchange = e => set(f.type === 'num' ? (e.target.value === '' ? null : +e.target.value) : e.target.value);
+        }
+        inp.name = f.k;
+        box.append(h('div', { class: f.wide ? 'wide' : '' }, [h('label', { title: f.help || '' }, f.label), inp,
+                    f.help && f.helpShow ? h('div', { class: 'muted small' }, f.help) : null]));
+      }
+    };
+    redraw();
+    box.redraw = redraw;
+    return box;
   }
-
-  document.addEventListener('DOMContentLoaded', () => { header(); connectWs(); checkVersion(); });
-  // ---- several boards: Sensors / Relays pages edit another board with ?board=N
-  function remoteBoard() { const b = +new URLSearchParams(location.search).get('board'); return b > 0 ? b : 0; }
-  async function boardPicker(sel) {   // <select> inside a hidden wrapper; shown when boards are paired
-    const d = await api('/api/v2/boards').catch(() => null);
-    const boards = d ? d.boards.filter(b => b.role !== 'display') : [];   // displays have no sensors / relays of their own
-    if (!d || d.role !== 'main' || !boards.length) return;
-    sel.replaceChildren(h('option', { value: 0 }, 'This board (main)'), ...boards.map(b => h('option', { value: b.id }, `${b.name} (board ${b.id})`)));
-    sel.value = remoteBoard();
-    sel.onchange = () => { location.search = +sel.value ? '?board=' + sel.value : ''; };
-    sel.parentElement.classList.remove('hidden');
+  function getPath(o, k) { return k.split('.').reduce((x, p) => x == null ? x : x[p], o); }
+  function setPath(o, k, v) { const ps = k.split('.'); const last = ps.pop(); let x = o; for (const p of ps) x = x[p] ??= {}; x[last] = v; }
+  function sensorChoices() {
+    return Object.values(S.meta).filter(m => m.kind === 'sensor' && m.board === 'local').map(m => [m.a.slice(6), m.name]);
   }
+  let pinInfo = null;
+  function pinChoices(input) {
+    const out = [[-1, '(not used)']];
+    for (const p of (pinInfo && pinInfo.pins) || []) {
+      if (!input && !p.abilities.includes('output')) continue;
+      out.push([p.gpio, `GPIO ${p.gpio}` + (p.fixed ? ` · ${p.fixed}` : '') + (p.usedBy ? ` · ${p.usedBy}` : '') +
+                (p.abilities.includes('analog') ? ' · analog' : '') + (p.abilities.includes('boot_pin') ? ' · boot pin' : '')]);
+    }
+    return out;
+  }
+  async function loadPins() { try { pinInfo = await get('/pins'); } catch { pinInfo = { pins: [] }; } return pinInfo; }
+  const err = e => toast(e.message, true, 6000);
 
-  return { WEB_VERSION, $, h, api, toast, live, onConfig, fmt, statusText, command, board, remoteBoard, boardPicker, get state() { return lastState; } };
+  return { $, $$, h, api, get, patch, del, toast, act, err, live, S, ui, fmt, conv, page, form, reloadSettings, loadPins,
+           pins: () => pinInfo, sensorChoices, go: hash => { location.hash = hash; } };
 })();
