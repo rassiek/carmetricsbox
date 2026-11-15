@@ -2,12 +2,16 @@
 
 Give this file to Claude at the start of a new session (or say: *"Clone github.com/rassiek/carmetricsbox, branch v5, and read docs/CONTEXT.md, docs/v5-status.md and docs/v5-phase3-plan.md"*). It holds what was built, how, what has only been tested on a PC / emulator, and how to test and debug on the real boards.
 
-Last updated: 15 Nov 2026, release **5.3.0-beta.2** (every board type: main S3, workers, Relay X8, touch displays).
+Last updated: 15 Nov 2026, release **5.4.0** in progress (after 5.3.0-beta.2).
 
-> **Release files (from beta.3 on):** `…-full-flash.bin` (USB at 0x0, as before), `…-firmware.bin` + `…-webapp.bin` (Wi-Fi; the web app file is trimmed
-> to the blocks holding data: 360 KB instead of 1.8 MB on the main S3). `littlefs.bin` is renamed `…-webapp.bin`.
-> Real app slots: 4 MB layout 1664 KB (classic worker ~91 %, **S3 4 MB worker ~98 %: nearly full**), 8 MB main 3 MB (~55 %). `cm.sh` prints and checks this.
->
+> **5.4.0** (in progress): two firmwares from shared libraries. **Main** (`firmware/CarMetrics`, ESP32-S3 8/16 MB only, built-in profiles)
+> and a lean **worker** (`firmware/CarMetricsWorker`: S3 4 MB+ with charts, classic ESP32, C3, C6, Relay X8, KC868-A4, T-Relay; any other board
+> through a custom board definition). Shared code: `firmware/libraries/CarMetricsLink` (protocol, links) and `CarMetricsCore` (settings, sensors,
+> actuators, health, API core, web app compiled into the firmware: one `…-firmware.bin` over Wi-Fi, no web app file). The role comes from the firmware;
+> images carry a role tag so the other role's firmware is refused and the main board never sends its own firmware on. Web app follows `/info`
+> capabilities (worker: its own gauges only, no Boards tab; main: gauge board filter). Thermometers without a reading show "--" + one short reason.
+> Worker layout: two 1.875 MB slots, settings where 5.3 had them, no file system. Tests: prototest 69, main self-test, worker self-test, web tests (main + worker).
+
 > **5.3.0-beta.2** (15 Nov): charts group values of the same kind (per-sensor Chart setting), history also records actuators and board figures,
 > carmetrics.local on the board's own access point (it answers DNS for its name), full-screen gauges, thermometer group tiles with each sensor's limits,
 > most important gauges first, touch-sized actuator controls, enable-from-list, live state of other boards' switches, same-chip pin checks for other boards,
@@ -32,8 +36,8 @@ Engine monitor for older vehicles without OBD-II (Land Rover 300Tdi). ESP32 read
 | Item | Where |
 |---|---|
 | Repository | github.com/rassiek/carmetricsbox, branch **v5** |
-| Firmware (Arduino sketch) | `firmware/CarMetrics/` (main / sensor / relay boards), `firmware/CarMetricsDisplay/` (touch displays, own README) |
-| Web app (served by the board) | `web/` (gzipped into `firmware/CarMetrics/data/www/` and `littlefs.bin`) |
+| Firmware (Arduino sketches) | `firmware/CarMetrics/` (main board), `firmware/CarMetricsWorker/` (workers, relay boards), `firmware/libraries/` (shared), `firmware/CarMetricsDisplay/` (touch displays, own README) |
+| Web app (served by the board) | `web/` (gzipped into `firmware/libraries/CarMetricsCore/src/WebApp.h`, part of the firmware) |
 | Docs | `docs/v5-design-and-backlog.md` (design), `docs/v5-status.md` (status + history), `docs/v5-phase3-plan.md` (multi-board), this file |
 | Tools | `tools/cm.sh` (build / test), `tools/build_web.py`, `tools/webtest/` (mock board + browser test), `tools/prototest/` (PC tests), `devenv/` (toolchain) |
 
@@ -51,18 +55,13 @@ To let a session push instead: install the Claude GitHub App on the repo (github
 
 ## 3. Releases and which file goes where
 
-The release label is `FW_RELEASE_51` / `FW_RELEASE_52` in `firmware/libraries/CarMetricsCore/src/Config.h`. It is shown in the web app header, on System → Status (firmware + web app) and on the OLED start screen. A **red banner** appears when the firmware and the web app come from different releases (e.g. only `littlefs.bin` was uploaded).
+The release label is `FW_VERSION` in `firmware/libraries/CarMetricsCore/src/Config.h` (the display: `DISP_VERSION` in `firmware/CarMetricsDisplay/DispConfig.h`).
+File names and boards: `docs/BUILDING.md` (*What you will get*).
 
-| Line | Boards | Files |
-|---|---|---|
-| **5.1** | Every board: classic ESP32 (4 MB) and ESP32-S3; any role (main / sensor / relay) | `carmetrics-5.1.x-full-flash.bin` (USB, 0x0), `-firmware.bin` + `-littlefs.bin` (Wi-Fi) |
-| **Display** | JC3248W535 (ESP32-S3) or Cheap Yellow Display (ESP32); pairs as role *display* | `carmetrics-display-jc3248w535-full-flash.bin` / `carmetrics-display-cyd-full-flash.bin` (USB, 0x0), `-firmware.bin` (its own web page, or from the main board's Boards page) |
-| **5.2** | ESP32-S3 with **8 MB+ flash and PSRAM** (N8R8, N16R8); meant for the main board; any role | `carmetrics-5.2.x-full-flash.bin` (USB once: new partition table), then Wi-Fi updates with its `-firmware.bin` / `-littlefs.bin` |
-
-- 5.1 extra boards work with a 5.2 main board (same protocol, `Proto::VERSION` 1, frames ≤ 250 B). Keep it that way: new features only as optional message fields or new message types that old boards ignore.
+- Boards of different releases work together: same protocol (`Proto::VERSION` 1, frames ≤ 250 B). Keep it that way: new features only as optional message fields or new message types that old boards ignore.
 - USB flashing: https://espressif.github.io/esptool-js/ → address **0x0**, **don't tick Erase flash** (settings live in the `cfg` partition, which the full image doesn't touch).
-- Wi-Fi updates: System → Firmware update: *Firmware* first, then *Web app*.
-- Classic ESP32: build with **core 2.0.17** (`tools/cm.sh build`, ~1.47 MB of 1.66 MB). Core 3.x builds for the classic ESP32 are 1.63 MB: only ~70 KB left.
+- Wi-Fi updates: System → Data → Firmware update: the `…-firmware.bin` only (5.4: the web app is inside it).
+- Classic ESP32 workers: core **2.0.17**; S3, C3, C6: core 3.3.12.
 
 ## 4. Toolchain and commands
 
@@ -70,39 +69,29 @@ The release label is `FW_RELEASE_51` / `FW_RELEASE_52` in `firmware/libraries/Ca
 
 | Command | What |
 |---|---|
-| `tools/cm.sh build` | 5.1 classic ESP32 (core 2.0.17): `build/carmetrics-firmware.bin`, `carmetrics-full-flash.bin`, `littlefs.bin` |
-| `tools/cm.sh build3 esp32s3` / `esp32` | compile with core 3.x (5.1 S3 image: `carmetrics-s3-*.bin`) |
-| `tools/cm.sh build52` | 5.2 S3 8 MB: `build/carmetrics-52-*.bin` |
+| `tools/cm.sh main` | main board, S3 8 MB+: `build/carmetrics-main-s3-*.bin` |
+| `tools/cm.sh worker [s3\|esp32\|c3\|c6\|relay-x8\|kc868-a4\|t-relay\|all]` | worker builds: `build/carmetrics-worker-*.bin`, `carmetrics-<relay board>-*.bin` |
+| `tools/cm.sh release` | main + all workers + displays |
 | `tools/cm.sh prototest` | PC tests of the board-to-board protocol, pairing, settings, firmware transfer, CAN framing, display role (57 checks, sanitizers) |
 | `tools/cm.sh display [jc\|cyd]` | touch display firmware: `build/carmetrics-display-*.bin` (core 3.x) |
 | `tools/cm.sh dispsim` | display screens drawn on the PC with the real UI code (`build/dispsim/*.png`) + display logic checks (27) |
-| `tools/cm.sh selftest` | firmware self-test in the ESP32 emulator (64 checks, ~6 min; QEMU has no radio). QEMU's slow flash occasionally trips a watchdog mid-run and the later checks then fail: run it again on its own, without other builds in parallel |
+| `tools/cm.sh selftest-worker` | worker self-test in the emulator (classic ESP32, worker layout; ~2 min) |
+| `tools/cm.sh selftest` | main firmware self-test in the ESP32 emulator (~6 min; QEMU has no radio). QEMU's slow flash occasionally trips a watchdog mid-run and the later checks then fail: run it again on its own, without other builds in parallel |
 | `tools/cm.sh webtest` | headless browser test of every page against `tools/webtest/mock_server.py`, and of the display's own page against `display_mock.py` |
-| `tools/cm.sh all` | all of the above (5.1 + display) |
+| `tools/cm.sh all` | all of the above |
 
 Step-by-step build guide for people (Docker on Windows, no prior setup): the Google Doc *CarMetrics – building the firmware from GitHub* in the owner's Drive, same content as `docs/BUILDING.md`.
 
-Release routine used so far: bump `FW_RELEASE_51` (and/or `_52`), run tests, commit, build, copy the three files renamed `carmetrics-<release>-*.bin`, `git format-patch` → `<release>.patch`.
+Release routine: bump `FW_VERSION` (and `DISP_VERSION`), run `tools/cm.sh all`, commit, zip the `…-full-flash.bin` / `…-firmware.bin` files, `git format-patch` since the last release → patch.
 
 ## 5. Firmware map
 
-| File | Role |
+| Where | What |
 |---|---|
-| `CarMetrics.ino` | setup / loop, config apply (`applyConfig`: settings that need a reboot) |
-| `Config.*` | all settings, JSON in/out, validation (`validateConfig`), NVS storage (`cfg` partition; slots current / previous / good) |
-| `State.*` | shared runtime state + `StateLock` (recursive mutex); `requestConfigApply` hands new settings to `loop()` |
-| `Sensors.*`, `Outputs.*` (alerts, relays), `Display.*` (OLED), `History.*` (charts, half floats, chunked reply), `BlackBox.*`, `Cloud.*` (weather, upload, net task), `Gps.*`, `Vehicle.*` (ignition, sleep, turbo timer) | phase 0/1 features |
-| `Health.*` | board metrics, safe mode, rollback, **cached storage stats**, **crash report from the core dump** |
-| `WifiMgr.*` | access point + joining saved networks (join log on System page); extra boards never join |
-| `Web.*` | HTTP API, WebSocket / SSE live data |
-| `Proto.*` | board-to-board message format (plain C++) |
-| `Link.h` | link interface + loopback (tests) |
-| `BoardNet.*` | exchange logic: `MainSession` / `NodeSession` (pairing, heartbeats, settings push, values, commands, firmware transfer) |
-| `EspNowLink.*` | ESP-NOW link (queue from radio callback, MAC learning, encryption keys) |
-| `CanFrag.*`, `CanLink.*` | CAN framing + TWAI driver link; `MultiLink` (ESP-NOW + CAN) |
-| `Boards.*` | glue: roles, channel search, NVS (`boards` / `node` namespaces), mirrors of remote sensors, firmware images, web functions |
-| `Half.h` | 16-bit floats for chart history |
-| `Selftest.cpp` | emulator self-test (only with `-DCM_EMULATOR_TEST -DCM_EMU_SELFTEST`) |
+| `libraries/CarMetricsLink/src` | `Proto.*` (message format), `Link.h`, `BoardNet.*` (`MainSession` / `NodeSession`: pairing, heartbeats, settings push, values, commands, firmware transfer), `EspNowLink.*`, `CanFrag.*`, `CanLink.*` |
+| `libraries/CarMetricsCore/src` | `Config.*` (settings, validation, NVS slots, role, `RoleScan`), `State.*` (`StateLock`), `Board.*` (profiles + custom board), `Pins.*`, `Pwm.*`, `Sensors.*`, `Outputs.*` (alerts, actuators, status light), `Discover.*`, `Health.*`, `WifiMgr.*`, `LocalDns.*`, `Gps.*`, `Keys.*`, `Route.*`, `Radio.*` (ESP-NOW / CAN start), `History.*`, `Web.*` (API core, live data, uploads, hooks), `WebApp.h` (generated by `tools/build_web.py`) |
+| `CarMetrics/` (main) | `CarMetrics.ino`, `Boards.*` (other boards: pairing, mirrors, firmware files), `WebMain.*` (boards, displays, events, weather, cloud, presets, altitude), `Display.*` (OLED), `BlackBox.*`, `Cloud.*`, `Vehicle.*`, `Selftest.cpp` |
+| `CarMetricsWorker/` | `CarMetricsWorker.ino`, `Node.*` (link to the main board), `WebWorker.*` (`/node`), `WorkerSelftest.cpp`, `partitions.csv` |
 
 ## 6. Multi-board: how it works
 
@@ -225,14 +214,18 @@ Call the boards **A** (main, the current one) and **B** (new). Flash both with t
 | Order | phase 3 (multi-board) before phase 2 (touch display) |
 | Touch displays | both JC3248W535 and CYD; ESP-NOW + Wi-Fi fallback; layout edited on the display's own page; separate firmware |
 | Default board link | ESP-NOW; CAN as option 2 |
-| First extra-board roles | sensor and relay together, one firmware |
+| First extra-board roles | sensor and relay together, one firmware (5.4: the worker firmware) |
 | Wi-Fi searching on the main board with boards paired | allowed; link loss only after 5 s |
 | Extra boards' access point | always on |
-| Releases | 5.1 all boards (4 MB OK); 5.2 S3 main board, compatible with 5.1 boards |
+| Releases | one version for every board since 5.3 |
 | OLED labels | 3 characters: CLT coolant, IT intake, GBT gearbox, TCT transfer case, CT cabin, EGT, BST, OIL; marker style = original look |
 | Ignition sense pin | GPIO 25 (RTC, internal pull-up) via opto-coupler, active low |
 | Encryption | built, off by default until bench-tested |
 | Commit messages | no Claude attribution lines (no `Co-Authored-By: Claude…` / `Claude-Session:`) |
+| Firmwares (5.4) | main = ESP32-S3 8/16 MB, built-in profiles only; worker = lean, many chips, custom board definitions; relay boards = worker builds |
+| Worker web page | its own sensors / actuators only; runs alone (own alarms and rules); the main board shows everything with a gauge board filter |
+| Worker extras | buzzer, LED, status light; no OLED, cloud, weather, file system |
+| Full-flash files | kept (USB at 0x0) |
 
 ## 12. Hardware notes
 

@@ -99,35 +99,13 @@ Analog sensors **must** use GPIO 32–39. The ESP32's other analog pins stop wor
 
 The first flash must be over USB, because it installs the new partition layout. After that, everything can be done over Wi-Fi.
 
-### Option A – no IDE: flash the full image
+### Flash the full image
 
-1. Open https://espressif.github.io/esptool-js/ in Chrome or Edge and connect the ESP32 over USB.
-2. Flash `carmetrics-full-flash.bin` (classic ESP32) or `carmetrics-s3-full-flash.bin` (ESP32-S3) at address **0x0**. This one image holds the bootloader, partitions, firmware and web app.
+1. Open https://espressif.github.io/esptool-js/ in Chrome or Edge and connect the board over USB.
+2. Flash the board's `…-full-flash.bin` at address **0x0**: `carmetrics-main-s3-full-flash.bin` for the main board (ESP32-S3, 8 or 16 MB),
+   `carmetrics-worker-<chip>-full-flash.bin` for a worker, or the relay board's own file. One image holds the bootloader, partitions and firmware (the web app is inside the firmware).
 
-### Option B – Arduino IDE 2
-
-1. **Board:** install *esp32 by Espressif* (tested with **2.0.17** and **3.3.12**) and select:
-   - **ESP32 Dev Module** for a classic ESP32, or
-   - **ESP32S3 Dev Module** for an ESP32-S3; on N8R8 / N16R8 boards also set **PSRAM** to **OPI PSRAM**.
-   - Set **Partition Scheme** to **Minimal SPIFFS**. This only sets the size limit; the real layout comes from `firmware/CarMetrics/partitions.csv`.
-   - v5 needs no new libraries.
-2. **Libraries:** install these from the Library Manager (versions tested):
-   - ArduinoJson 7.2.1
-   - ESP Async WebServer 3.12.1 *and* Async TCP 4.0.0 – the **ESP32Async** versions
-   - U8g2 2.37.1
-   - OneWire 2.3.8
-   - DallasTemperature 4.0.6
-   - Adafruit MAX6675 1.1.2
-   - Adafruit BMP280 3.0.0
-   - Adafruit BMP085 1.2.4
-   - Adafruit ADS1X15 2.6.2
-   - Adafruit MCP9600 2.0.4 (Adafruit Unified Sensor and BusIO install with these)
-3. **Firmware:** open `firmware/CarMetrics/CarMetrics.ino` and upload.
-4. **Web app:**
-   1. Run `python3 tools/build_web.py`. This writes `firmware/CarMetrics/data/` and, if it finds `mklittlefs`, `build/littlefs.bin`.
-   2. Get it onto the ESP32 in one of two ways:
-      - Upload `data/` with the *LittleFS upload* plugin.
-      - Join the Wi-Fi and open http://192.168.4.1. Until the web app is installed, the ESP32 shows a simple upload page; upload `littlefs.bin` there.
+How to build these files (Docker on Windows, or Linux), and the Arduino IDE settings: `docs/BUILDING.md`.
 
 ## Using it
 
@@ -137,19 +115,18 @@ The first flash must be over USB, because it installs the new partition layout. 
 3. **Assign temperature sensors:** on the **Sensors** page, press **Scan**, assign each 1-Wire address, then **Save changes**.
 4. **Check the analog sensors:** the editor shows the live voltage at each sensor, which helps you confirm the calibration.
 
-**Updating later:**
-
-1. **Build the firmware file:** in Arduino IDE use *Sketch → Export Compiled Binary*. It writes `CarMetrics.ino.bin`.
-2. **Build the web app file:** run `tools/build_web.py`. It writes `littlefs.bin`.
-3. **Upload:** on the **System → Firmware & web app update** page, pick the file and press Upload. This works from a phone.
+**Updating later:** on **System → Data → Firmware update**, pick the board's `…-firmware.bin` and upload (works from a phone). Workers can also be updated from the main board's **Boards** tab.
 
 ## Project layout
 
 ```
-firmware/CarMetrics/   ESP32 firmware (Arduino sketch, split into modules – see header of CarMetrics.ino)
-web/                   web app sources (plain HTML/JS/CSS, no build step besides gzip)
-tools/build_web.py     gzips web/ into firmware data/ and builds littlefs.bin
-legacy/                previous Arduino + ESP32 versions
+firmware/CarMetrics/         main board firmware (ESP32-S3 8/16 MB)
+firmware/CarMetricsWorker/   worker firmware (S3, ESP32, C3, C6, relay boards)
+firmware/CarMetricsDisplay/  touch display firmware
+firmware/libraries/          shared code: CarMetricsLink (board-to-board), CarMetricsCore (settings, sensors, actuators, API, web app)
+web/                         web app sources (plain HTML/JS/CSS; tools/build_web.py compiles them into the firmware)
+tools/cm.sh                  build and test commands (docs/BUILDING.md)
+legacy/                      previous Arduino + ESP32 versions
 ```
 
 ## Internet features

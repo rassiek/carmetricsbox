@@ -11,18 +11,28 @@ ready-made Docker "box" that has exactly the tools the firmware was developed wi
 
 ## What you will get
 
+Since 5.4 there are two firmwares: the **main** board (ESP32-S3 with 8 or 16 MB flash only) and the lean
+**worker** (sensors and actuators; it works with a main board or on its own). Ready-made relay boards get a
+worker build that starts with their relays set up.
+
 | You want to flash… | Command (see *Build the firmware*) | Files it makes in the `build` folder |
 |---|---|---|
-| Main board, ESP32-S3 with 8 or 16 MB flash (recommended) | `tools/cm.sh build52` | `carmetrics-52-full-flash.bin` (USB), `carmetrics-52-firmware.bin` + `carmetrics-52-webapp.bin` (Wi-Fi) |
-| Worker board (sensors / actuators), classic ESP32 | `tools/cm.sh build` | `carmetrics-full-flash.bin` (USB), `carmetrics-firmware.bin` + `carmetrics-webapp.bin` (Wi-Fi) |
-| Worker board, ESP32-S3 with 4 MB flash | `tools/cm.sh build3 esp32s3` | `carmetrics-s3-full-flash.bin` (USB), `carmetrics-s3-firmware.bin` + `carmetrics-webapp.bin` (Wi-Fi) |
-| ESP32 Relay X8 (8-relay board, starts as a relay worker) | `tools/cm.sh relayx8` | `carmetrics-relay-x8-full-flash.bin` (USB), `carmetrics-relay-x8-firmware.bin` + `carmetrics-webapp.bin` (Wi-Fi) |
-| Touch display JC3248W535 | `tools/cm.sh display jc` | `carmetrics-display-jc3248w535-full-flash.bin`, `…-firmware.bin` |
-| Touch display Cheap Yellow Display (ESP32-2432S028R) | `tools/cm.sh display cyd` | `carmetrics-display-cyd-full-flash.bin`, `…-firmware.bin` |
+| Main board, ESP32-S3 with 8 or 16 MB flash | `tools/cm.sh main` | `carmetrics-main-s3-full-flash.bin`, `carmetrics-main-s3-firmware.bin` |
+| Worker, ESP32-S3 (4 MB or more): also keeps charts | `tools/cm.sh worker s3` | `carmetrics-worker-s3-full-flash.bin`, `carmetrics-worker-s3-firmware.bin` |
+| Worker, classic ESP32 (DevKit, WROOM, WROVER) | `tools/cm.sh worker esp32` | `carmetrics-worker-esp32-…` |
+| Worker, ESP32-C3 (SuperMini, DevKitM) | `tools/cm.sh worker c3` | `carmetrics-worker-c3-…` |
+| Worker, ESP32-C6 | `tools/cm.sh worker c6` | `carmetrics-worker-c6-…` |
+| ESP32 Relay X8 (8 relays) | `tools/cm.sh worker relay-x8` | `carmetrics-relay-x8-…` |
+| KinCony KC868-A4 | `tools/cm.sh worker kc868-a4` | `carmetrics-kc868-a4-…` |
+| LilyGO T-Relay | `tools/cm.sh worker t-relay` | `carmetrics-t-relay-…` |
+| Touch display JC3248W535 / Cheap Yellow Display | `tools/cm.sh display jc` / `display cyd` | `carmetrics-display-…-full-flash.bin`, `…-firmware.bin` |
 
-Every board runs the same release (5.3.0-…); the build only decides the chip, the flash layout and how a fresh board starts.
+`tools/cm.sh worker` alone builds all workers; `tools/cm.sh release` builds everything.
 
-**full-flash** = everything, for USB at address **0x0** (one file; it also wipes the web app area clean). **firmware** + **webapp** = for updating over Wi-Fi from the board's own page (the web app file holds only the part with data, so it is small).
+**full-flash** = for USB at address **0x0** (one file). **firmware** = for updating over Wi-Fi; the web app is inside it,
+so it is the only file you need. A board refuses the other kind's firmware (a main firmware on a worker or the other way round).
+
+A worker with a board that is not in the list: **System → Hardware → Custom board** (its pins, checked against the chip).
 
 ## Install the tools (once)
 
@@ -77,16 +87,16 @@ Smaller box without the browser used for the web tests (saves ~500 MB): `docker 
 Always from the `carmetricsbox` folder, with Docker Desktop running:
 
 ```powershell
-docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh build
+docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh main
 ```
 
 - `-v "${PWD}:/work"` lets the box see your folder; the results land in **`carmetricsbox\build\`**.
 - A good build ends with a line like `Sketch uses 1474669 bytes (75%)` and the list of files.
 
-For another board, replace `build` by its command from the table under *What you will get*, for example (`display` alone builds both screens):
+For another board, replace `main` by its command from the table under *What you will get*, for example (`worker` alone builds all workers, `display` both screens):
 
 ```powershell
-docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh build52
+docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh worker c3
 docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh display
 ```
 
@@ -94,7 +104,7 @@ Open the folder in Explorer: `explorer build`.
 
 ## Flash a board
 
-### Over USB (first time, or after a partition change such as 5.1 → 5.2)
+### Over USB (first time, or after a partition change)
 
 1. Plug the board in with a **data** USB cable.
 2. Open [https://espressif.github.io/esptool-js/](https://espressif.github.io/esptool-js/) in **Chrome or Edge**.
@@ -103,10 +113,14 @@ Open the folder in Explorer: `explorer build`.
 5. **Don't tick *Erase flash*** (your settings would be lost; the full image leaves them alone).
 6. **Program**, wait for *Leaving…*, press **RST**.
 
+**Going to 5.4:** a 5.3 board that becomes a **worker** can take `carmetrics-worker-…-firmware.bin` over Wi-Fi
+(settings are kept). One USB flash of the worker's full-flash file gives it the worker layout with bigger firmware slots;
+the build prints a *NOTE* when a worker no longer fits the 5.3 layout. C3 and C6 boards are new: USB first.
+
 ### Over Wi-Fi (later updates)
 
-- **Main board / worker on its own Wi-Fi:** its web page → **System → Data** → *Firmware update*: first `…-firmware.bin`, then the web app file (`…-webapp.bin`). Both from the same release.
-- **Another board from the main board:** **Boards** tab → that board's card → *Firmware* → send this board's firmware (same chip) or choose its `…-firmware.bin`.
+- **Main board / worker on its own Wi-Fi:** its web page → **System → Data** → *Firmware update* → its `…-firmware.bin` (one file).
+- **A worker from the main board:** **Boards** tab → that board's card → *Firmware* → choose its `…-firmware.bin` (worker or relay board file for its chip).
 - **Touch display:** its own page (http://192.168.5.1/ on its Wi-Fi *CarMetrics-Display-xxxx*) → **Firmware**, or from the main board's Boards page.
 
 ## Check it worked
@@ -121,7 +135,7 @@ Open the folder in Explorer: `explorer build`.
 docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh all
 ```
 
-About 15 minutes: protocol tests, all builds, the display screens drawn on the PC (`build\dispsim\*.png`), the firmware self-test in the ESP32 emulator, and the web pages in a headless browser (`build\webtest\*.png`). It ends with `SELFTEST PASSED` and `ALL PASSED`.
+About 25 minutes: protocol tests, all builds, the display screens drawn on the PC (`build\dispsim\*.png`), the main and worker self-tests in the ESP32 emulator, and the web pages (main board and worker) in a headless browser (`build\webtest\*.png`). It ends with `SELFTEST PASSED` and `ALL PASSED`.
 
 ## Building a specific release
 
@@ -130,7 +144,7 @@ Releases are commits on the `v5` branch. To build an older one:
 ```powershell
 git log --oneline -15          # find it, e.g. f73529d 5.1.0-beta.10 ...
 git checkout f73529d
-docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh build
+docker run --rm -v "${PWD}:/work" carmetrics-dev tools/cm.sh build   # before 5.4; 5.4 and later: release
 git checkout v5                # back to the newest
 ```
 
@@ -153,9 +167,9 @@ git checkout v5                # back to the newest
 sudo apt install ca-certificates curl git xz-utils bzip2 unzip zip python3 python3-pil python3-serial g++ libslirp0 libsdl2-2.0-0 libglib2.0-0 libgcrypt20
 git clone -b v5 https://github.com/rassiek/carmetricsbox.git && cd carmetricsbox
 sudo CM_PREFIX=/opt/cm bash devenv/setup-toolchain.sh
-tools/cm.sh build
+tools/cm.sh main
 ```
 
 ## Arduino IDE (if you prefer it)
 
-Possible, but the scripts above set many options for you. Main firmware: open `firmware/CarMetrics/CarMetrics.ino`, board *ESP32 Dev Module*, core **2.0.17**, Partition scheme *Minimal SPIFFS*, libraries at the versions in `devenv/versions.env`; the web app still has to be built with `tools/build_web.py`. Display: core **3.x**, copy `Proto.*`, `BoardNet.*`, `Link.h`, `EspNowLink.*` from `firmware/CarMetrics/` next to `CarMetricsDisplay.ino` first; JC3248W535: *ESP32S3 Dev Module*, PSRAM *OPI*, USB CDC on boot *Enabled*.
+Possible, but the scripts above set many options for you. Copy `firmware/libraries/CarMetricsLink` and `CarMetricsCore` into your Arduino `libraries` folder and run `tools/build_web.py` once (it writes the web app into `CarMetricsCore/src/WebApp.h`). Main firmware: `firmware/CarMetrics/CarMetrics.ino`, *ESP32S3 Dev Module*, core **3.x**, flash 8 MB, PSRAM *OPI*, partitions from `firmware/partitions-8MB-v52.csv`, build flag `-DCM_V52`. Worker: `firmware/CarMetricsWorker/CarMetricsWorker.ino` (it has its own `partitions.csv`), add `-DCM_WORKER` to the build flags (and `-DCM_WORKER_PLUS` on an S3). Libraries at the versions in `devenv/versions.env`. Display: core **3.x**, copy `Proto.*`, `BoardNet.*`, `Link.h`, `EspNowLink.*` from `firmware/CarMetrics/` next to `CarMetricsDisplay.ino` first; JC3248W535: *ESP32S3 Dev Module*, PSRAM *OPI*, USB CDC on boot *Enabled*.

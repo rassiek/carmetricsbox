@@ -1,4 +1,4 @@
-# CarMetrics 5.3 — design
+# CarMetrics 5.4 — design
 
 Status: **draft for review** (before the 5.3.0 code changes). Replaces the scattered
 phase plans as the one description of how CarMetrics is built and how it grows.
@@ -50,27 +50,33 @@ that 5.3 merges into one version.
 
 ## 2. Boards and roles
 
-| Role | Boards | Does |
-|---|---|---|
-| **Main** | ESP32-S3 with PSRAM, 8 or 16 MB (N8R8, N16R8) — one build for both | web app, dashboards, 8 h charts, alarms, black box, cloud upload with offline buffer, weather, pairs and manages the other boards |
-| **Worker** (sensor / actuator) | anything: classic ESP32 4 MB, S3 4/8 MB, ready-made relay boards (ESP32 Relay X8), KinCony KC868 | its own sensors and outputs, local alarms, safe state on link loss, small setup page, firmware from the main board |
-| **Display** | JC3248W535 (S3, 3.5" 320×480), Cheap Yellow Display ESP32-2432S028R (2.8" 320×240) | pages of dials / bars / numbers, relay buttons, mute, alarm banner, limit editor; own layout editor |
+Since 5.4 each role has its own firmware, built from shared libraries
+(`firmware/libraries/CarMetricsLink`: board-to-board protocol and links;
+`CarMetricsCore`: settings, sensors, actuators, alerts, health, Wi-Fi, the API core and the web app).
 
-A classic ESP32 can still run as a main board with reduced history and buffers; it
-is supported, not recommended.
+| Role | Firmware | Boards | Does |
+|---|---|---|---|
+| **Main** | `firmware/CarMetrics` | ESP32-S3 with PSRAM, 8 or 16 MB (N8R8, N16R8) — built-in profiles only | web app, dashboards, 8 h charts, alarms, black box, cloud upload with offline buffer, weather, presets; pairs and manages the other boards and displays, shows all their values (gauge board filter) |
+| **Worker** | `firmware/CarMetricsWorker` | ESP32-S3 4 MB+, classic ESP32, ESP32-C3, ESP32-C6, ready-made relay boards (Relay X8, KC868-A4, T-Relay); any other board through a **custom board** definition | its own sensors and outputs, its own alarms and rules, safe state on link loss; its own web page (only its own gauges and actuators) — works with a main board or alone; no file system, no cloud, weather, OLED or other boards |
+| **Display** | `firmware/CarMetricsDisplay` | JC3248W535 (S3, 3.5" 320×480), Cheap Yellow Display ESP32-2432S028R (2.8" 320×240) | pages of dials / bars / numbers, relay buttons, mute, alarm banner, limit editor; own layout editor |
+
+The role is decided by the firmware (`setFirmwareRole` first thing in `setup()`), not a setting.
+Each image carries a role tag (`RoleScan`), so a board refuses the other role's firmware over Wi-Fi
+and the main board never sends its own firmware to another board.
 
 ### 2.1 Build variants (one version, several files)
 
-| Variant | File prefix | Boards |
+| Variant | Files | Boards |
 |---|---|---|
-| `s3-8mb` | `carmetrics-5.3.0-s3-8mb-` | main board (8 or 16 MB, PSRAM); any role |
-| `s3-4mb` | `carmetrics-5.3.0-s3-4mb-` | workers on 4 MB S3 |
-| `esp32` | `carmetrics-5.3.0-esp32-` | classic ESP32 workers (DevKit, carriers) |
-| `relay-x8` | `carmetrics-5.3.0-relay-x8-` | the ESP32 Relay X8 board: `esp32` build that starts as a **relay worker** with the board profile preselected |
-| `display-jc3248w535`, `display-cyd` | `carmetrics-display-5.3.0-…` | touch displays |
+| `main-s3` | `carmetrics-main-s3-…` | main board (8 or 16 MB, PSRAM) |
+| `worker-s3` | `carmetrics-worker-s3-…` | S3 workers (4 MB+); also keeps chart history (`CM_WORKER_PLUS`) |
+| `worker-esp32`, `worker-c3`, `worker-c6` | `carmetrics-worker-<chip>-…` | generic workers |
+| `relay-x8`, `kc868-a4`, `t-relay` | `carmetrics-<board>-…` | worker builds that start with the board's profile and relays |
+| `display-jc3248w535`, `display-cyd` | `carmetrics-display-…` | touch displays |
 
-Each comes as `-full-flash.bin` (USB, address 0x0, keeps settings), `-firmware.bin`
-and, for boards with a web app, `-littlefs.bin`.
+Each comes as `-full-flash.bin` (USB, address 0x0, keeps settings) and `-firmware.bin`
+(Wi-Fi; the web app is compiled into it). Worker layout (`firmware/CarMetricsWorker/partitions.csv`):
+two 1.875 MB firmware slots, settings and core dump at the same place as 5.3, no file system.
 
 ### 2.2 Board profiles
 
@@ -188,8 +194,13 @@ Five pages; every name below is a default (section 7).
 | **Dashboard** | tiles: dial, bar, number, trend line, tilt (roll / pitch), relay button. Views: Gauges / Charts / Events. Weather card. ✎ edits the layout in place (pages, tiles, sizes, names) |
 | **Sensors** | list (board selector for other boards), editor built from the driver schema, **Discover** |
 | **Actuators** | list, editor, rule editor (threshold / curve / condition), manual controls |
-| **Boards** | other boards and displays: pair, status, controls, firmware |
+| **Boards** | other boards and displays: pair, status, controls, firmware (main board only) |
 | **System** | **Status** (health, crash, firmware, backup) · **Network** (own Wi-Fi, scan and saved networks in one list, join log) · **Hardware** (board profile, pin map + pin tester, buses, OLED + its layout, RGB, buzzer, ignition, GPS, engine-running detection, turbo timer) · **Data** (cloud upload, weather, altitude) |
+
+The pages follow `GET /info` `capabilities`: on a worker there is no Boards tab, no charts / events
+unless it keeps history, no weather, cloud, presets, OLED or altitude; System → Status shows its main
+board (paired, link, forget) and System → Hardware its custom board definition. A gauge without a
+reading shows "--" and one short reason on the tile.
 
 Shared building blocks (cards, forms from schema, tables, the dial drawing) live in
 one module; the dial is the same design as on the touch display. Every page works at

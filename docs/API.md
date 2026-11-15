@@ -59,7 +59,12 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | Request | Reply / effect |
 |---|---|
 | `GET /api/v1` | index: `{"api": 1, "links": {...}}` |
-| `GET /info` | `appName`, `machineName`, `firmware`, `build`, `variant`, `api: [1]`, `protocol: 1`, `role`, `board` (profile id + name), `chip`, `capabilities: ["actuators","pwm","history","cloud",...]`, `uptimeS`, `epoch` |
+| `GET /info` | `appName`, `machineName`, `firmware`, `build`, `variant`, `api: [1]`, `protocol: 1`, `role`, `board` (profile id + name), `chip`, `capabilities` (see below), `uptimeS`, `epoch` |
+
+`role` is `main` or `worker` (5.4: two firmwares). `capabilities` says what this firmware serves; the web app shows only those parts:
+every board has `sensors`, `actuators`, `pwm`, `discover`, `pins`, `keys`; a main board adds `boards`, `displays`, `history`,
+`events`, `cloud`, `weather`, `presets`; a worker adds `standalone` and `customBoard` (`history` on an ESP32-S3 worker).
+Routes of a part a board doesn't have answer 404.
 | `GET /system` | health: memory, PSRAM, storage, CPU, loop timing, tasks, Wi-Fi, reset history, safe mode |
 | `GET /system/crash` / `DELETE` | last crash summary (backtrace) / clear it |
 | `GET /system/crash/dump` | core dump file (ELF) |
@@ -113,7 +118,7 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `PATCH /boards/{id}` `{"name":".."}` | rename |
 | `DELETE /boards/{id}` | forget |
 | `POST /boards/{id}/command` | `{"cmd":"identify"|"reboot"|"mute"|"resend","minutes":15}` |
-| `POST /boards/{id}/firmware` `{"source":"self"}` / `PUT /boards/firmware-file` (raw file body) then `{"source":"file"}` / `{"source":"cancel"}` | update another board; progress in `GET /boards` |
+| `PUT /boards/firmware-file` (raw file body) then `POST /boards/{id}/firmware` `{"source":"file"}` / `{"source":"cancel"}` | update another board with its own file (5.4: the main firmware is never sent on; a main-board file or a worker file for a display is refused); progress in `GET /boards` |
 | `GET /displays/catalog`, `GET /displays/values`, `POST /displays/command` | what the touch displays use over Wi-Fi (same data as over ESP-NOW) |
 
 ### 2.7 Settings
@@ -136,7 +141,10 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `GET /hardware/profiles` | board profiles for this chip, the current one and the detected one |
 | `POST /hardware/profile` `{"board":"relay_x8","applyPins":true}` | choose the board profile (optionally move pins to its defaults) |
 | `POST /hardware/status-light/test` `{"which":"builtin"|"external"}` | cycle red, green, blue |
-| `POST /hardware/altitude` `{"altitudeM":1661}` | sea-level pressure reference from a known altitude |
+| `POST /hardware/altitude` `{"altitudeM":1661}` | sea-level pressure reference from a known altitude (main board) |
+| `GET /hardware/custom-board` | worker: the custom board definition (404 when there is none) |
+| `POST /hardware/custom-board` `{"name":"Pump board","flashMB":4,"valid":"2, 4, 13-19, 21-23, 25-27, 32-39","output":[…],"adc1":"32-39","rtc":"…","caution":"…","defaults":{"i2cSda":21,"i2cScl":22,"oneWirePin":4,"buzzerPin":-1,"ledPin":2},"fixed":{"relays":[16,17],"relaysActiveLow":true,"inputs":[],"inputsActiveLow":true,"rgb":-1},"notes":""}` | worker: check and save a custom board (pins as lists or text ranges; refused when the chip can't use a pin, or the settings in use no longer fit); then choose `"board":"custom"` with `POST /hardware/profile`. Kept apart from the settings (a reset or restore keeps it) |
+| `DELETE /hardware/custom-board` | worker: remove it (refused while in use) |
 
 ### 2.9 Network
 
@@ -154,7 +162,9 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `GET /events` / `GET /events/{id}` / `DELETE /events` | black box: list / one event with the minute of data around it / clear |
 | `GET /weather`, `POST /weather/refresh` | weather card data |
 | `GET /cloud`, `POST /cloud/flush`, `DELETE /cloud/backlog` | metrics upload status / send now / drop what is waiting |
-| `PUT /firmware` / `PUT /firmware?target=webapp` | raw file body (`application/octet-stream`) → installs, restarts |
+| `PUT /firmware` | raw file body (`application/octet-stream`, the `…-firmware.bin`; the web app is inside it) → installs, restarts. A file tagged for the other role (main / worker) is refused |
+| `GET /node` | worker: `{"role":"worker","link":{…},"node":{"paired","id","linkUp","mainInRange","configRev","encrypted"}}` |
+| `POST /node/unpair` | worker: forget the main board (it can add this board again) |
 | `GET /keys`, `POST /keys` `{"name":"Grafana","scope":"read"}` (the key is shown once), `DELETE /keys/{id}` | API keys. Scope `admin` |
 
 ---

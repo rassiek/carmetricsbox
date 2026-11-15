@@ -4,6 +4,14 @@ How to add a sensor type, an actuator type, a board profile, a metrics output, a
 preset or an API address, and where to put the tests. Design: `docs/DESIGN.md`;
 API rules: `docs/API.md`.
 
+Where code lives (5.4): shared parts in `firmware/libraries/CarMetricsCore/src`
+(settings, sensors, actuators, board profiles, API core, web app) and
+`CarMetricsLink/src` (board-to-board protocol); main-only parts in `firmware/CarMetrics`
+(boards, displays, cloud, weather, black box, OLED: `WebMain.cpp` adds their routes);
+worker-only parts in `firmware/CarMetricsWorker` (`Node`, `WebWorker.cpp`). A part
+a firmware adds is announced in `/info` `capabilities` (`Web::setInfo`) and the web app
+shows it only then (`CM.has(...)`).
+
 General rules: one place decides each thing; settings are validated when saved
 (`validateConfig`), never when used; hardware is only touched from `loop()`;
 web handlers copy what they need under `StateLock` and never wait for hardware.
@@ -50,11 +58,12 @@ value). Add it to `rules` in web/schema.js.
 
 **Board.cpp** — one `BoardProfile` entry: GPIO masks (`valid`, `output`, `adc1`,
 `caution`, `rtc`), default pins (`BoardPins`), fixed parts (`BoardFixed`:
-built-in RGB, relays + polarity, opto inputs, the role a fresh board starts in)
-and a note people will read. Give the source of the pin map in a comment.
-A board that should start pre-set gets a build variant: a `-D` flag checked in
-`Board::detected()` and a command in `tools/cm.sh` (see `relayx8`).
-Test: a "defaults valid" case in Selftest.cpp.
+built-in RGB, relays + polarity, opto inputs) and a note people will read. Give the
+source of the pin map in a comment. A board that should start pre-set gets a worker
+build variant: a `-D` flag checked in `Board::detected()`, a line in the `CM_VARIANT`
+block of Config.h and a case in `cmd_worker` in `tools/cm.sh` (see `relay-x8`).
+Test: a "defaults valid" case in Selftest.cpp. Main boards stay on the built-in S3
+profiles; a one-off worker board needs no code at all: System → Hardware → Custom board.
 
 ## 5. A metrics output
 
@@ -72,7 +81,7 @@ Add `web/presets/<name>.json`: any part of the settings (same shape as
 
 ## 7. An API address
 
-**Web.cpp** — a handler `void hThing(Ctx& c)` and one line in `kRoutes`
+**Web.cpp** (every board) or **WebMain.cpp** / **WebWorker.cpp** (one firmware) — a handler `void hThing(Ctx& c)` and one line in the route table
 (`method, path, scope, handler`); `*` matches one path part (`c.p[0]`). Reply with
 `sendJson` / `sendOk` / `sendError`. Document it in `docs/API.md` (and the
 changelog table there). Add a mock version to `tools/webtest/mock_server.py` if
@@ -90,7 +99,8 @@ known integrations have moved (see `docs/DESIGN.md`).
 | Command | What |
 |---|---|
 | `tools/cm.sh prototest` | board protocol, firmware transfer, CAN, display link, API path matching (PC, seconds) |
-| `tools/cm.sh selftest` | the firmware in the ESP32 emulator (~6 min, run it alone) |
-| `tools/cm.sh webtest` | web app + display page in a headless browser against the mock board |
+| `tools/cm.sh selftest` | the main firmware in the ESP32 emulator (~6 min, run it alone) |
+| `tools/cm.sh selftest-worker` | the worker firmware in the emulator: role, running alone, custom board, settings (~2 min) |
+| `tools/cm.sh webtest` | web app (main board and worker) + display page in a headless browser against the mock board |
 | `tools/cm.sh dispsim` | touch display screens drawn on the PC |
 | `tools/cm.sh all` | everything, plus all builds |
