@@ -37,6 +37,14 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await api('/sensors/coolant_temp')).warnHigh === 97, 'limits changed from the dial', await toast());
   await go('#dashboard/charts', 1500);
   check((await p.locator('canvas.chart').count()) >= 5, 'charts view');
+  const temps = p.locator('.panel', { has: p.locator('b', { hasText: /^Temperatures$/ }) });
+  check((await temps.locator('.chip').count()) >= 4, 'temperatures (not EGT) share one chart', await temps.locator('.chips').textContent().catch(() => ''));
+  check(await p.locator('.panel b', { hasText: /^Exhaust \/ thermocouples$/ }).isVisible(), 'EGT on its own axis');
+  const press = p.locator('.panel', { has: p.locator('b', { hasText: /^Pressures$/ }) });
+  check(/Boost/.test(await press.textContent()) && /Oil pressure/.test(await press.textContent()), 'boost and oil pressure share one chart');
+  check(await p.locator('.panel b', { hasText: /^Altitude$/ }).isVisible() && await p.locator('.panel b', { hasText: /^Outputs$/ }).isVisible(), 'altitude and actuator outputs plotted');
+  check((await p.locator('details summary', { hasText: 'Board health' }).count()) === 1, 'board health charts');
+  await p.screenshot({ path: `${OUT}/charts.png`, fullPage: true });
   await go('#dashboard/events');
   await p.locator('text=Show').first().click(); await p.waitForTimeout(500);
   check((await p.locator('canvas.chart').count()) >= 2, 'event recording opens');

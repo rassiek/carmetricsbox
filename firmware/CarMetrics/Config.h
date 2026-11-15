@@ -94,6 +94,7 @@ struct SensorConfig {
   float gaugeMin = 0, gaugeMax = 100;
   OledStyle oledStyle = OledStyle::TEXT;
   String oledLabel;        // up to 3 chars, e.g. "CT"
+  String chartGroup;       // charts: "" = with the same kind of sensor, "own" = a chart of its own, or a group name
 
   // --- alerts (NAN = disabled) ---
   float warnHigh = NAN, critHigh = NAN, warnLow = NAN, critLow = NAN;

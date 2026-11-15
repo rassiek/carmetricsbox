@@ -253,6 +253,7 @@ void sensorToJson(const SensorConfig& s, JsonObject o) {
   putF(o, "offset", s.offset); putF(o, "smoothing", s.smoothing);
   o["decimals"] = s.decimals; putF(o, "gaugeMin", s.gaugeMin); putF(o, "gaugeMax", s.gaugeMax);
   o["oledStyle"] = oledStyleToStr(s.oledStyle); o["oledLabel"] = s.oledLabel;
+  if (s.chartGroup.length()) o["chartGroup"] = s.chartGroup;
   putF(o, "warnHigh", s.warnHigh); putF(o, "critHigh", s.critHigh);
   putF(o, "warnLow", s.warnLow); putF(o, "critLow", s.critLow);
   putF(o, "hysteresis", s.hysteresis); o["engineRunningOnly"] = s.engineRunningOnly; o["faultAlarm"] = s.faultAlarm;
@@ -353,6 +354,7 @@ static bool sensorFromJson(JsonObjectConst o, SensorConfig& s, String& err) {
   s.gaugeMin = getF(o, "gaugeMin", 0); s.gaugeMax = getF(o, "gaugeMax", 100);
   s.oledStyle = oledStyleFromStr(getS(o, "oledStyle", "text"));
   s.oledLabel = getS(o, "oledLabel", ""); if (s.oledLabel.length() > 3) s.oledLabel = s.oledLabel.substring(0, 3);
+  s.chartGroup = getS(o, "chartGroup", ""); if (s.chartGroup.length() > 16) s.chartGroup = s.chartGroup.substring(0, 16);
   s.warnHigh = getF(o, "warnHigh", NAN); s.critHigh = getF(o, "critHigh", NAN);
   s.warnLow = getF(o, "warnLow", NAN); s.critLow = getF(o, "critLow", NAN);
   s.hysteresis = getF(o, "hysteresis", 1); if (isnan(s.hysteresis) || s.hysteresis < 0) s.hysteresis = 0;

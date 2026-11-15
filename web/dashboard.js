@@ -88,34 +88,83 @@
   }
 
   // ---- charts from the board's history
+  // ---- charts: values of the same kind share one chart (same unit; thermocouples apart),
+  // a sensor's "Chart" setting puts it on its own or in a named group.
+  const PAL = ['#3fa7ff', '#f4a340', '#34c77b', '#e05ad6', '#ffd84d', '#5fd3e6', '#ff6b6b', '#a0a8ff'];
+  const SYS = { sys_heap_free_kb: ['Free memory', 'KB', 'mem'], sys_heap_min_kb: ['Lowest free memory', 'KB', 'mem'], sys_cpu0: ['CPU 0', '%', 'cpu'],
+                sys_cpu1: ['CPU 1', '%', 'cpu'], sys_loop_max_ms: ['Slowest loop', 'ms', 'loop'], sys_rssi: ['Wi-Fi signal', 'dBm', 'rssi'] };
+  const TITLES = { tc: 'Exhaust / thermocouples', '°C': 'Temperatures', '°F': 'Temperatures', psi: 'Pressures', bar: 'Pressures', kPa: 'Pressures',
+                   V: 'Voltages', A: 'Currents', m: 'Altitude', 'km/h': 'Speed', mph: 'Speed', kn: 'Speed', rpm: 'Engine speed', RPM: 'Engine speed' };
+  // id -> {name, unit (as shown), dec, key, title, s (sensor settings, for limits), kind}
+  function seriesInfo(id) {
+    const s = sensorsCfg().find(x => x.id === id);
+    if (s) {
+      if (!s.enabled) return null;
+      const unit = fmt(null, s.unit)[1];
+      const tc = ['max6675', 'mcp9600'].includes(s.type) || (s.type === 'remote' && /°/.test(s.unit) && (s.gaugeMax || 0) >= 400);
+      const g = s.chartGroup || '';
+      const key = g === 'own' || (!g && !unit) ? 'own:' + id : g ? 'g:' + g : tc ? 'tc' : 'u:' + unit;
+      const title = g === 'own' || key.startsWith('own') ? s.name : g ? g : tc ? TITLES.tc : TITLES[unit] || null;
+      return { name: s.name, unit, dec: s.decimals, key, title, s, kind: 'sensor' };
+    }
+    const a = ((S.settings && S.settings.relays) || []).find(x => x.id === id);
+    if (a) {
+      if (!a.enabled) return null;
+      const unit = a.type === 'relay' ? 'on/off' : a.type === 'servo' ? '°' : '%';
+      return { name: a.name, unit, dec: 0, key: 'act:' + unit, title: a.type === 'relay' ? 'Switches' : a.type === 'servo' ? 'Servos' : 'Outputs', kind: 'actuator' };
+    }
+    const y = SYS[id];
+    if (y) return { name: y[0], unit: y[1], dec: 1, key: 'sys:' + y[2], title: `Board: ${y[2] === 'mem' ? 'memory' : y[2] === 'cpu' ? 'CPU' : y[0].toLowerCase()}`, kind: 'system' };
+    return null;
+  }
+  function groupSeries(ids) {
+    const groups = new Map();
+    for (const id of ids) {
+      const i = seriesInfo(id); if (!i) continue;
+      if (!groups.has(i.key)) groups.set(i.key, { key: i.key, title: i.title, unit: i.unit, kind: i.kind, items: [] });
+      groups.get(i.key).items.push({ id, ...i });
+    }
+    for (const g of groups.values()) if (!g.title) g.title = g.items.map(x => x.name).join(', ');
+    return [...groups.values()];
+  }
+  function chartPanel(g, valsOf, step, height = 170) {
+    const c = h('canvas', { class: 'chart', width: 900, height });
+    const legend = g.items.length > 1 ? h('div', { class: 'chips' }, g.items.map((x, k) => h('span', { class: 'chip' }, [h('i', { style: `background:${PAL[k % PAL.length]}` }), x.name]))) : null;
+    const p = h('div', { class: 'panel' }, [h('div', { class: 'row' }, [h('b', {}, g.title), h('span', { class: 'muted small' }, g.unit)]), legend, c]);
+    drawChart(c, g.items.map((x, k) => ({ vals: valsOf(x), color: PAL[k % PAL.length], s: x.s, dec: x.dec })), step);
+    return p;
+  }
   async function renderCharts(box) {
     let d;
     try { d = await get('/history'); } catch (e) { return err(e); }
-    const names = Object.fromEntries(sensorsCfg().map(s => [s.id, s]));
-    const ids = Object.keys(d.series || {}).filter(id => names[id] && names[id].enabled);
-    box.append(h('p', { class: 'muted small' }, `Last ${Math.round(d.count * d.interval / 60)} min, one point every ${d.interval} s.`));
-    for (const id of ids) {
-      const s = names[id], vals = d.series[id].map(v => v == null ? null : conv(v, s.unit)[0]);
-      const c = h('canvas', { class: 'chart', width: 900, height: 160 });
-      box.append(h('div', { class: 'panel' }, [h('div', { class: 'row' }, [h('b', {}, s.name), h('span', { class: 'muted small' }, fmt(null, s.unit)[1])]), c]));
-      drawChart(c, vals, d.interval, s);
-    }
+    box.append(h('p', { class: 'muted small' }, `Last ${Math.round(d.count * d.interval / 60)} min, one point every ${d.interval} s. Values of the same kind share a chart; a sensor's "Chart" setting can put it on its own.`));
+    const valsOf = x => d.series[x.id].map(v => v == null ? null : x.kind === 'sensor' ? conv(v, x.s.unit)[0] : v);
+    const groups = groupSeries(Object.keys(d.series || {}));
+    for (const g of groups.filter(g => g.kind !== 'system')) box.append(chartPanel(g, valsOf, d.interval));
+    const sys = groups.filter(g => g.kind === 'system');
+    if (sys.length) box.append(h('details', {}, [h('summary', {}, 'Board health'), ...sys.map(g => chartPanel(g, valsOf, d.interval, 130))]));
   }
-  function drawChart(c, vals, step, s) {
-    const g = c.getContext('2d'), W = c.width, H = c.height, L = 40;
-    const v = vals.filter(x => x != null);
-    if (v.length < 2) { g.fillStyle = '#8b9ab0'; g.font = '16px sans-serif'; g.fillText('No data yet', L, H / 2); return; }
-    let lo = Math.min(...v), hi = Math.max(...v); if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
-    const Y = x => H - 18 - (x - lo) / (hi - lo) * (H - 28), X = i => L + i / (vals.length - 1) * (W - L - 4);
-    g.font = '13px sans-serif'; g.fillStyle = '#8b9ab0'; g.fillText(hi.toFixed(s.decimals), 2, 14); g.fillText(lo.toFixed(s.decimals), 2, H - 18);
-    g.fillText(`-${Math.round(vals.length * step / 60)} min`, L, H - 2); g.fillText('now', W - 30, H - 2);
-    for (const [lim, col] of [[s.warnHigh, '#f4c430'], [s.critHigh, '#ff4d4f'], [s.warnLow, '#f4c430'], [s.critLow, '#ff4d4f']]) {
+  // series: [{vals, color, s (limits, single series only), dec}]
+  function drawChart(c, series, step) {
+    const g = c.getContext('2d'), W = c.width, H = c.height, L = 48;
+    const all = series.flatMap(x => x.vals.filter(v => v != null));
+    const n = Math.max(...series.map(x => x.vals.length));
+    if (all.length < 2) { g.fillStyle = '#8b9ab0'; g.font = '16px sans-serif'; g.fillText('No data yet', L, H / 2); return; }
+    let lo = Math.min(...all), hi = Math.max(...all); if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
+    const dec = Math.max(0, Math.min(2, series[0].dec ?? 1));
+    const Y = x => H - 18 - (x - lo) / (hi - lo) * (H - 28), X = i => L + i / Math.max(1, n - 1) * (W - L - 4);
+    g.font = '13px sans-serif'; g.fillStyle = '#8b9ab0'; g.fillText(hi.toFixed(dec), 2, 14); g.fillText(lo.toFixed(dec), 2, H - 18);
+    g.fillText(`-${Math.round(n * step / 60)} min`, L, H - 2); g.fillText('now', W - 30, H - 2);
+    const s = series.length === 1 && series[0].s;
+    if (s) for (const [lim, col] of [[s.warnHigh, '#f4c430'], [s.critHigh, '#ff4d4f'], [s.warnLow, '#f4c430'], [s.critLow, '#ff4d4f']]) {
       if (lim == null) continue; const y = Y(conv(lim, s.unit)[0]); if (y < 0 || y > H) continue;
       g.strokeStyle = col; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(L, y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
     }
-    g.strokeStyle = '#3fa7ff'; g.lineWidth = 2; g.beginPath(); let pen = false;
-    vals.forEach((x, i) => { if (x == null) { pen = false; return; } pen ? g.lineTo(X(i), Y(x)) : g.moveTo(X(i), Y(x)); pen = true; });
-    g.stroke();
+    for (const x of series) {
+      g.strokeStyle = x.color; g.lineWidth = 2; g.beginPath(); let pen = false;
+      x.vals.forEach((v, i) => { if (v == null) { pen = false; return; } pen ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)); pen = true; });
+      g.stroke();
+    }
   }
 
   // ---- events (black box)
@@ -131,13 +180,7 @@
           if (body.children.length) { body.innerHTML = ''; return; }
           try {
             const ev = await get(`/events/${e.seq}`);
-            const names = Object.fromEntries(sensorsCfg().map(s => [s.id, s]));
-            ev.ids.forEach((id, k) => {
-              const s = names[id] || { name: id, unit: '', decimals: 1 };
-              const c = h('canvas', { class: 'chart', width: 900, height: 120 });
-              body.append(h('div', { class: 'small' }, s.name), c);
-              drawChart(c, ev.rows.map(r => r[k]), ev.interval, s);
-            });
+            for (const g of groupSeries(ev.ids)) body.append(chartPanel(g, x => ev.rows.map(r => { const v = r[ev.ids.indexOf(x.id)]; return v == null ? null : x.kind === 'sensor' ? conv(v, x.s.unit)[0] : v; }), ev.interval, 130));
           } catch (x) { err(x); }
         } }, 'Show')]), body]));
     }

@@ -30,6 +30,8 @@ CFG = {
         S('oil_pressure', 'Oil pressure', 'ads1115', 'psi', gaugeMax=100, warnLow=15, critLow=8, adsChannel=1),
         S('bat_voltage', 'Battery', 'ads1115', 'V', gaugeMin=10, gaugeMax=16, warnLow=12, critLow=11.5, adsChannel=2, divider=5, decimals=2),
         S('cabin_temp', 'Cabin', 'bmp', '°C', gaugeMax=50, bmpField='temperature'),
+        S('intake_temp', 'Intake', 'ds18b20', '°C', gaugeMax=80),
+        S('altitude', 'Altitude', 'bmp', 'm', gaugeMax=3000, bmpField='altitude', decimals=0),
         dict(S('b1_gearbox_temp', 'Engine bay Gearbox', 'remote', '°C', warnHigh=110), board=1, remoteId='gearbox_temp', remoteIndex=0),
     ],
     'relays': [
@@ -78,7 +80,7 @@ def bump(): REV[0] += 1
 
 def value(s, t):
     base = {'coolant_temp': 99 + 3 * math.sin(t / 20), 'egt': 420 + 80 * math.sin(t / 15), 'boost_pressure': 12 + 6 * math.sin(t / 7),
-            'oil_pressure': 45 + 5 * math.sin(t / 9), 'bat_voltage': 14.1 + 0.1 * math.sin(t / 5), 'cabin_temp': 24.6, 'b1_gearbox_temp': 74 + math.sin(t / 30)}
+            'oil_pressure': 45 + 5 * math.sin(t / 9), 'bat_voltage': 14.1 + 0.1 * math.sin(t / 5), 'cabin_temp': 24.6, 'intake_temp': 38 + 2 * math.sin(t / 25), 'altitude': 1661 + 20 * math.sin(t / 60), 'b1_gearbox_temp': 74 + math.sin(t / 30)}
     return round(base.get(s['id'], 50), 2)
 
 def level(s, v):
@@ -252,7 +254,11 @@ def route(m, path, q, body, scope):
         rows = [[98 + i / 10, 400 + i] for i in range(60)]; return {'seq': 3, 'reason': 'coolant_temp warn', 'interval': 1, 'before': 30, 'ids': ['coolant_temp', 'egt'], 'rows': rows}
     if m == 'GET' and path == 'history':
         n = 120
-        return {'interval': 5, 'len': n, 'count': n, 'ageMs': 1000, 'series': {s['id']: [round(value(s, i * 5), 1) for i in range(n)] for s in CFG['sensors']}}
+        ser = {s['id']: [round(value(s, i * 5), 1) for i in range(n)] for s in CFG['sensors']}
+        for r in CFG['relays']: ser[r['id']] = [(40 + 20 * math.sin(i / 10)) if r['type'] != 'relay' else (1 if i % 40 < 20 else 0) for i in range(n)]
+        for k, base in (('sys_heap_free_kb', 150), ('sys_heap_min_kb', 120), ('sys_cpu0', 12), ('sys_cpu1', 30), ('sys_loop_max_ms', 9), ('sys_rssi', -60)):
+            ser[k] = [round(base + 3 * math.sin(i / 7), 1) for i in range(n)]
+        return {'interval': 5, 'len': n, 'count': n, 'ageMs': 1000, 'series': ser}
     if m == 'GET' and path == 'backup': need(3); return CFG
     raise Err(404, 'No such address: ' + path)
 

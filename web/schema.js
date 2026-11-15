@@ -57,6 +57,8 @@ const SCHEMA = (() => {
     { k: 'faultAlarm', label: 'Alarm when the sensor fails', type: 'bool' },
     { k: 'oledStyle', label: 'OLED', type: 'select', opts: [['off', 'Off'], ['text', 'Text'], ['bar', 'Bar'], ['marker', 'Marker']] },
     { k: 'oledLabel', label: 'OLED label (≤3)' },
+    { k: 'chartGroup', label: 'Chart', type: 'select', opts: [['', 'With the same kind'], ['own', 'A chart of its own'], ['Group A', 'Group A'], ['Group B', 'Group B'], ['Group C', 'Group C']],
+      help: 'Same kind = same unit (thermocouples / EGT apart)' },
   ];
   // One-tap starting points for analog inputs
   const analogPresets = [

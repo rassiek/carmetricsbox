@@ -75,7 +75,7 @@ Settings → *Require a key or password for reading too* turns off anonymous rea
 | `GET /points?meta=1` | adds `name`, `label`, `unit`, `decimals`, `min`, `max`, `limits` `{wl,wh,cl,ch}`, `kind` (`sensor` / `actuator` / `system`), `board` |
 | `GET /points?a=local.coolant_temp,b1.oil_pressure` | only those |
 | `GET /points/{address}` | one point with meta |
-| `GET /history` | recent history of every sensor (streamed in pieces): `{"interval":5,"ageMs":..,"series":{"coolant_temp":[...]}}` |
+| `GET /history` | recent history (streamed in pieces) of every sensor, every actuator output and the board figures (`sys_*`): `{"interval":5,"ageMs":..,"series":{"coolant_temp":[...],"fan":[...],"sys_cpu0":[...]}}`. A sensor's `chartGroup` (`""` same kind, `"own"`, or a name) tells the web app which chart it goes on |
 
 ### 2.3 Alerts
 

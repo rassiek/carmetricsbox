@@ -1,6 +1,8 @@
 #include "History.h"
 #include "State.h"
 #include "Half.h"
+#include "Health.h"
+#include "Outputs.h"
 
 namespace {
 // [sample][sensor], half floats: half the RAM of float (charts need ~3 digits).
@@ -9,11 +11,27 @@ uint16_t* buf = nullptr;
 size_t len = HISTORY_LEN, nSensors = 0, head = 0, filled = 0;
 uint32_t generation = 0;   // bumped by begin(): readers in progress stop cleanly
 uint32_t lastSample = 0;
+
+// Columns: every sensor, then every actuator (its output), then the board's own figures.
+size_t columns() { return gConfig.sensors.size() + gConfig.relays.size() + Health::kSysCount; }
+String colId(size_t c) {
+  if (c < gConfig.sensors.size()) return gConfig.sensors[c].id;
+  c -= gConfig.sensors.size();
+  if (c < gConfig.relays.size()) return gConfig.relays[c].id;
+  return Health::kSysIds[c - gConfig.relays.size()];
+}
+int colDecimals(size_t c) { return c < gConfig.sensors.size() ? gConfig.sensors[c].decimals + 1 : 1; }
+float colValue(size_t c) {
+  if (c < gConfig.sensors.size()) return c < gSensorRt.size() ? gSensorRt[c].value : NAN;
+  c -= gConfig.sensors.size();
+  if (c < gConfig.relays.size()) return Relays::value(c);
+  return Health::sysMetric(c - gConfig.relays.size());
+}
 }
 
 void History::begin() {
   StateLock lk;
-  nSensors = gConfig.sensors.size();
+  nSensors = columns();
   generation++;
   if (buf) { heap_caps_free(buf); buf = nullptr; }
   bool psram = ESP.getPsramSize() > 0;
@@ -35,7 +53,7 @@ void History::update() {
   lastSample = now;
   StateLock lk;
   if (!nSensors) return;
-  for (size_t i = 0; i < nSensors && i < gSensorRt.size(); i++) buf[head * nSensors + i] = Half::fromFloat(gSensorRt[i].value);
+  for (size_t i = 0; i < nSensors && i < columns(); i++) buf[head * nSensors + i] = Half::fromFloat(colValue(i));
   head = (head + 1) % len;
   if (filled < len) filled++;
 }
@@ -51,7 +69,7 @@ size_t History::count() { return filled; }
 size_t History::bytes() { return buf ? nSensors * len * 2 : 0; }
 
 History::Reader::Reader() {
-  gen = generation; sensors = std::min(nSensors, gConfig.sensors.size());
+  gen = generation; sensors = std::min(nSensors, columns());
   count = filled; start = (head + len - count) % len;
 }
 
@@ -65,14 +83,14 @@ bool History::Reader::next() {   // lock held
       phase = sensors ? 1 : 4;
       return true;
     case 1:
-      tokLen = snprintf(tok, sizeof(tok), "%s\"%.40s\":[", pos ? "," : "", gConfig.sensors[pos].id.c_str());
+      tokLen = snprintf(tok, sizeof(tok), "%s\"%.40s\":[", pos ? "," : "", colId(pos).c_str());
       sample = 0; phase = count ? 2 : 3;
       return true;
     case 2: {
       float v = Half::toFloat(buf[((start + sample) % len) * nSensors + pos]);
       const char* sep = sample ? "," : "";
       if (isnan(v) || isinf(v)) tokLen = snprintf(tok, sizeof(tok), "%snull", sep);
-      else tokLen = snprintf(tok, sizeof(tok), "%s%.*f", sep, (int)gConfig.sensors[pos].decimals + 1, v);
+      else tokLen = snprintf(tok, sizeof(tok), "%s%.*f", sep, colDecimals(pos), v);
       if (++sample >= count) phase = 3;
       return true;
     }

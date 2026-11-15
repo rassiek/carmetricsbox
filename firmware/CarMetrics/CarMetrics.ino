@@ -45,6 +45,7 @@
 #include "BlackBox.h"
 #include "Discover.h"
 #include "Pins.h"
+#include "LocalDns.h"
 
 // loop() runs settings changes (JSON, flash writes) and, in the emulator, the
 // self-test: 8 KB was too tight once the actuator settings grew.
@@ -148,6 +149,7 @@ void setup() {
   Vehicle::begin();
   BlackBox::begin();
   WifiMgr::begin();
+  LocalDns::begin();
   Boards::begin();
   startOta();
   Web::begin();
@@ -173,6 +175,7 @@ void loop() {
   Vehicle::update();
   BlackBox::update();
   WifiMgr::update();
+  LocalDns::update();
   Boards::update();
   Web::update();
   ArduinoOTA.handle();
