@@ -266,7 +266,7 @@ std::vector<Point> catalogValues() {   // lock held, catalog current
   }
   for (auto& r : cat.relays) {
     Point p; p.value = NAN; p.status = ST_WAITING;
-    if (r.board == 0) { if (r.index < gRelayRt.size()) { p.value = gRelayRt[r.index].on ? 1 : 0; p.status = ST_OK; } }
+    if (r.board == 0) { if (r.index < gRelayRt.size()) { p.value = Relays::value(r.index); p.status = ST_OK; } }
     else if (mainS) {
       const BoardInfo* b = mainS->board(r.board);
       size_t nSensors = 0;
@@ -378,7 +378,7 @@ uint8_t nodePoints(Point* out, uint8_t max) {
     out[k].value = gSensorRt[i].value; out[k].status = gSensorRt[i].status; out[k].level = gSensorRt[i].level;
   }
   for (size_t i = 0; i < gRelayRt.size() && k < max; i++, k++) {
-    out[k].value = gRelayRt[i].on ? 1 : 0; out[k].status = ST_OK; out[k].level = LVL_OK;
+    out[k].value = Relays::value(i); out[k].status = ST_OK; out[k].level = LVL_OK;
   }
   return k;
 }
@@ -412,7 +412,9 @@ uint8_t nodeCommand(const Command& c) {
   switch (c.kind) {
     case CMD_RELAY: {
       if (c.index >= gConfig.relays.size()) return 2;
-      String err = Relays::control(gConfig.relays[c.index].id, c.on, -1);
+      JsonDocument d;
+      Boards::commandToJson(c, gConfig.relays[c.index], d.to<JsonObject>());
+      String err = Relays::command(gConfig.relays[c.index].id, d.as<JsonVariantConst>());
       return err.length() ? 1 : 0;
     }
     case CMD_MUTE: if (c.minutes) Alerts::mute(c.minutes * 60000UL); else Alerts::unmute(); return 0;
@@ -423,12 +425,8 @@ uint8_t nodeCommand(const Command& c) {
 }
 
 void nodeLink(bool up) {
-  Serial.printf("[boards] link to the main board %s\n", up ? "up" : "LOST: relays to their safe state");
-  if (up) return;
-  for (auto& r : gConfig.relays) {
-    if (!r.enabled || r.safeState == 2) continue;   // 2 = keep as it is
-    Relays::control(r.id, r.safeState == 1 ? 1 : 0, -1);
-  }
+  Serial.printf("[boards] link to the main board %s\n", up ? "up" : "LOST: actuators to their safe state");
+  Relays::linkLost(!up);
 }
 }  // namespace
 
@@ -781,13 +779,49 @@ String Boards::firmwareCancel(int id) {
 }
 
 String Boards::relayCommand(int id, int index, bool on) {
+  JsonDocument d; d["on"] = on;
+  return actuatorCommand(id, index, d.as<JsonVariantConst>());
+}
+
+String Boards::actuatorCommand(int id, int index, JsonVariantConst body) {
   if (!mainS) return "Only on the main board";
+  Command c; c.kind = CMD_RELAY; c.index = (uint8_t)index;
+  String err = jsonToCommand(body, c);
+  if (err.length()) return err;
   StateLock lk;
   const BoardInfo* b = id >= 1 && id <= MAX_BOARD_ID ? mainS->board((uint8_t)id) : nullptr;
   if (!b) return "Unknown board";
   if (!b->online) return "'" + String(b->name.c_str()) + "' is offline";
-  Command c; c.kind = CMD_RELAY; c.index = (uint8_t)index; c.on = on;
   return mainS->command((uint8_t)id, c) < 0 ? "Not sent" : "";
+}
+
+// JSON actuator command -> radio command (other boards). Only what the radio carries.
+String Boards::jsonToCommand(JsonVariantConst b, Command& c) {
+  c.minutes = (uint16_t)constrain((long)(b["forMinutes"] | 0.0f), 0L, 1440L);
+  if (b["auto"] | false) { c.which = ACT_AUTO; return ""; }
+  String dir = b["direction"] | "";
+  if (!b["on"].isNull()) { c.which = ACT_ON; c.on = (b["on"] | false) ? 1 : 0; return ""; }
+  float v = NAN;
+  if (!b["duty"].isNull()) v = b["duty"].as<float>();
+  else if (!b["angle"].isNull()) v = b["angle"].as<float>();
+  else if (dir.length()) {
+    float sp = b["speed"] | 100.0f;
+    v = dir == "forward" ? sp : dir == "reverse" ? -sp : 0;
+  } else if (!b["speed"].isNull()) v = b["speed"].as<float>();
+  if (isnan(v)) return "Nothing to do: send on, duty, direction / speed, angle or auto";
+  c.which = ACT_VALUE; c.value = v; c.on = v != 0 ? 1 : 0;   // `on` for boards older than 5.3
+  return "";
+}
+
+// Radio command -> JSON for Relays::command on this board.
+void Boards::commandToJson(const Command& c, const RelayConfig& r, JsonObject o) {
+  if (c.which == ACT_AUTO) o["auto"] = true;
+  else if (c.which == ACT_VALUE) {
+    if (r.type == ActType::SERVO) o["angle"] = c.value;
+    else if (r.type == ActType::RELAY) o["on"] = c.value != 0;
+    else o["duty"] = c.value;
+  } else o["on"] = c.on != 0;
+  if (c.minutes) o["forMinutes"] = c.minutes;
 }
 
 // ---------------------------------------------------------------- board control (main board web pages)

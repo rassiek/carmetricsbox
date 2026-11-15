@@ -52,7 +52,47 @@ static String cfgJson(const Config& c) {
   String s; serializeJson(d, s); return s;
 }
 
+// 5.3 actuators, kept out of selftestLoop() so its stack frame stays small.
+static void __attribute__((noinline)) actuatorSetup() {
+  String err;
+  // 5.3 actuators: a PWM fan on a coolant threshold, an H-bridge, a servo
+  Config* next; { StateLock lk; next = new Config(gConfig); }
+  RelayConfig f; f.id = "fan"; f.name = "Fan"; f.type = ActType::PWM; f.pin = 2; f.freqHz = 25000;
+  f.minDuty = 20; f.maxDuty = 80; f.rule = RuleType::THRESHOLD; f.ruleSensor = "coolant_temp"; f.onAt = 95; f.offAt = 90;
+  RelayConfig h; h.id = "winch"; h.name = "Winch"; h.type = ActType::HBRIDGE; h.pin = 13; h.pin2 = 14; h.kickMs = 300;
+  RelayConfig v; v.id = "flap"; v.name = "Flap"; v.type = ActType::SERVO; v.pin = 23; v.servoMinDeg = 10; v.servoMaxDeg = 170;
+  next->relays.push_back(f); next->relays.push_back(h); next->relays.push_back(v);
+  { JsonDocument j; JsonArray a = j.to<JsonArray>(); relayToJson(f, a.add<JsonObject>()); a[0]["offAt"] = 95;
+    std::vector<RelayConfig> rv; check(!relaysFromJson(j.as<JsonVariantConst>(), rv, err), "threshold with on = off rejected", err); }
+  { Config c = *next; c.relays[c.relays.size() - 2].pin2 = -1; check(!validateConfig(c, err), "H-bridge without its second pin rejected", err); }
+  { Config c = *next; RelayConfig x = f; x.id = "p15"; x.pin = 15; x.rule = RuleType::MANUAL; c.relays.push_back(x);
+    c.relays[0].enabled = true; c.relays[0].type = ActType::PWM;   // relay1 as PWM
+    c.sys.rgbExternal = true;   // 4 + 1 + 1 + 3 = 9
+    check(!validateConfig(c, err) && err.indexOf("8 PWM") >= 0, "more than 8 PWM channels rejected", err); }
+  check(validateConfig(*next, err), "fan / winch / flap settings valid", err);
+  requestConfigApply(next);
+}
+
+static void __attribute__((noinline)) actuatorCommands() {
+  int fi = findRelayIndex("fan");
+  { StateLock lk; check(fi >= 0 && fabsf(gRelayRt[fi].output - 80) < 0.1f && !strcmp(gRelayRt[fi].by, "rule"), "fan: coolant 101.5 above 95 -> rule runs it at its 80 % limit", fi >= 0 ? String(gRelayRt[fi].output) + " " + gRelayRt[fi].by : "missing"); }
+  JsonDocument d; d["duty"] = 40; d["forMinutes"] = 5;
+  String e1 = Relays::command("fan", d.as<JsonVariantConst>());
+  JsonDocument d2; d2["direction"] = "reverse"; d2["speed"] = 50;
+  String e2 = Relays::command("winch", d2.as<JsonVariantConst>());
+  JsonDocument d3; d3["angle"] = 175;
+  String e3 = Relays::command("flap", d3.as<JsonVariantConst>());
+  check(e1.isEmpty() && e2.isEmpty(), "fan duty / winch reverse commands accepted", e1 + e2);
+  check(e3.length() > 0, "servo angle outside its range refused", e3);
+  d3["angle"] = 90; Relays::command("flap", d3.as<JsonVariantConst>());
+  { StateLock lk; int w = findRelayIndex("winch"); check(w >= 0 && gRelayRt[w].output == 0, "winch not moved before update()"); }
+  delay(50); Relays::update();
+  { StateLock lk; int w = findRelayIndex("winch"); check(fabsf(gRelayRt[w].output + 100) < 0.1f, "winch kick-start: full power in reverse first", String(gRelayRt[w].output)); }
+}
+
 void selftestLoop() {
+  static uint32_t hwmAt = 0;
+  if (millis() - hwmAt > 30000) { hwmAt = millis(); Serial.printf("[test] loop stack free %u\n", (unsigned)uxTaskGetStackHighWaterMark(NULL)); }
   static int step = 0;
   uint32_t now = millis();
   if (step == 0 && now > 9000) {
@@ -249,7 +289,10 @@ void selftestLoop() {
     { StateLock lk; check(err.length() == 0 && gRelayRt[0].on && gRelayRt[0].outputHigh, "relay switched on", err); }
     err = Relays::control("relay2", 1, -1);
     check(err.length() > 0, "disabled relay refused", err);
+    actuatorSetup();
   }
+  static bool actDone = false;
+  if (step == 6 && now > 42000 && !actDone) { actDone = true; actuatorCommands(); }
   if (step == 6 && now > 43000) {
     step++;
     String influx, zabbix; uint32_t recs;
@@ -271,6 +314,13 @@ void selftestLoop() {
   }
   if (step == 7 && now > 100000) {
     step++;
+    {
+      StateLock lk;
+      int fi = findRelayIndex("fan"), w = findRelayIndex("winch"), v = findRelayIndex("flap");
+      check(fi >= 0 && fabsf(gRelayRt[fi].output - 40) < 0.1f && gRelayRt[fi].manual, "fan: timed manual 40 % kept through a settings change", fi >= 0 ? String(gRelayRt[fi].output) : "");
+      check(w >= 0 && fabsf(gRelayRt[w].output + 50) < 0.1f, "winch: after the kick, reverse 50 %", w >= 0 ? String(gRelayRt[w].output) : "");
+      check(v >= 0 && fabsf(gRelayRt[v].output - 90) < 0.1f && fabsf(Relays::value(v) - 90) < 0.1f, "flap servo at 90 degrees", v >= 0 ? String(gRelayRt[v].output) : "");
+    }
     StateLock lk;
     Serial.printf("[test] cloud: recording=%d ram=%u backlogFiles=%u backlogBytes=%u pending=%u dropped=%u err=%s fsFree=%u\n", gNet.recording, gNet.ramChunks, gNet.backlogFiles, gNet.backlogBytes, gNet.pendingRecords, gNet.droppedRecords, gNet.lastError.c_str(), (unsigned)(LittleFS.totalBytes() - LittleFS.usedBytes()));
     check(gNet.recording, "recorder active");

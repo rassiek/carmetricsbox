@@ -100,16 +100,35 @@ struct SensorConfig {
 };
 
 enum class RelayMode : uint8_t { ON_OFF, BLINK };
+// Actuators (5.3): the stored list keeps its old name "relays" so 5.1 / 5.2 boards
+// still understand the relays among them; new types and fields are ignored by them.
+enum class ActType : uint8_t { RELAY, PWM, HBRIDGE, SERVO };
+enum class RuleType : uint8_t { MANUAL, THRESHOLD, CURVE, CONDITION };
 
 struct RelayConfig {
   String id, name;
+  ActType type = ActType::RELAY;
   int pin = -1;
+  int pin2 = -1;            // H-bridge: the reverse PWM pin (BTS7960 LPWM); forward is pin (RPWM)
   RelayMode mode = RelayMode::ON_OFF;
   bool activeLow = false;   // most cheap relay boards switch ON when the input is LOW
-  bool defaultOn = false;   // state after boot
+  bool defaultOn = false;   // state after boot (manual)
   uint32_t blinkMs = 500;
   bool enabled = true;
-  uint8_t safeState = 0;    // relay board, link to the main board lost: 0 off, 1 on, 2 keep as it is
+  uint8_t safeState = 0;    // link to the main board lost: 0 off, 1 on, 2 keep as it is
+  // PWM / H-bridge / servo
+  uint32_t freqHz = 1000;   // PWM: 25000 for 4-pin fans, 100-1000 for MOSFET modules; servo fixed 50
+  uint8_t minDuty = 0, maxDuty = 100;      // % limits while running (min = lowest speed that still turns)
+  uint16_t kickMs = 0;      // start at 100 % for this long, then settle (fans / pumps that stall)
+  float rampPerS = 0;       // % per second towards the target (0 = at once)
+  uint8_t safeDuty = 0;     // link lost / sensor fault: this duty (%), or angle for a servo
+  float servoMinDeg = 0, servoMaxDeg = 180;
+  // control rule
+  RuleType rule = RuleType::MANUAL;
+  String ruleSensor;        // THRESHOLD / CURVE: sensor id on this board
+  float onAt = NAN, offAt = NAN;   // THRESHOLD: on at/above onAt, off at/below offAt (onAt < offAt = on when LOW)
+  String curve;             // CURVE: "sensor:duty,..." e.g. "85:0,92:40,100:100"
+  String condition;         // CONDITION: running | not_running | ignition | warn | crit | fault
 };
 
 struct BoardProfile;
@@ -146,6 +165,10 @@ struct SystemConfig {
   bool oledClock = true;             // show time once synced from a browser
   uint16_t oledPageSeconds = 4;      // page rotation if not everything fits
   uint8_t oledContrast = 255;
+
+  // Status light (5.3): built-in addressable RGB and/or an external 3-pin RGB LED, both at once
+  bool rgbBuiltin = true;  int rgbBuiltinPin = -1;  uint8_t rgbBuiltinBright = 15;  // -1 = the board profile's (S3 DevKitC: 48)
+  bool rgbExternal = false; int rgbR = -1, rgbG = -1, rgbB = -1; bool rgbCommonAnode = false; uint8_t rgbExtBright = 80;   // %
 
   // Alert outputs (-1 = not fitted)
   int buzzerPin = 18; bool buzzerActiveLow = false;

@@ -248,12 +248,27 @@ void sensorToJson(const SensorConfig& s, JsonObject o) {
   putF(o, "hysteresis", s.hysteresis); o["engineRunningOnly"] = s.engineRunningOnly; o["faultAlarm"] = s.faultAlarm;
 }
 
+const char* actTypeToStr(ActType t) { return t == ActType::PWM ? "pwm" : t == ActType::HBRIDGE ? "hbridge" : t == ActType::SERVO ? "servo" : "relay"; }
+const char* ruleToStr(RuleType r) { return r == RuleType::THRESHOLD ? "threshold" : r == RuleType::CURVE ? "curve" : r == RuleType::CONDITION ? "condition" : "manual"; }
+
 void relayToJson(const RelayConfig& r, JsonObject o) {
   o["id"] = r.id; o["name"] = r.name; o["pin"] = r.pin;
+  o["type"] = actTypeToStr(r.type);
   o["mode"] = r.mode == RelayMode::BLINK ? "blink" : "on_off";
   o["activeLow"] = r.activeLow; o["defaultOn"] = r.defaultOn;
   o["blinkMs"] = r.blinkMs; o["enabled"] = r.enabled;
   o["safeState"] = r.safeState == 1 ? "on" : r.safeState == 2 ? "hold" : "off";
+  if (r.type != ActType::RELAY) {
+    if (r.type == ActType::HBRIDGE) o["pin2"] = r.pin2;
+    if (r.type == ActType::PWM || r.type == ActType::HBRIDGE) { o["freqHz"] = r.freqHz; o["kickMs"] = r.kickMs; }
+    o["minDuty"] = r.minDuty; o["maxDuty"] = r.maxDuty; o["rampPerS"] = r.rampPerS; o["safeDuty"] = r.safeDuty;
+    if (r.type == ActType::SERVO) { o["servoMinDeg"] = r.servoMinDeg; o["servoMaxDeg"] = r.servoMaxDeg; }
+  }
+  o["rule"] = ruleToStr(r.rule);
+  if (r.rule == RuleType::THRESHOLD || r.rule == RuleType::CURVE) o["ruleSensor"] = r.ruleSensor;
+  if (r.rule == RuleType::THRESHOLD) { if (!isnan(r.onAt)) o["onAt"] = r.onAt; if (!isnan(r.offAt)) o["offAt"] = r.offAt; }
+  if (r.rule == RuleType::CURVE) o["curve"] = r.curve;
+  if (r.rule == RuleType::CONDITION) o["condition"] = r.condition;
 }
 
 void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
@@ -266,6 +281,9 @@ void systemToJson(const SystemConfig& s, JsonObject o, bool includeSecrets) {
     x["ssid"] = n.ssid; x["pass"] = includeSecrets ? n.pass : ""; x["passSet"] = n.pass.length() > 0; x["priority"] = n.priority;
   }
   o["scanWhileApInUse"] = s.scanWhileApInUse;
+  JsonObject sl = o["statusLight"].to<JsonObject>();
+  sl["builtin"] = s.rgbBuiltin; sl["builtinPin"] = s.rgbBuiltinPin; sl["builtinBrightness"] = s.rgbBuiltinBright;
+  sl["external"] = s.rgbExternal; sl["r"] = s.rgbR; sl["g"] = s.rgbG; sl["b"] = s.rgbB; sl["commonAnode"] = s.rgbCommonAnode; sl["externalBrightness"] = s.rgbExtBright;
   o["ignitionPin"] = s.ignitionPin; o["ignitionActiveLow"] = s.ignitionActiveLow; o["sleepAfterMinutes"] = s.sleepAfterMinutes;
   o["gpsRxPin"] = s.gpsRxPin; o["gpsTxPin"] = s.gpsTxPin; o["gpsBaud"] = s.gpsBaud;
   o["hostname"] = s.hostname; o["adminPass"] = includeSecrets ? s.adminPass : "";
@@ -413,6 +431,31 @@ bool relaysFromJson(JsonVariantConst v, std::vector<RelayConfig>& out, String& e
     r.blinkMs = constrain(getI(o, "blinkMs", 500), 0, 60000); r.enabled = getB(o, "enabled", true);
     String safe = getS(o, "safeState", "off");
     r.safeState = safe == "on" ? 1 : safe == "hold" ? 2 : 0;
+    String t = getS(o, "type", "relay");
+    r.type = t == "pwm" ? ActType::PWM : t == "hbridge" ? ActType::HBRIDGE : t == "servo" ? ActType::SERVO : ActType::RELAY;
+    if (t != "relay" && t != "pwm" && t != "hbridge" && t != "servo") { err = "Actuator '" + r.id + "': unknown type '" + t + "'"; return false; }
+    r.pin2 = getI(o, "pin2", -1);
+    r.freqHz = constrain(getI(o, "freqHz", r.type == ActType::SERVO ? 50 : 1000), 1, 40000);
+    if (r.type == ActType::SERVO) r.freqHz = 50;
+    r.minDuty = constrain(getI(o, "minDuty", 0), 0, 100); r.maxDuty = constrain(getI(o, "maxDuty", 100), 0, 100);
+    if (r.minDuty > r.maxDuty) { err = "Actuator '" + r.id + "': lowest duty is above the highest"; return false; }
+    r.kickMs = constrain(getI(o, "kickMs", 0), 0, 10000);
+    r.rampPerS = o["rampPerS"].is<float>() ? constrain(o["rampPerS"].as<float>(), 0.0f, 1000.0f) : 0;
+    r.safeDuty = constrain(getI(o, "safeDuty", 0), 0, 180);
+    r.servoMinDeg = o["servoMinDeg"] | 0.0f; r.servoMaxDeg = o["servoMaxDeg"] | 180.0f;
+    if (r.servoMinDeg < 0 || r.servoMaxDeg > 270 || r.servoMinDeg >= r.servoMaxDeg) { err = "Actuator '" + r.id + "': servo range 0-270 degrees, min below max"; return false; }
+    String rule = getS(o, "rule", "manual");
+    r.rule = rule == "threshold" ? RuleType::THRESHOLD : rule == "curve" ? RuleType::CURVE : rule == "condition" ? RuleType::CONDITION : RuleType::MANUAL;
+    r.ruleSensor = getS(o, "ruleSensor", "");
+    r.onAt = o["onAt"].is<float>() ? o["onAt"].as<float>() : NAN; r.offAt = o["offAt"].is<float>() ? o["offAt"].as<float>() : NAN;
+    r.curve = getS(o, "curve", ""); r.condition = getS(o, "condition", "");
+    if (r.rule == RuleType::THRESHOLD && (isnan(r.onAt) || isnan(r.offAt) || r.onAt == r.offAt)) { err = "Actuator '" + r.id + "': threshold needs an on value and a different off value"; return false; }
+    if (r.rule == RuleType::CURVE) {
+      std::vector<std::pair<float, float>> pts;
+      if (!parseCurve(r.curve, pts) || pts.size() < 2) { err = "Actuator '" + r.id + "': curve needs at least two points, e.g. 85:0,100:100"; return false; }
+    }
+    if (r.rule == RuleType::CONDITION && r.condition != "running" && r.condition != "not_running" && r.condition != "ignition" &&
+        r.condition != "warn" && r.condition != "crit" && r.condition != "fault") { err = "Actuator '" + r.id + "': condition must be running, not_running, ignition, warn, crit or fault"; return false; }
     tmp.push_back(r);
   }
   out = tmp;
@@ -454,6 +497,15 @@ bool systemFromJson(JsonVariantConst v, SystemConfig& s, String& err) {
   }
   s.staSsid = ""; s.staPass = "";
   s.scanWhileApInUse = getB(o, "scanWhileApInUse", s.scanWhileApInUse);
+  if (o["statusLight"].is<JsonObjectConst>()) {
+    JsonObjectConst sl = o["statusLight"];
+    s.rgbBuiltin = getB(sl, "builtin", s.rgbBuiltin); s.rgbBuiltinPin = getI(sl, "builtinPin", s.rgbBuiltinPin);
+    s.rgbBuiltinBright = constrain(getI(sl, "builtinBrightness", s.rgbBuiltinBright), 1, 100);
+    s.rgbExternal = getB(sl, "external", s.rgbExternal);
+    s.rgbR = getI(sl, "r", s.rgbR); s.rgbG = getI(sl, "g", s.rgbG); s.rgbB = getI(sl, "b", s.rgbB);
+    s.rgbCommonAnode = getB(sl, "commonAnode", s.rgbCommonAnode);
+    s.rgbExtBright = constrain(getI(sl, "externalBrightness", s.rgbExtBright), 1, 100);
+  }
   s.ignitionPin = getI(o, "ignitionPin", s.ignitionPin); s.ignitionActiveLow = getB(o, "ignitionActiveLow", s.ignitionActiveLow);
   s.sleepAfterMinutes = constrain(getI(o, "sleepAfterMinutes", s.sleepAfterMinutes), 0, 1440);
   s.gpsRxPin = getI(o, "gpsRxPin", s.gpsRxPin); s.gpsTxPin = getI(o, "gpsTxPin", s.gpsTxPin);
@@ -790,8 +842,32 @@ bool validateConfig(const Config& c, String& err) {
     if (ids.count(r.id)) { err = "Duplicate id '" + r.id + "'"; return false; }
     ids[r.id] = 1;
     if (!r.enabled) continue;
-    if (!needOut(r.pin, "Relay '" + r.id + "'")) return false;
-    if (!pb.add(r.pin, "relay '" + r.id + "'")) { err = pb.err; return false; }
+    if (!needOut(r.pin, "Actuator '" + r.id + "'")) return false;
+    if (!pb.add(r.pin, "actuator '" + r.id + "'")) { err = pb.err; return false; }
+    if (r.pin < 0) { err = "Actuator '" + r.id + "': choose its pin"; return false; }
+    if (r.type == ActType::HBRIDGE) {
+      if (r.pin2 < 0) { err = "Actuator '" + r.id + "': choose the reverse pin"; return false; }
+      if (!needOut(r.pin2, "Actuator '" + r.id + "' (reverse pin)")) return false;
+      if (!pb.add(r.pin2, "actuator '" + r.id + "' reverse")) { err = pb.err; return false; }
+    }
+    if ((r.rule == RuleType::THRESHOLD || r.rule == RuleType::CURVE)) {
+      bool found = false;
+      for (auto& x : c.sensors) if (x.id == r.ruleSensor) found = true;
+      if (!found) { err = "Actuator '" + r.id + "': pick the sensor that drives it"; return false; }
+    }
+  }
+  int pwmCount = 0;
+  for (auto& r : c.relays) if (r.enabled && r.type != ActType::RELAY) pwmCount += r.type == ActType::HBRIDGE ? 2 : 1;
+  if (s.rgbExternal) pwmCount += 3;
+  if (pwmCount > 8) { err = "At most 8 PWM channels (PWM / motor / servo outputs and the external RGB light together)"; return false; }
+  if (s.rgbExternal) {
+    if (s.rgbR < 0 || s.rgbG < 0 || s.rgbB < 0) { err = "RGB light: choose the red, green and blue pins"; return false; }
+    if (!needOut(s.rgbR, "RGB light red") || !needOut(s.rgbG, "RGB light green") || !needOut(s.rgbB, "RGB light blue")) return false;
+    if (!pb.add(s.rgbR, "RGB red") || !pb.add(s.rgbG, "RGB green") || !pb.add(s.rgbB, "RGB blue")) { err = pb.err; return false; }
+  }
+  if (s.rgbBuiltin && s.rgbBuiltinPin >= 0) {
+    if (!needOut(s.rgbBuiltinPin, "Built-in RGB light")) return false;
+    if (!pb.add(s.rgbBuiltinPin, "built-in RGB light")) { err = pb.err; return false; }
   }
   if (s.engineSensorId.length()) {
     bool found = false;

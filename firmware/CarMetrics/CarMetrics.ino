@@ -44,6 +44,10 @@
 #include "Vehicle.h"
 #include "BlackBox.h"
 
+// loop() runs settings changes (JSON, flash writes) and, in the emulator, the
+// self-test: 8 KB was too tight once the actuator settings grew.
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
+
 static uint32_t lastNetCheck = 0;
 
 static void startOta() {
@@ -98,6 +102,7 @@ static void applyConfig(Config* next) {
   Sensors::begin();
   Alerts::begin();
   Relays::begin();
+  StatusLight::begin();
   History::begin();
   Cloud::begin();
   Gps::begin();
@@ -126,6 +131,7 @@ void setup() {
   // Outputs first so relays/buzzer sit in a known state as early as possible.
   Relays::begin();
   Alerts::begin();
+  StatusLight::begin();
 
   if (!LittleFS.begin(false)) {
     Serial.println("[fs] mount failed - formatting");
@@ -156,6 +162,7 @@ void loop() {
   Sensors::update();
   Alerts::update();
   Relays::update();
+  StatusLight::update();
   History::update();
   Cloud::update();
   Gps::update();

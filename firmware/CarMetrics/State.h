@@ -34,10 +34,17 @@ struct SensorRuntime {
 };
 
 struct RelayRuntime {
-  bool on = false;          // logical state requested
+  bool on = false;          // logical state requested (relay) / running (PWM, motor)
   uint32_t blinkMs = 0;
   bool outputHigh = false;  // logical output level (before active-low inversion)
   uint32_t lastToggleMs = 0;
+  // 5.3 actuators
+  float target = 0;         // PWM / motor: % requested (signed for an H-bridge: - = reverse); servo: degrees
+  float output = 0;         // what is applied now (after ramp, kick-start, limits)
+  bool manual = false;      // a person set it (overrides the rule)
+  uint32_t manualUntil = 0; // 0 = until "auto" / restart
+  uint32_t kickUntil = 0;
+  const char* by = "manual";   // manual | rule | safe
 };
 
 struct GpsRuntime {

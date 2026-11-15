@@ -111,6 +111,10 @@ struct Command {
   uint16_t rev = 0;            // CMD_SET_LIMIT: low 16 bits of the catalog revision the index belongs to
 };
 enum CommandKind : uint8_t { CMD_RELAY = 1, CMD_MUTE = 2, CMD_IDENTIFY = 3, CMD_REBOOT = 4, CMD_SET_LIMIT = 5 };
+// CMD_RELAY `which` (5.3): 0 = on/off from `on` (older boards only know this),
+// 1 = `value` (PWM duty %, H-bridge signed %, servo degrees), 2 = back to its rule.
+// `minutes` > 0: timed override.
+enum ActCmd : uint8_t { ACT_ON = 0, ACT_VALUE = 1, ACT_AUTO = 2 };
 enum LimitKind : uint8_t { LIMIT_WARN_LOW = 0, LIMIT_WARN_HIGH = 1, LIMIT_CRIT_LOW = 2, LIMIT_CRIT_HIGH = 3 };
 enum AckStatus : uint8_t { ACK_OK = 0, ACK_FAILED = 1, ACK_BAD_INDEX = 2, ACK_UNKNOWN = 3, ACK_STALE = 4, ACK_NOT_ALLOWED = 5, ACK_NO_ANSWER = 255 };
 
