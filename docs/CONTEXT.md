@@ -2,8 +2,13 @@
 
 Give this file to Claude at the start of a new session (or say: *"Clone github.com/rassiek/carmetricsbox, branch v5, and read docs/CONTEXT.md, docs/v5-status.md and docs/v5-phase3-plan.md"*). It holds what was built, how, what has only been tested on a PC / emulator, and how to test and debug on the real boards.
 
-Last updated: 15 Nov 2026, release **5.3.0-beta.1** (every board type: main S3, workers, Relay X8, touch displays).
+Last updated: 15 Nov 2026, release **5.3.0-beta.2** (every board type: main S3, workers, Relay X8, touch displays).
 
+> **5.3.0-beta.2** (15 Nov): charts group values of the same kind (per-sensor Chart setting), history also records actuators and board figures,
+> carmetrics.local on the board's own access point (it answers DNS for its name), full-screen gauges, thermometer group tiles with each sensor's limits,
+> most important gauges first, touch-sized actuator controls, enable-from-list, live state of other boards' switches, same-chip pin checks for other boards,
+> Discover skips busy pins, one alarm recording per 15 min per alarm. First tested on the real main board (beta.1): see the bug list in the session.
+>
 > **5.3.0-beta.1** (one version for everything; slow numbering: 5.3.x fixes, 5.4 features). What changed:
 > API v1 at `/api/v1` (`docs/API.md`; old `/api/*` removed), single-page web app with 5 tabs (Dashboard with dials / charts / events,
 > Sensors with discovery, Actuators, Boards, System: Status / Network / Hardware / Data), configurable names + presets (car / boat / farm / blank),

@@ -30,7 +30,7 @@ CFG = {
         S('oil_pressure', 'Oil pressure', 'ads1115', 'psi', gaugeMax=100, warnLow=15, critLow=8, adsChannel=1),
         S('bat_voltage', 'Battery', 'ads1115', 'V', gaugeMin=10, gaugeMax=16, warnLow=12, critLow=11.5, adsChannel=2, divider=5, decimals=2),
         S('cabin_temp', 'Cabin', 'bmp', '°C', gaugeMax=50, bmpField='temperature'),
-        S('intake_temp', 'Intake', 'ds18b20', '°C', gaugeMax=80),
+        S('intake_temp', 'Intake', 'ds18b20', '°C', gaugeMax=80, warnHigh=60, critHigh=70),
         S('altitude', 'Altitude', 'bmp', 'm', gaugeMax=3000, bmpField='altitude', decimals=0),
         dict(S('b1_gearbox_temp', 'Engine bay Gearbox', 'remote', '°C', warnHigh=110), board=1, remoteId='gearbox_temp', remoteIndex=0),
     ],

@@ -44,8 +44,16 @@
       h('div', { class: 'tname' }, t.group.length > 3 ? 'Temperatures' : t.group.map(s => s.oledLabel || s.name).join(' · ')),
       h('div', { class: 'thermos' }, t.group.map(s => {
         const lo = s.gaugeMin ?? 0, hi = s.gaugeMax ?? 100, f = v => `${Math.max(0, Math.min(100, (v - lo) / ((hi - lo) || 1) * 100)).toFixed(1)}%`;
-        const ticks = [[s.warnHigh, 'w'], [s.critHigh, 'c'], [s.warnLow, 'w'], [s.critLow, 'c']].filter(x => x[0] != null)
-          .map(([v, c]) => h('i', { class: 'tk ' + c, style: `bottom:${f(v)}` }));
+        // Each sensor's own limits: coloured zones on the tube, a mark and the value at each limit
+        const pct = v => Math.max(0, Math.min(100, (v - lo) / ((hi - lo) || 1) * 100));
+        const zone = (a, b, c) => h('i', { class: 'zone ' + c, style: `bottom:${pct(a)}%;height:${Math.max(0, pct(b) - pct(a))}%` });
+        const ticks = [];
+        if (s.warnHigh != null) ticks.push(zone(s.warnHigh, s.critHigh ?? hi, 'w'));
+        if (s.critHigh != null) ticks.push(zone(s.critHigh, hi, 'c'));
+        if (s.warnLow != null) ticks.push(zone(s.critLow ?? lo, s.warnLow, 'w'));
+        if (s.critLow != null) ticks.push(zone(lo, s.critLow, 'c'));
+        for (const [v, c] of [[s.warnHigh, 'w'], [s.critHigh, 'c'], [s.warnLow, 'w'], [s.critLow, 'c']].filter(x => x[0] != null))
+          ticks.push(h('i', { class: 'tk ' + c, style: `bottom:${f(v)}` }), h('span', { class: 'tkl ' + c, style: `bottom:${f(v)}` }, fmt(v, s.unit, 0)[0]));
         return h('div', { class: 'thermo', 'data-a': addrOf(s), onclick: e => { e.stopPropagation(); if (!document.body.classList.contains('fs')) editLimits(s); } }, [
           h('div', { class: 'tv' }, '--'), h('div', { class: 'tube' }, [h('div', { class: 'fill' }), ...ticks]), h('div', { class: 'tl' }, s.oledLabel || s.name)]);
       }))]);

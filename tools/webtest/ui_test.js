@@ -33,6 +33,7 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   const order = await p.$$eval('.tiles .tile .tname', e => e.slice(0, 6).map(x => x.textContent));
   check(order[0] === 'Coolant' && order[1] === 'Oil pressure' && order[2] === 'EGT', 'most important gauges first', order.join(' | '));
   check((await p.locator('.tile.w-bars .thermo').count()) >= 2, 'other temperatures as one thermometer group', String(await p.locator('.tile.w-bars .thermo').count()));
+  check((await p.locator('.tile.w-bars .zone').count()) >= 1 && (await p.locator('.tile.w-bars .tkl').count()) >= 1, 'each thermometer shows its own limits', await p.locator('.tile.w-bars .tkl').allTextContents().then(t => t.join(',')));
   await p.screenshot({ path: `${OUT}/dashboard-phone.png`, fullPage: true });
   await p.click('text=Full screen'); await p.waitForTimeout(800);
   const fs = await p.evaluate(() => ({ fs: document.body.classList.contains('fs'), header: getComputedStyle(document.querySelector('header')).display, sh: document.documentElement.scrollHeight, ih: innerHeight }));
