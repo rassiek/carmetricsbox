@@ -149,6 +149,14 @@ void defaultSensors(std::vector<SensorConfig>& v, const BoardProfile& b) {
 
 void defaultRelays(std::vector<RelayConfig>& v, const BoardProfile& b) {
   v.clear();
+  if (b.fixed.nRelays) {   // relay board: its relays, ready to use, all off
+    for (int i = 0; i < b.fixed.nRelays; i++) {
+      RelayConfig r; r.id = "relay" + String(i + 1); r.name = "Relay " + String(i + 1);
+      r.pin = b.fixed.relays[i]; r.activeLow = b.fixed.relaysActiveLow; r.enabled = true;
+      v.push_back(r);
+    }
+    return;
+  }
   // Disabled until you confirm wiring and whether your relay board is active-low.
   RelayConfig r1; r1.id = "relay1"; r1.name = "Relay 1"; r1.pin = b.pins.relay[0]; r1.enabled = false; r1.activeLow = true;
   RelayConfig r2; r2.id = "relay2"; r2.name = "Relay 2"; r2.pin = b.pins.relay[1]; r2.enabled = false; r2.activeLow = true;
@@ -170,7 +178,9 @@ void configDefaults(Config& c, const BoardProfile& b) {
   WeatherTown nbo; nbo.name = "Nairobi"; nbo.lat = -1.2864f; nbo.lon = 36.8172f;
   c.weather.towns.push_back(nbo);
   c.cloud = CloudConfig();
-  defaultSensors(c.sensors, b);
+  c.sys.role = b.fixed.role;
+  if (strcmp(b.fixed.role, "main") == 0) defaultSensors(c.sensors, b);
+  else { c.sensors.clear(); c.sys.engineSensorId = ""; }   // worker boards get their sensors from the main board
   defaultRelays(c.relays, b);
 }
 
@@ -865,9 +875,10 @@ bool validateConfig(const Config& c, String& err) {
     if (!needOut(s.rgbR, "RGB light red") || !needOut(s.rgbG, "RGB light green") || !needOut(s.rgbB, "RGB light blue")) return false;
     if (!pb.add(s.rgbR, "RGB red") || !pb.add(s.rgbG, "RGB green") || !pb.add(s.rgbB, "RGB blue")) { err = pb.err; return false; }
   }
-  if (s.rgbBuiltin && s.rgbBuiltinPin >= 0) {
-    if (!needOut(s.rgbBuiltinPin, "Built-in RGB light")) return false;
-    if (!pb.add(s.rgbBuiltinPin, "built-in RGB light")) { err = pb.err; return false; }
+  int rgbPin = s.rgbBuiltinPin >= 0 ? s.rgbBuiltinPin : board.fixed.rgb;
+  if (s.rgbBuiltin && rgbPin >= 0) {
+    if (!needOut(rgbPin, "Built-in RGB light")) return false;
+    if (!pb.add(rgbPin, "built-in RGB light")) { err = pb.err + " (turn the built-in RGB light off under Hardware to use this pin)"; return false; }
   }
   if (s.engineSensorId.length()) {
     bool found = false;

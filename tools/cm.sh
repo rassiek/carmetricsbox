@@ -8,6 +8,7 @@
 #   tools/cm.sh emu [secs]         boot the firmware in the emulator and show the log
 #   tools/cm.sh webtest            headless browser test of the web app (mock ESP32)
 #   tools/cm.sh prototest          board-to-board protocol test on this PC (g++, a few seconds)
+#   tools/cm.sh relayx8            ESP32 Relay X8 relay worker: build/carmetrics-relay-x8-*.bin
 #   tools/cm.sh build52            5.2 for ESP32-S3 8 MB+ (main board): build/carmetrics-52-*.bin
 #   tools/cm.sh display [jc|cyd]   touch display firmware (JC3248W535 and/or Cheap Yellow Display): build/carmetrics-display-*.bin
 #   tools/cm.sh dispsim            display screens drawn on this PC (build/dispsim/*.png) + display model tests
@@ -152,6 +153,15 @@ cmd_build() {
   ls -la "$OUT"/carmetrics-*.bin "$OUT/littlefs.bin"
 }
 
+# ESP32 Relay X8 (8 relays): the classic build, starting as a relay worker with that board's profile.
+cmd_relayx8() {
+  [ -f "$OUT/littlefs.bin" ] || web
+  rm -rf "$OUT/fw-x8" && compile "$OUT/fw-x8" "PartitionScheme=min_spiffs" "-DCM_RELAY_X8"
+  cp "$OUT/fw-x8/CarMetrics.ino.bin" "$OUT/carmetrics-relay-x8-firmware.bin"
+  merge "$OUT/fw-x8" 80m "$OUT/carmetrics-relay-x8-full-flash.bin"
+  ls -la "$OUT"/carmetrics-relay-x8-*.bin
+}
+
 run_qemu() {  # run_qemu <flags> <seconds>
   [ -f "$OUT/littlefs.bin" ] || web
   # QEMU needs 40 MHz DIO flash; it has no Wi-Fi radio or ADC (CM_EMULATOR_TEST skips/fakes those)
@@ -204,8 +214,9 @@ case "${1:-}" in
   webtest) cmd_webtest ;;
   prototest) cmd_prototest ;;
   build52) cmd_build52 ;;
+  relayx8) cmd_relayx8 ;;
   display) cmd_display "${2:-all}" ;;
   dispsim) cmd_dispsim ;;
-  all) cmd_prototest && cmd_build && cmd_build3 esp32 && cmd_build3 esp32s3 && cmd_display && cmd_dispsim && cmd_selftest && cmd_webtest ;;
-  *) sed -n '2,15p' "$0"; exit 1 ;;
+  all) cmd_prototest && cmd_build && cmd_relayx8 && cmd_build3 esp32 && cmd_build3 esp32s3 && cmd_display && cmd_dispsim && cmd_selftest && cmd_webtest ;;
+  *) sed -n '2,16p' "$0"; exit 1 ;;
 esac

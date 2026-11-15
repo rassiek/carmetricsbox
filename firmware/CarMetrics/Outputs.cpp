@@ -3,6 +3,7 @@
 #include "BlackBox.h"
 #include "State.h"
 #include "Pwm.h"
+#include "Board.h"
 #include <set>
 
 // ============================================================== helpers
@@ -500,10 +501,7 @@ void StatusLight::begin() {
   slR = slG = slB = -1;
   int bpin = -1;
   if (s.rgbBuiltin) {
-    bpin = s.rgbBuiltinPin;
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-    if (bpin < 0) bpin = 48;   // most S3 dev boards (v1.1 of the DevKitC: 38, set it in Hardware)
-#endif
+    bpin = s.rgbBuiltinPin >= 0 ? s.rgbBuiltinPin : Board::current().fixed.rgb;   // S3 DevKitC: 48 (v1.1: 38)
   }
   if (slBuiltin >= 0 && slBuiltin != bpin) { slShown = 0xFFFFFFFF; builtinWrite(0); }
   slBuiltin = bpin; slShown = 0xFFFFFFFF;

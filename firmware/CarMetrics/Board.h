@@ -16,6 +16,13 @@ struct BoardPins {      // defaults used for a fresh config on this board
   int8_t relay[2];
 };
 
+struct BoardFixed {     // parts soldered on the board
+  int8_t rgb;           // built-in addressable RGB LED (WS2812), -1 none
+  uint8_t nRelays; int8_t relays[8]; bool relaysActiveLow;
+  uint8_t nInputs; int8_t inputs[4]; bool inputsActiveLow;   // opto-isolated inputs
+  const char* role;     // role a fresh board starts in: main | sensor | relay | sensor_relay
+};
+
 struct BoardProfile {
   const char* id;
   const char* name;
@@ -28,6 +35,7 @@ struct BoardProfile {
   uint64_t rtc;          // can wake the chip from deep sleep (ignition sense)
   BoardPins pins;
   const char* notes;
+  BoardFixed fixed;
 };
 
 namespace Board {

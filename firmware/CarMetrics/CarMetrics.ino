@@ -43,6 +43,8 @@
 #include "Gps.h"
 #include "Vehicle.h"
 #include "BlackBox.h"
+#include "Discover.h"
+#include "Pins.h"
 
 // loop() runs settings changes (JSON, flash writes) and, in the emulator, the
 // self-test: 8 KB was too tight once the actuator settings grew.
@@ -160,6 +162,8 @@ void loop() {
   if (Config* next = takePendingConfig()) applyConfig(next);
 
   Sensors::update();
+  Discover::update();
+  Pins::update();
   Alerts::update();
   Relays::update();
   StatusLight::update();

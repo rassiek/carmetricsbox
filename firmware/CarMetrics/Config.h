@@ -19,6 +19,9 @@
 // One version for every board type since 5.3 (docs/DESIGN.md section 1). The build
 // variant (which board family the file is for) is separate: CM_VARIANT.
 #define FW_VERSION "5.3.0-beta.1"
+#if defined(CM_RELAY_X8) && !defined(CM_VARIANT)
+#define CM_VARIANT "relay-x8"     // tools/cm.sh relayx8: starts as a relay worker on the ESP32 Relay X8
+#endif
 #ifndef CM_VARIANT
 #ifdef CM_V52
 #define CM_VARIANT "s3-8mb"      // main board: ESP32-S3 with 8/16 MB + PSRAM (bigger buffers)

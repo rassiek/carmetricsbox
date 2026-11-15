@@ -10,6 +10,7 @@
 #include "Cloud.h"
 #include "Board.h"
 #include "Health.h"
+#include "Pins.h"
 #include "Gps.h"
 #include "BlackBox.h"
 #include <LittleFS.h>
@@ -70,6 +71,21 @@ static void __attribute__((noinline)) actuatorSetup() {
     c.sys.rgbExternal = true;   // 4 + 1 + 1 + 3 = 9
     check(!validateConfig(c, err) && err.indexOf("8 PWM") >= 0, "more than 8 PWM channels rejected", err); }
   check(validateConfig(*next, err), "fan / winch / flap settings valid", err);
+  // Ready-made relay boards
+  {
+    const BoardProfile* x8 = Board::find("relay_x8");
+    Config c; configDefaults(c, *x8); c.sys.board = "relay_x8";
+    check(x8 && c.relays.size() == 8 && c.relays[6].pin == 12 && c.relays[6].enabled && c.sensors.empty() && c.sys.role == "relay",
+          "Relay X8 defaults: 8 relays (relay 7 on GPIO12), relay role, no sensors", String(c.relays.size()) + " " + c.sys.role);
+    check(validateConfig(c, err), "Relay X8 defaults valid (GPIO12 allowed as an output there)", err);
+    const BoardProfile* kc = Board::find("kc868_a4");
+    Config k; configDefaults(k, *kc); k.sys.board = "kc868_a4";
+    check(kc && k.relays.size() == 4 && k.relays[0].pin == 2 && validateConfig(k, err), "KC868-A4 defaults valid", err);
+  }
+  { JsonDocument j; StateLock lk; Pins::toJson(j.to<JsonObject>());
+    bool ok = j["pins"].size() > 20; for (JsonObject p : j["pins"].as<JsonArray>()) if (p["gpio"] == 18) ok = ok && String((const char*)(p["usedBy"] | "")) == "buzzer";
+    check(ok, "pin map lists the board's GPIOs and what uses them", String(j["pins"].size()));
+    JsonDocument r; check(Pins::test(18, "blink", r.to<JsonObject>()).length() > 0, "pin test refuses a pin in use"); }
   requestConfigApply(next);
 }
 
