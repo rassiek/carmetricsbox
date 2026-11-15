@@ -13,11 +13,14 @@ ready-made Docker "box" that has exactly the tools the firmware was developed wi
 
 | You want to flash… | Command (see *Build the firmware*) | Files it makes in the `build` folder |
 |---|---|---|
-| Main / sensor / relay board, classic ESP32 (5.1) | `tools/cm.sh build` | `carmetrics-full-flash.bin` (USB), `carmetrics-firmware.bin` + `littlefs.bin` (Wi-Fi update) |
-| Main board, ESP32-S3 with 8 MB+ flash (5.2) | `tools/cm.sh build52` | `carmetrics-52-full-flash.bin`, `carmetrics-52-firmware.bin`, `carmetrics-52-littlefs.bin` |
-| ESP32-S3 with 4 MB layout (5.1 on an S3) | `tools/cm.sh build3 esp32s3` | `carmetrics-s3-full-flash.bin`, `carmetrics-s3-firmware.bin` |
+| Main board, ESP32-S3 with 8 or 16 MB flash (recommended) | `tools/cm.sh build52` | `carmetrics-52-full-flash.bin`, `carmetrics-52-firmware.bin`, `carmetrics-52-littlefs.bin` |
+| Worker board (sensors / actuators), classic ESP32 | `tools/cm.sh build` | `carmetrics-full-flash.bin` (USB), `carmetrics-firmware.bin` + `littlefs.bin` (Wi-Fi update) |
+| Worker board, ESP32-S3 with 4 MB flash | `tools/cm.sh build3 esp32s3` | `carmetrics-s3-full-flash.bin`, `carmetrics-s3-firmware.bin` |
+| ESP32 Relay X8 (8-relay board, starts as a relay worker) | `tools/cm.sh relayx8` | `carmetrics-relay-x8-full-flash.bin`, `carmetrics-relay-x8-firmware.bin` |
 | Touch display JC3248W535 | `tools/cm.sh display jc` | `carmetrics-display-jc3248w535-full-flash.bin`, `…-firmware.bin` |
 | Touch display Cheap Yellow Display (ESP32-2432S028R) | `tools/cm.sh display cyd` | `carmetrics-display-cyd-full-flash.bin`, `…-firmware.bin` |
+
+Every board runs the same release (5.3.0-…); the build only decides the chip, the flash layout and how a fresh board starts.
 
 **full-flash** = the whole thing, for USB. **firmware** (+ **littlefs** for the main firmware's web app) = for updating over Wi-Fi from the board's own web page.
 
@@ -102,15 +105,15 @@ Open the folder in Explorer: `explorer build`.
 
 ### Over Wi-Fi (later updates)
 
-- **Main / sensor / relay board:** its web page → **System** → *Firmware update*: first `…-firmware.bin`, then `littlefs.bin` (the web app). Both must come from the same build, or a red banner says they don't match.
-- **Another board from the main board:** **Boards** page → that board's card → *Firmware* → *Send file*.
+- **Main board / worker on its own Wi-Fi:** its web page → **System → Data** → *Firmware update*: first `…-firmware.bin`, then the web app file (`…littlefs.bin`). Both from the same build.
+- **Another board from the main board:** **Boards** tab → that board's card → *Firmware* → send this board's firmware (same chip) or choose its `…-firmware.bin`.
 - **Touch display:** its own page (http://192.168.5.1/ on its Wi-Fi *CarMetrics-Display-xxxx*) → **Firmware**, or from the main board's Boards page.
 
 ## Check it worked
 
-- Main board: the header of its web page and **System → Status → Release** show the release name.
+- Main board: the header of its web page and **System → Status → Firmware** show the release name.
 - Display: the **Setup** tab on the screen shows its firmware.
-- The release name comes from `firmware/CarMetrics/Config.h` (`FW_RELEASE_51`, `FW_RELEASE_52`) and, for the display, `firmware/CarMetricsDisplay/DispConfig.h` (`DISP_VERSION`). If you build your own changes, give them your own name there (e.g. `5.1.0-beta.11-rk1`) so you can tell them apart.
+- The release name comes from `firmware/CarMetrics/Config.h` (`FW_VERSION`) and, for the display, `firmware/CarMetricsDisplay/DispConfig.h` (`DISP_VERSION`). If you build your own changes, give them your own name there (e.g. `5.3.0-beta.1-rk1`) so you can tell them apart. `GET /api/v1/info` also shows the build variant.
 
 ## Run the tests (optional)
 

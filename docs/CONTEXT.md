@@ -2,9 +2,17 @@
 
 Give this file to Claude at the start of a new session (or say: *"Clone github.com/rassiek/carmetricsbox, branch v5, and read docs/CONTEXT.md, docs/v5-status.md and docs/v5-phase3-plan.md"*). It holds what was built, how, what has only been tested on a PC / emulator, and how to test and debug on the real boards.
 
-Last updated: 1 Nov 2026, releases **5.1.0-beta.11**, **5.2.0-beta.3** and the touch display firmware **5.1.0-beta.11** (JC3248W535 + Cheap Yellow Display).
+Last updated: 15 Nov 2026, release **5.3.0-beta.1** (every board type: main S3, workers, Relay X8, touch displays).
 
-> **Where the last session stopped (1 Nov 2026, evening)**: 5.1.0-beta.11 work is committed as one commit on top of `f73529d` (beta.10), **not yet released or pushed** (patch `5.1.0-beta.11-wip.patch`). Done and passing: protocol tests (57), display PC simulator (27 + screenshots), web tests (main app + display page), builds of 5.1 classic, 5.1 S3, 5.2, display JC3248W535 and CYD. **Still to do before releasing beta.11:** (1) run `tools/cm.sh selftest` on its own (was interrupted, not failed); (2) package the release files (main 5.1/5.2 + `carmetrics-display-*`); (3) the user deletes the four Drive test files named "(test file – safe to delete)…" / "(empty test file – safe to delete)". The guide itself is the Google Doc **CarMetrics – building the firmware from GitHub** (https://docs.google.com/document/d/1HwA0v8M2zvxNu79bEAVfYarvK5zLc69GEBsnQUMFrWA/edit); a full upload to Drive failed (size), so the Doc is a slightly shorter version of `docs/BUILDING.md` and points to it for the Linux / Arduino IDE parts.
+> **5.3.0-beta.1** (one version for everything; slow numbering: 5.3.x fixes, 5.4 features). What changed:
+> API v1 at `/api/v1` (`docs/API.md`; old `/api/*` removed), single-page web app with 5 tabs (Dashboard with dials / charts / events,
+> Sensors with discovery, Actuators, Boards, System: Status / Network / Hardware / Data), configurable names + presets (car / boat / farm / blank),
+> actuators (relay, PWM, H-bridge, servo; manual / threshold / curve / condition rules; limits, kick-start, ramp, safe state, timed override),
+> RGB status light (built-in + external), board profiles with fixed parts (ESP32 Relay X8, LilyGO T-Relay, KinCony KC868-A4) + `relayx8` build,
+> pin map and pin tester, discovery (I2C, ADS1115 volts, analog pins, 1-Wire), API keys, ADS1115 at ±6.144 V, loop stack 12 KB.
+> Tested: protocol + route tests (69), emulator self-test, web tests (mock board), display simulator, all builds. **Not yet tested on real
+> hardware**: PWM / H-bridge / servo outputs, status light, Relay X8 polarity (relays default active HIGH there), discovery on real buses.
+> Docs: `docs/DESIGN.md`, `docs/API.md`, `docs/EXTENDING.md`, `docs/WIRING.md`, `docs/PARTS.md`, `docs/BUILDING.md`.
 
 ---
 

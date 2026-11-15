@@ -547,7 +547,7 @@ void Sensors::begin() {
     std::unique_ptr<Ads> a(new Ads());
     a->found = a->dev.begin(c.adsAddress, &Wire);
     if (a->found) {
-      a->dev.setGain(GAIN_ONE);                  // +/-4.096 V range; inputs must stay below 3.3 V
+      a->dev.setGain(GAIN_TWOTHIRDS);            // +/-6.144 V range: 0.5-4.5 V senders on a 5 V-powered module read without clipping
       a->dev.setDataRate(RATE_ADS1115_860SPS);   // ~1.2 ms per conversion
     }
     Serial.printf("[ads] 0x%02X %s\n", c.adsAddress, a->found ? "found" : "NOT found");
