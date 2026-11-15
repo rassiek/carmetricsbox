@@ -23,6 +23,7 @@
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 #include <esp_partition.h>
+#include <esp_ota_ops.h>
 
 #define API "/api/v1"
 #define MAX_BODY (32 * 1024)
@@ -808,6 +809,25 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
       if (fw) {
         bool webapp = req->hasParam("target") && req->getParam("target")->value() == "webapp";
         Serial.printf("[ota] %s upload, %u bytes\n", webapp ? "web app" : "firmware", (unsigned)total);
+        // Say which file was wrong instead of the library's "Bad Size Given".
+        const esp_partition_t* slot = webapp ? esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr)
+                                             : esp_ota_get_next_update_partition(nullptr);
+        size_t room = slot ? slot->size : 0;
+        String fit = String(room / 1024) + " KB";
+        if (!webapp && len > 0 && data[0] != 0xE9) { up.ok = false; up.err = "Not a firmware file: choose the …-firmware.bin file"; return; }
+        if (!webapp && total > room) {
+          up.ok = false;
+          up.err = total >= 0x3E0000 ? "That is a full-flash image (for USB only): choose the …-firmware.bin file"
+                                     : "File too big for this board's firmware slot (" + fit + "): use the firmware made for this board";
+          return;
+        }
+        if (webapp && total > room) {
+          up.ok = false;
+          up.err = "Web app file too big for this board (" + fit + "): use the web app file made for this board"
+                   " (the 4 MB one for 4 MB boards, the 8 MB one for the main S3)";
+          return;
+        }
+        if (webapp && len > 0 && data[0] == 0xE9) { up.ok = false; up.err = "That is a firmware file: choose the web app (…littlefs.bin) file here"; return; }
         if (webapp) LittleFS.end();
         if (!Update.begin(total ? total : UPDATE_SIZE_UNKNOWN, webapp ? U_SPIFFS : U_FLASH)) { up.ok = false; up.err = Update.errorString(); return; }
         StateLock lk; gSys.otaProgress = 0;
