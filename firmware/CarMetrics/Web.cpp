@@ -814,10 +814,10 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
                                              : esp_ota_get_next_update_partition(nullptr);
         size_t room = slot ? slot->size : 0;
         String fit = String(room / 1024) + " KB";
-        if (!webapp && len > 0 && data[0] != 0xE9) { up.ok = false; up.err = "Not a firmware file: choose the …-firmware.bin file (…-usb.bin is for USB only)"; return; }
+        if (!webapp && len > 0 && data[0] != 0xE9) { up.ok = false; up.err = "Not a firmware file: choose the …-firmware.bin file (…-full-flash.bin is for USB only)"; return; }
         if (!webapp && total > room) {
           up.ok = false;
-          up.err = "File too big for this board's firmware slot (" + fit + "): choose the …-firmware.bin made for this board (…-usb.bin is for USB only)";
+          up.err = "File too big for this board's firmware slot (" + fit + "): choose the …-firmware.bin made for this board (…-full-flash.bin is for USB only)";
           return;
         }
         if (webapp && total > room) {
@@ -835,7 +835,7 @@ void onBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index,
     bool final = index + len >= total;
     // A USB image has the partition table at 0x8000: refuse it before it is installed as firmware.
     if (fw && index <= 0x8000 && index + len >= 0x8002 && data[0x8000 - index] == 0xAA && data[0x8001 - index] == 0x50) {
-      up.ok = false; up.err = "That is the USB image (…-usb.bin): over Wi-Fi choose the …-firmware.bin file"; Update.abort(); return;
+      up.ok = false; up.err = "That is the full-flash image (USB only): over Wi-Fi choose the …-firmware.bin file"; Update.abort(); return;
     }
     if (fw) {
       if (Update.write(data, len) != len) { up.ok = false; up.err = Update.errorString(); Update.abort(); return; }

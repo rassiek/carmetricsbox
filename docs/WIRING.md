@@ -112,7 +112,7 @@ Inductive loads (relay coils, motors) need a flyback diode; ready-made modules h
 
 Relays 1–8 = GPIO 32, 33, 25, 26, 27, 14, 12, 13; LED GPIO 23. Flash it once with
 a **3.3 V** USB-to-serial adapter: TX→RX, RX→TX, GND, hold the GPIO0 button while
-powering up, flash `carmetrics-relay-x8-usb.bin` at 0x0 and `carmetrics-webapp.bin` at 0x350000. It starts as a relay
+powering up, flash `carmetrics-relay-x8-full-flash.bin` at 0x0. It starts as a relay
 worker: pair it on the main board's Boards tab. Check on the bench whether a relay
 clicks on HIGH (default) or LOW and tick *active LOW* if needed.
 

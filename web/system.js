@@ -165,9 +165,10 @@
       h('div', { class: 'row', style: 'margin-top:10px' }, [form(pick, [{ k: 'preset', label: 'Start from a preset', type: 'select', opts: [['', '(choose)']].concat(pr.items.map(x => [x, x])) }]),
         h('button', { onclick: () => pick.preset && confirm(`Apply the ${pick.preset} preset? Names and units change.`) && act(() => api('/presets/apply', { body: pick })) }, 'Apply')])));
     const towns = copy(S.settings.weather);
-    box.append(panel('Weather', form(towns, [{ k: 'enabled', label: 'Show the weather (needs internet)', type: 'bool' }, num('refreshMinutes', 'Refresh every (min)'),
-      { k: 'autoSeaLevel', label: 'Correct the altitude with the weather', type: 'bool' }, { k: 'refTown', label: 'Town used for that' }]),
-      townsEditor(towns), h('button', { class: 'primary', onclick: () => act(() => patch('/settings/weather', towns), 'Saved') }, 'Save')));
+    const wf = form(towns, [{ k: 'enabled', label: 'Show the weather (needs internet)', type: 'bool' }, num('refreshMinutes', 'Refresh every (min)'),
+      { k: 'autoSeaLevel', label: 'Correct the altitude with the weather', type: 'bool' },
+      { k: 'refTown', label: 'Town used for that', type: 'select', opts: o => (o.towns || []).map(t => [t.name, t.name]) }]);
+    box.append(panel('Weather', wf, townsEditor(towns, () => wf.redraw()), h('button', { class: 'primary', onclick: () => act(() => patch('/settings/weather', towns), 'Saved') }, 'Save')));
     let cs = {}; try { cs = await get('/cloud'); } catch {}
     box.append(panel('Metrics upload (Zabbix / InfluxDB)', ...sectionForm('cloud', [
       { k: 'enabled', label: 'On', type: 'bool' }, { k: 'protocol', label: 'Send to', type: 'select', opts: [['zabbix', 'Zabbix'], ['influx', 'InfluxDB']], redraw: true },
@@ -196,19 +197,28 @@
       toast('Uploading ' + f.name + '…', false, 120000);
       await act(() => api('/firmware' + (target ? '?target=' + target : ''), { method: 'PUT', raw: f }));
     } })]);
-    box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'First the firmware (…-firmware.bin), then the web app (…-webapp.bin) from the same release. The …-usb.bin file is for USB only.'),
+    box.append(panel('Firmware update', h('p', { class: 'muted small' }, 'First the firmware (…-firmware.bin), then the web app (…-webapp.bin) from the same release. The …-full-flash.bin file is for USB only.'),
       h('div', { class: 'row' }, [fwIn('', 'Firmware file'), fwIn('webapp', 'Web app file')])));
   }
-  function townsEditor(w) {
+  // Weather towns: up to 12, from the list or any place by its coordinates.
+  function townsEditor(w, changed) {
     const box = h('div');
+    const add = (name, lat, lon) => { (w.towns ||= []).push({ name, lat, lon }); if (!w.refTown) w.refTown = name; draw(); changed(); };
     const draw = () => {
       box.innerHTML = '';
-      (w.towns || []).forEach((t, i) => box.append(h('span', { class: 'chip' }, [t.name, ' ', h('a', { href: '#system/data', onclick: e => { e.preventDefault(); w.towns.splice(i, 1); draw(); } }, '×')])));
-      if (typeof KENYA_TOWNS !== 'undefined' && (w.towns || []).length < 4) {
-        const sel = h('select', { style: 'width:auto', onchange: e => { const t = KENYA_TOWNS.find(x => x[0] === e.target.value); if (t) { (w.towns ||= []).push({ name: t[0], lat: t[1], lon: t[2] }); draw(); } } },
-          [h('option', { value: '' }, 'Add a town…')].concat(KENYA_TOWNS.map(t => h('option', { value: t[0] }, t[0]))));
-        box.append(sel);
-      }
+      const have = (w.towns || []).map(t => t.name);
+      box.append(h('label', {}, `Towns (${have.length} of 12): the dashboard shows the first four`),
+        h('div', { class: 'chips' }, (w.towns || []).map((t, i) => h('span', { class: 'chip' }, [t.name, ' ',
+          h('a', { href: '#system/data', onclick: e => { e.preventDefault(); w.towns.splice(i, 1); draw(); changed(); } }, '×')]))));
+      if (have.length >= 12) return;
+      const list = typeof KENYA_TOWNS !== 'undefined' ? KENYA_TOWNS.filter(t => !have.includes(t[0])) : [];
+      const sel = h('select', { style: 'width:auto', onchange: e => { const t = list.find(x => x[0] === e.target.value); if (t) add(t[0], t[1], t[2]); } },
+        [h('option', { value: '' }, `Add a town… (${list.length})`)].concat(list.map(t => h('option', { value: t[0] }, t[0]))));
+      const other = { name: '', lat: null, lon: null };
+      box.append(h('div', { class: 'row', style: 'margin-top:6px' }, [sel]),
+        h('details', {}, [h('summary', { class: 'small' }, 'Another place (name and coordinates)'),
+          form(other, [{ k: 'name', label: 'Name' }, { k: 'lat', label: 'Latitude', type: 'num' }, { k: 'lon', label: 'Longitude', type: 'num' }]),
+          h('button', { class: 'small', onclick: () => other.name && other.lat != null && other.lon != null ? add(other.name, other.lat, other.lon) : toast('Enter a name, latitude and longitude', true) }, 'Add')]));
     };
     draw();
     return box;
