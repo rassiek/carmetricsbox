@@ -206,6 +206,12 @@ void configDefaults(Config& c, const BoardProfile& b) {
   c.weather.towns.push_back(nbo);
   c.cloud = CloudConfig();
   c.sys.role = gFirmwareRole;
+  if (c.sys.role == "worker") {   // its own Wi-Fi and name, so it can't be mixed up with the main board's
+    uint64_t m = ESP.getEfuseMac();
+    char tag[5]; snprintf(tag, sizeof(tag), "%02X%02X", (unsigned)((m >> 32) & 0xFF), (unsigned)((m >> 40) & 0xFF));
+    c.sys.apSsid = String("CarMetrics-W-") + tag;
+    c.sys.hostname = String("carmetrics-w-") + tag; c.sys.hostname.toLowerCase();
+  }
   if (c.sys.role == "main") defaultSensors(c.sensors, b);
   else { c.sensors.clear(); c.sys.engineSensorId = ""; }   // a worker starts empty: its sensors come from the main board or its own page
   defaultRelays(c.relays, b);
@@ -806,6 +812,54 @@ struct PinBook {
     return true;
   }
 };
+}
+
+// Another board's sensors and actuators, checked on the main board before they are sent:
+// everything that doesn't need that board's pin map (it checks those itself).
+bool validateItems(const std::vector<SensorConfig>& sensors, const std::vector<RelayConfig>& relays, String& err) {
+  PinBook pb;
+  std::map<String, int> ids;
+  for (auto& x : sensors) {
+    if (ids.count(x.id)) { err = "Duplicate id '" + x.id + "'"; return false; }
+    ids[x.id] = 1;
+    if (!x.enabled) continue;
+    String who = "sensor '" + x.id + "'";
+    switch (x.type) {
+      case SensorType::ADC: if (x.pin < 0) { err = "Sensor '" + x.id + "': choose its analog pin"; return false; } break;
+      case SensorType::MAX6675: if (x.pin < 0 || x.sckPin < 0 || x.soPin < 0) { err = "Sensor '" + x.id + "': set the SCK, CS and SO pins"; return false; } break;
+      case SensorType::RPM: if (x.pin < 0) { err = "Sensor '" + x.id + "': choose the GPIO the RPM signal is wired to"; return false; } break;
+      case SensorType::SWITCH: if (x.pin < 0) { err = "Sensor '" + x.id + "': choose the switch input GPIO"; return false; } break;
+      default: break;
+    }
+    if (x.type == SensorType::MAX6675) {
+      if (!pb.add(x.pin, who + " CS") || !pb.add(x.sckPin, who + " SCK", "max6675_sck") || !pb.add(x.soPin, who + " SO", "max6675_so")) { err = pb.err; return false; }
+    } else if (x.type == SensorType::ADC || x.type == SensorType::RPM || x.type == SensorType::SWITCH) {
+      if (!pb.add(x.pin, who)) { err = pb.err; return false; }
+    }
+  }
+  for (auto& x : sensors) {
+    if (x.type != SensorType::COMPUTED || !x.enabled) continue;
+    auto exists = [&](const String& id) { if (id == x.id) return false; for (auto& y : sensors) if (y.id == id) return true; return false; };
+    bool needB = x.formula == "diff" || x.formula == "sum" || x.formula == "curve_margin";
+    if (!exists(x.srcA) || (needB && !exists(x.srcB))) { err = "Sensor '" + x.id + "': pick the sensor(s) it is computed from"; return false; }
+  }
+  for (auto& r : relays) {
+    if (ids.count(r.id)) { err = "Duplicate id '" + r.id + "'"; return false; }
+    ids[r.id] = 1;
+    if (!r.enabled) continue;
+    if (r.pin < 0) { err = "Actuator '" + r.id + "': choose its pin"; return false; }
+    if (!pb.add(r.pin, "actuator '" + r.id + "'")) { err = pb.err; return false; }
+    if (r.type == ActType::HBRIDGE) {
+      if (r.pin2 < 0) { err = "Actuator '" + r.id + "': choose the reverse pin"; return false; }
+      if (!pb.add(r.pin2, "actuator '" + r.id + "' reverse")) { err = pb.err; return false; }
+    }
+    if (r.rule == RuleType::THRESHOLD || r.rule == RuleType::CURVE) {
+      bool found = false;
+      for (auto& x : sensors) if (x.id == r.ruleSensor) found = true;
+      if (!found) { err = "Actuator '" + r.id + "': pick the sensor that drives it"; return false; }
+    }
+  }
+  return true;
 }
 
 bool validateConfig(const Config& c, String& err) {

@@ -301,6 +301,19 @@ uint8_t WifiMgr::channel() {
 #endif
 }
 
+namespace {
+String upSsid, upPass;          // worker: its main board's access point
+bool upJoined = false;
+uint32_t upNextMs = 0;
+}
+void WifiMgr::setUplink(const String& ssid, const String& pass) {
+  StateLock lk;
+  if (ssid == upSsid && pass == upPass) return;
+  upSsid = ssid; upPass = pass; upNextMs = millis();   // join (or leave) on the next update()
+  if (upJoined) { WiFi.disconnect(false); upJoined = false; }
+}
+bool WifiMgr::uplinkUp() { return upJoined; }
+
 void WifiMgr::begin() {
 #ifdef CM_EMULATOR_TEST  // QEMU has no Wi-Fi radio
   esp_netif_init();       // the web server still needs the TCP/IP stack
@@ -318,7 +331,10 @@ void WifiMgr::begin() {
   // Start the AP on the remembered network's channel, so joining it later
   // doesn't move the AP (and drop phones / laptops connected to it).
   uint8_t apCh = hintUsable() ? hint.ch : 1;
-  WiFi.softAP(s.apSsid.c_str(), s.apPass.c_str(), apCh);
+  WiFi.softAP(s.apSsid.c_str(), s.apPass.c_str(), apCh, 0, 8);   // up to 8: phones and workers
+  // A worker joins its main board's access point (192.168.4.x): its own access point
+  // gets another subnet so both can be used at once (displays use 192.168.5.x).
+  if (s.role != "main") WiFi.softAPConfig(IPAddress(192, 168, 6, 1), IPAddress(192, 168, 6, 1), IPAddress(255, 255, 255, 0));
   {
     StateLock lk;
     gSys.apIp = WiFi.softAPIP().toString();
@@ -349,9 +365,30 @@ void WifiMgr::update() {
 #endif
   uint32_t now = millis();
   const SystemConfig& s = gConfig.sys;
-  if (s.role != "main") {   // extra board: never join a network (that would pin the radio channel the ESP-NOW search needs)
+  if (s.role != "main") {   // worker: only its main board's access point (same channel as the ESP-NOW link), never other networks
     if (phase != IDLE) { WiFi.disconnect(false); cands.clear(); phase = IDLE; }
-    if (gSys.wifiState != "extra board: access point only") setState("extra board: access point only");
+    String up; { StateLock lk; up = upSsid; }
+    if (!up.length()) {
+      if (upJoined) { WiFi.disconnect(false); upJoined = false; }
+      if (gSys.wifiState != "worker: access point only") setState("worker: access point only");
+      return;
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      if (!upJoined) {
+        upJoined = true;
+        Serial.printf("[wifi] joined the main board's Wi-Fi '%s' as %s (channel %u)\n", up.c_str(), WiFi.localIP().toString().c_str(), WifiMgr::channel());
+        setState("joined the main board's Wi-Fi", up);
+      }
+      return;
+    }
+    if (upJoined) { upJoined = false; setState("main board's Wi-Fi lost", up); upNextMs = now + 2000; }
+    if ((int32_t)(now - upNextMs) >= 0) {   // the driver finds the channel; retry every 20 s
+      String pw; { StateLock lk; pw = upPass; }
+      WiFi.disconnect(false);
+      WiFi.begin(up.c_str(), pw.c_str());
+      upNextMs = now + 20000;
+      setState("joining the main board's Wi-Fi", up);
+    }
     return;
   }
   if (s.networks.empty()) {   // nothing to join; "search now" still lists nearby networks

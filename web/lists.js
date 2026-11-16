@@ -9,6 +9,7 @@
     const sel = h('select', { style: 'width:auto', onchange: e => { board = e.target.value; onpick(); } }, [h('option', { value: 'local' }, 'This board')]);
     try {
       const b = await get('/boards');
+      for (const x of b.items || []) chips['b' + x.id] = x.chip;
       for (const x of b.items || []) if (x.role !== 'display') sel.append(h('option', { value: 'b' + x.id, selected: board === 'b' + x.id }, `${x.name} (b${x.id})${x.online ? '' : ' · offline'}`));
     } catch {}
     if (![...sel.options].some(o => o.value === board)) board = 'local';
@@ -17,7 +18,24 @@
   }
 
   // For another board the pins are its own: plain numbers instead of this board's pin list.
-  const fieldsFor = list => board === 'local' ? list : list.map(f => f.type === 'pin' ? { ...f, type: 'num' } : f);
+  // Another board's pins: a list of the GPIOs its chip has when it is the same chip as this
+  // board (from this firmware's profiles), otherwise a plain number (that board checks it).
+  const chips = {};
+  let chipPins = null;
+  async function loadChipPins() {
+    if (chipPins) return chipPins;
+    try {
+      const pr = await get('/hardware/profiles'), cat = k => [...new Set(pr.items.flatMap(x => x[k] || []))].sort((a, b) => a - b);
+      chipPins = { chip: pr.chip, valid: cat('valid'), output: cat('output'), adc1: cat('adc1'), caution: cat('caution') };
+    } catch { chipPins = { chip: '', valid: [] }; }
+    return chipPins;
+  }
+  const sameChip = () => chipPins && chips[board] && chips[board].toLowerCase().replace('-', '') === chipPins.chip;
+  const remotePin = f => {
+    const c = chipPins, list = f.input ? c.valid : c.output;
+    return { ...f, type: 'select', num: true, opts: [[-1, '(not used)']].concat(list.map(g => [g, `GPIO ${g}` + (c.adc1.includes(g) ? ' · analog' : '') + (c.caution.includes(g) ? ' · boot/USB/serial pin' : '')])) };
+  };
+  const fieldsFor = list => board === 'local' ? list : list.map(f => f.type !== 'pin' ? f : sameChip() ? remotePin(f) : { ...f, type: 'num' });
 
   function editor(kind, item, isNew, done) {
     const o = JSON.parse(JSON.stringify(item));
@@ -49,6 +67,7 @@
   async function showSensors(main) {
     if (board === 'local') await loadPins();
     const list = h('div'), top = await boardPicker(() => showSensors(main));
+    await loadChipPins();
     let items = [];
     const draw = () => {
       list.innerHTML = '';
@@ -121,6 +140,7 @@
   async function showActuators(main) {
     if (board === 'local') await loadPins();
     const top = await boardPicker(() => showActuators(main));
+    await loadChipPins();
     const list = h('div');
     let items = [], shown = '', warned = false;
     const q = `?board=${board}`;

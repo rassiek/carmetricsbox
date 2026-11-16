@@ -25,4 +25,10 @@ void searchNow();    // any task: scan on the next update(), reset the back-off
 void toJson(JsonObject o);       // state, last scan and join log (call with StateLock held)
 uint8_t channel();               // current radio channel (the AP follows a joined network)
 const char* reasonText(uint8_t reason);   // ESP-IDF disconnect reason in plain words
+// Worker (5.4): the network of its main board's access point, sent with the settings.
+// The worker joins it so phones on the main board's Wi-Fi reach the worker's page; the
+// main board's access point and ESP-NOW share one channel, so the link is not disturbed.
+// "" = none (access point only).
+void setUplink(const String& ssid, const String& pass);
+bool uplinkUp();
 }

@@ -33,6 +33,7 @@
       h('div', { class: 'row', style: 'margin-top:8px' }, [
         b.role !== 'display' ? h('a', { class: 'btn small', href: '#sensors', onclick: () => sessionStorage.setItem('cmBoard', 'b' + b.id) }, 'Sensors') : null,
         b.role !== 'display' ? h('a', { class: 'btn small', href: '#actuators', onclick: () => sessionStorage.setItem('cmBoard', 'b' + b.id) }, 'Actuators') : null,
+        b.ip && b.role !== 'display' ? h('a', { class: 'btn small primary', href: `http://${b.ip}/`, target: '_blank', rel: 'noopener', title: `Its own page, at ${b.ip} on this board's Wi-Fi` }, 'Open its page') : null,
         h('button', { class: 'small', onclick: () => cmd('identify') }, 'Identify'),
         h('button', { class: 'small', onclick: () => cmd('resend') }, 'Resend settings'),
         h('button', { class: 'small', onclick: () => confirm(`Restart ${b.name}?`) && cmd('reboot') }, 'Restart'),

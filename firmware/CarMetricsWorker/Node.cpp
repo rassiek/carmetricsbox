@@ -1,4 +1,6 @@
 #include "Node.h"
+#include <WiFi.h>
+#include "WifiMgr.h"
 #include "Radio.h"
 #include "State.h"
 #include "Outputs.h"
@@ -36,6 +38,15 @@ uint8_t onPoints(Point* out, uint8_t max) {
 uint8_t onConfig(const std::vector<uint8_t>& json, uint32_t rev, std::string& msg) {
   JsonDocument d;
   if (deserializeJson(d, (const char*)json.data(), json.size())) { msg = "not valid JSON"; return CFG_INVALID; }
+  {   // the main board's access point (5.4): join it, so its Wi-Fi reaches this board's page
+    String ss = d["mainAp"]["ssid"] | "", pw = d["mainAp"]["pass"] | "";
+    Preferences p;
+    if (p.begin(NODE_NS, false, "cfg")) {
+      if (p.getString("upSsid", "") != ss || p.getString("upPass", "") != pw) { p.putString("upSsid", ss); p.putString("upPass", pw); }
+      p.end();
+    }
+    WifiMgr::setUplink(ss, pw);
+  }
   Config* c = new Config(gConfig);
   String err;
   bool ok = (d["sensors"].isNull() || sensorsFromJson(d["sensors"], c->sensors, err)) &&
@@ -96,7 +107,11 @@ void Node::begin() {
     hasKey = id != UNPAIRED && p.getBytes("key", key, 16) == 16;
     p.end();
   }
-  if (hasKey) Radio::espnow().setKey(MAIN_BOARD, key);   // the main board's address is learned from its first frame
+  if (hasKey) Radio::espnow().setKey(MAIN_BOARD, key);
+  if (id != UNPAIRED && p.begin(NODE_NS, true, "cfg")) {   // join the main board's Wi-Fi as before the restart
+    WifiMgr::setUplink(p.getString("upSsid", ""), p.getString("upPass", ""));
+    p.end();
+  }   // the main board's address is learned from its first frame
   NodeSession::Callbacks cb;
   cb.paired = [](uint8_t newId, const std::string&, const uint8_t* key) {
     Preferences q;
@@ -148,7 +163,10 @@ void Node::update() {
   nodeS->flags = (gSys.muted ? HB_MUTED : 0) | (Health::safeMode() ? HB_SAFE_MODE : 0);
   nodeS->update(now);
   // Channel search: hop until the main board answers (its beacon / reply to our hello).
-  if (Radio::usingRadio() && !nodeS->mainInRange(now) && now - lastHop >= 300) {
+  // Not while joined to the main board's Wi-Fi (that fixes the channel), and only in
+  // short bursts while someone uses this board's own Wi-Fi (each hop moves it).
+  bool burst = WiFi.softAPgetStationNum() == 0 || now % 15000 < 3000;
+  if (Radio::usingRadio() && !WifiMgr::uplinkUp() && burst && !nodeS->mainInRange(now) && now - lastHop >= 300) {
     lastHop = now;
     hopChannel = hopChannel % 13 + 1;
     Radio::espnow().setChannel(hopChannel);
@@ -160,7 +178,7 @@ bool Node::paired() { StateLock lk; return nodeS && nodeS->paired(); }
 
 String Node::unpair() {
   Preferences q;
-  if (q.begin(NODE_NS, false, "cfg")) { q.putUChar("id", UNPAIRED); q.putUInt("rev", 0); q.remove("key"); q.end(); }
+  if (q.begin(NODE_NS, false, "cfg")) { q.putUChar("id", UNPAIRED); q.putUInt("rev", 0); q.remove("key"); q.remove("upSsid"); q.remove("upPass"); q.end(); }
   requestReboot(1000);
   return "";
 }

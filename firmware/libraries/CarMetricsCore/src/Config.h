@@ -18,7 +18,7 @@
 // same label baked in (tools/build_web.py) and warns when the two don't match.
 // One version for every board type since 5.3 (docs/DESIGN.md section 1). The build
 // variant (which board family the file is for) is separate: CM_VARIANT.
-#define FW_VERSION "5.4.0-beta.2"
+#define FW_VERSION "5.4.0-beta.3"
 // Build variant (tools/cm.sh): which firmware and board this binary is for.
 #if !defined(CM_VARIANT) && defined(CM_RELAY_X8)
 #define CM_VARIANT "relay-x8"
@@ -344,6 +344,7 @@ void cloudToJson(const CloudConfig& c, JsonObject o, bool includeSecrets);
 
 // Cross-checks pins, ids, references. Returns false with a human readable error.
 bool validateConfig(const Config& c, String& err);
+bool validateItems(const std::vector<SensorConfig>& sensors, const std::vector<RelayConfig>& relays, String& err);   // another board's lists, without its pin map
 
 // Persistence (NVS). Every save keeps the previous config ("prev") for a one-step
 // undo; after a healthy run the current config is also kept as "good" (used by safe mode).

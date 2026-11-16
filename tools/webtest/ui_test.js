@@ -66,6 +66,13 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   check((await api('/sensors/coolant_temp')).warnHigh === 97, 'limits changed from the dial', await toast());
   await go('#dashboard/charts', 1500);
   check((await p.locator('canvas.chart').count()) >= 5, 'charts view');
+  {
+    const all = await p.locator('canvas.chart').count();
+    await p.selectOption('.gtools select', 'local'); await p.waitForTimeout(1200);
+    const mine = await p.locator('canvas.chart').count();
+    await p.selectOption('.gtools select', 'all'); await p.waitForTimeout(1200);
+    check(mine >= 1 && (await p.locator('canvas.chart').count()) === all, 'charts board filter', `${mine} of ${all}`);
+  }
   const temps = p.locator('.panel', { has: p.locator('b', { hasText: /^Temperatures$/ }) });
   check((await temps.locator('.chip').count()) >= 4, 'temperatures (not EGT) share one chart', await temps.locator('.chips').textContent().catch(() => ''));
   check(await p.locator('.panel b', { hasText: /^Exhaust \/ thermocouples$/ }).isVisible(), 'EGT on its own axis');
@@ -135,6 +142,7 @@ const check = (ok, what, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} 
   // ---- Boards
   await go('#boards', 1500);
   check(await p.locator('text=Engine bay').first().isVisible(), 'paired board card');
+  check((await p.locator('a', { hasText: 'Open its page' }).first().getAttribute('href')) === 'http://192.168.4.3/', 'worker on this Wi-Fi: link to its own page');
   check(await p.locator('text=Relay X8').isVisible(), 'unpaired board found');
   await p.locator('.list-item', { hasText: 'Relay X8' }).locator('button').click(); await p.waitForTimeout(800);
   check((await api('/boards')).items.length === 3, 'board paired');

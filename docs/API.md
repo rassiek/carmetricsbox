@@ -113,7 +113,7 @@ Routes of a part a board doesn't have answer 404.
 
 | Request | Reply / effect |
 |---|---|
-| `GET /boards` | link status + `found` (unpaired, heard) + `items` (paired: id, name, role, chip, firmware, online, signal, loss %, settings state, display info) |
+| `GET /boards` | link status + `found` (unpaired, heard) + `items` (paired: id, name, role, chip, firmware, online, signal, loss %, settings state, display info, `ip`: its address on this board's Wi-Fi when it has joined it — the web app's *Open its page*) |
 | `POST /boards` `{"mac":"..","name":"Engine bay"}` | pair (accept) |
 | `PATCH /boards/{id}` `{"name":".."}` | rename |
 | `DELETE /boards/{id}` | forget |
@@ -166,6 +166,11 @@ Routes of a part a board doesn't have answer 404.
 | `PUT /firmware` | raw file body (`application/octet-stream`, the `…-firmware.bin`; the web app is inside it) → installs, restarts. A file tagged for the other role (main / worker) is refused |
 | `GET /node` | worker: `{"role":"worker","link":{…},"node":{"paired","id","linkUp","mainInRange","configRev","encrypted"}}` |
 | `POST /node/unpair` | worker: forget the main board (it can add this board again) |
+
+**Workers on the main board's Wi-Fi (5.4.0-beta.3).** With its settings, the main board sends its access point name and password
+(`"mainAp"` in the settings message; encrypted on the air only with board-link encryption on). The worker joins it as a station
+(same channel as the ESP-NOW link, so no channel conflict) and keeps its own access point on **192.168.6.1** (main: 192.168.4.1,
+displays: 192.168.5.1). A fresh worker's own network is `CarMetrics-W-xxxx`, its name `carmetrics-w-xxxx`.
 | `GET /keys`, `POST /keys` `{"name":"Grafana","scope":"read"}` (the key is shown once), `DELETE /keys/{id}` | API keys. Scope `admin` |
 
 ---

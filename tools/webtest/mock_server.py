@@ -71,7 +71,7 @@ ACT = {'fan': {'value': 0, 'on': False, 'by': 'rule', 'manual': False}, 'lights'
 STATE = {'muted': False, 'level': 'ok'}
 KEYS = []
 BOARDS = [
-    {'id': 1, 'name': 'Engine bay', 'mac': 'AA:BB:CC:00:00:01', 'role': 'sensor_relay', 'chip': 'ESP32', 'firmware': '5.3.0-beta.1', 'online': True, 'ageS': 0,
+    {'id': 1, 'name': 'Engine bay', 'ip': '192.168.4.3', 'mac': 'AA:BB:CC:00:00:01', 'role': 'sensor_relay', 'chip': 'ESP32', 'firmware': '5.3.0-beta.1', 'online': True, 'ageS': 0,
      'rssi': -61, 'rssiAtBoard': -63, 'uptimeS': 5400, 'level': 'ok', 'relaysSafe': False, 'safeMode': False, 'received': 900, 'lost': 3, 'lossPct': 0,
      'commandsIn': 2, 'commandsFailed': 0, 'muted': False, 'encrypted': False, 'sameChip': False,
      'config': {'pending': False, 'status': 'accepted', 'message': '', 'hasShare': True, 'upToDate': True},

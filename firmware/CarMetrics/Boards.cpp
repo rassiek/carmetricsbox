@@ -79,7 +79,12 @@ void indexShare(uint8_t id) {
 
 void pushShare(uint8_t id) {
   if (!mainS || !shares[id].json.length()) return;
-  const String& j = shares[id].json;
+  // 5.4: with the worker's sensors and actuators goes this board's access point, so the
+  // worker joins it and phones on this Wi-Fi reach the worker's own page.
+  JsonDocument d;
+  if (deserializeJson(d, shares[id].json)) return;
+  { StateLock lk; d["mainAp"]["ssid"] = gConfig.sys.apSsid; d["mainAp"]["pass"] = gConfig.sys.apPass; }
+  String j; serializeJson(d, j);
   std::vector<uint8_t> bytes(j.begin(), j.end());
   mainS->setConfig(id, crc32(bytes.data(), bytes.size()), bytes);   // revision = CRC: same settings are never re-sent
 }
@@ -404,7 +409,7 @@ void Boards::toJson(JsonObject o) {
   for (auto& f : mainS->found()) {
     JsonObject x = fa.add<JsonObject>();
     x["mac"] = macStr(f.mac); x["name"] = f.name; x["firmware"] = f.firmware; x["role"] = roleName(f.role);
-    x["chip"] = f.chip == Proto::CHIP_ESP32S3 ? "ESP32-S3" : "ESP32"; x["rssi"] = f.rssi; x["ageS"] = std::max<int32_t>(0, (int32_t)(now - f.lastHeard)) / 1000;
+    x["chip"] = chipName(f.chip); x["rssi"] = f.rssi; x["ageS"] = std::max<int32_t>(0, (int32_t)(now - f.lastHeard)) / 1000;
   }
   JsonArray ba = o["boards"].to<JsonArray>();
   for (auto& b : mainS->boards()) {
@@ -418,8 +423,10 @@ void Boards::toJson(JsonObject o) {
       f["seconds"] = (now - b.fw.startedAt) / 1000;
     }
     x["sameChip"] = b.chip == myChip();
+    String ip = apIpOf(b.mac);
+    if (ip.length()) x["ip"] = ip;   // on this board's Wi-Fi: the web app links to its page
     x["id"] = b.id; x["name"] = b.name; x["mac"] = macStr(b.mac); x["role"] = roleName(b.role); x["firmware"] = b.firmware;
-    x["chip"] = b.chip == Proto::CHIP_ESP32S3 ? "ESP32-S3" : "ESP32";
+    x["chip"] = chipName(b.chip);   // also C3 / C6 workers
     x["online"] = b.online; x["ageS"] = b.lastHeard ? std::max<int32_t>(0, (int32_t)(now - b.lastHeard)) / 1000 : -1;
     x["rssi"] = b.rssi; x["rssiAtBoard"] = b.rssiAtBoard; x["uptimeS"] = b.uptimeS;
     x["level"] = alertLevelStr(b.level);
@@ -433,7 +440,6 @@ void Boards::toJson(JsonObject o) {
       JsonObject dj = x["display"].to<JsonObject>();
       dj["catalogSent"] = b.ackedRev && b.ackedRev == cat.rev;
       dj["sensors"] = cat.sensors.size(); dj["relays"] = cat.relays.size();
-      String ip = apIpOf(b.mac);
       if (ip.length()) dj["ip"] = ip;
     }
     JsonObject c = x["config"].to<JsonObject>();
@@ -516,6 +522,7 @@ String Boards::setShareLocked(int id, JsonVariantConst sensors, JsonVariantConst
   for (auto& s : sv) sensorToJson(s, sa.add<JsonObject>());
   JsonArray ra = out["relays"].to<JsonArray>();
   for (auto& r : rv) relayToJson(r, ra.add<JsonObject>());
+  if (!validateItems(sv, rv, err)) return err;   // what the board would refuse, caught here
   String j; serializeJson(out, j);
   if (j.length() > MAX_CONFIG) return "Too many settings for one board";
   // Same chip as this board: catch impossible pins here instead of having the board refuse them.
@@ -523,11 +530,12 @@ String Boards::setShareLocked(int id, JsonVariantConst sensors, JsonVariantConst
     for (auto& r : rv) {
       if (!r.enabled) continue;
       for (int p : {r.pin, r.type == ActType::HBRIDGE ? r.pin2 : -1})
-        if (p >= 0 && !Board::chipCanOutput(p)) return "Actuator '" + r.id + "': GPIO " + String(p) + " can't drive an output on a " + String(Board::chip()) + " board";
+        if (p >= 0 && !Board::chipCanOutput(p))
+          return "Actuator '" + r.id + "': GPIO " + String(p) + (Board::chipHasPin(p) ? " can't drive an output" : " doesn't exist") + " on an " + chipName(myChip());
     }
     for (auto& s : sv)
       for (int p : {s.pin, s.sckPin, s.soPin})
-        if (s.enabled && p >= 0 && !Board::chipHasPin(p)) return "Sensor '" + s.id + "': GPIO " + String(p) + " doesn't exist on a " + String(Board::chip()) + " board";
+        if (s.enabled && p >= 0 && !Board::chipHasPin(p)) return "Sensor '" + s.id + "': GPIO " + String(p) + " doesn't exist on an " + chipName(myChip());
   }
   if (mainS->board((uint8_t)id)->role == ROLE_DISPLAY) return "A display has no sensors or relays of its own";
   shares[id].json = j;

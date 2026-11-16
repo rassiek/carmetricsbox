@@ -226,6 +226,7 @@ Call the boards **A** (main, the current one) and **B** (new). Flash both with t
 | Worker web page | its own sensors / actuators only; runs alone (own alarms and rules); the main board shows everything with a gauge board filter |
 | Worker extras | buzzer, LED, status light; no OLED, cloud, weather, file system |
 | Full-flash files | kept (USB at 0x0) |
+| Worker networking (beta.3) | joins the main board's access point (credentials sent with its settings); own AP on 192.168.6.1, named CarMetrics-W-xxxx; main board's AP takes 8 clients |
 
 ## 12. Hardware notes
 

@@ -174,6 +174,12 @@
   const TITLES = { tc: 'Exhaust / thermocouples', '°C': 'Temperatures', '°F': 'Temperatures', psi: 'Pressures', bar: 'Pressures', kPa: 'Pressures',
                    V: 'Voltages', A: 'Currents', m: 'Altitude', 'km/h': 'Speed', mph: 'Speed', kn: 'Speed', rpm: 'Engine speed', RPM: 'Engine speed' };
   // id -> {name, unit (as shown), dec, key, title, s (sensor settings, for limits), kind}
+  // Board filter for charts and recordings: a series is this board's unless it mirrors another board's sensor
+  function idShown(id) {
+    if (only === 'all') return true;
+    const s = sensorsCfg().find(x => x.id === id);
+    return (s && s.type === 'remote' ? 'b' + s.board : 'local') === only;
+  }
   function seriesInfo(id) {
     const s = sensorsCfg().find(x => x.id === id);
     if (s) {
@@ -217,7 +223,7 @@
     try { d = await get('/history'); } catch (e) { return err(e); }
     box.append(h('p', { class: 'muted small' }, `Last ${Math.round(d.count * d.interval / 60)} min, one point every ${d.interval} s. Values of the same kind share a chart; a sensor's "Chart" setting can put it on its own.`));
     const valsOf = x => d.series[x.id].map(v => v == null ? null : x.kind === 'sensor' ? conv(v, x.s.unit)[0] : v);
-    const groups = groupSeries(Object.keys(d.series || {}));
+    const groups = groupSeries(Object.keys(d.series || {}).filter(idShown));
     for (const g of groups.filter(g => g.kind !== 'system')) box.append(chartPanel(g, valsOf, d.interval));
     const sys = groups.filter(g => g.kind === 'system');
     if (sys.length) box.append(h('details', {}, [h('summary', {}, 'Board health'), ...sys.map(g => chartPanel(g, valsOf, d.interval, 130))]));
@@ -258,7 +264,7 @@
           if (body.children.length) { body.innerHTML = ''; return; }
           try {
             const ev = await get(`/events/${e.seq}`);
-            for (const g of groupSeries(ev.ids)) body.append(chartPanel(g, x => ev.rows.map(r => { const v = r[ev.ids.indexOf(x.id)]; return v == null ? null : x.kind === 'sensor' ? conv(v, x.s.unit)[0] : v; }), ev.interval, 130));
+            for (const g of groupSeries(ev.ids.filter(idShown))) body.append(chartPanel(g, x => ev.rows.map(r => { const v = r[ev.ids.indexOf(x.id)]; return v == null ? null : x.kind === 'sensor' ? conv(v, x.s.unit)[0] : v; }), ev.interval, 130));
           } catch (x) { err(x); }
         } }, 'Show')]), body]));
     }
@@ -304,8 +310,8 @@
     const views = VIEWS.length > 1 ? h('div', { class: 'seg' }, VIEWS.map(([k, t]) =>
       h('a', { href: `#dashboard/${k}`, class: view === k ? 'active' : '' }, t))) : null;
     const box = h('div');
-    const tools = view === 'gauges' ? h('div', { class: 'row gtools' }, [boardFilter(), h('button', { class: 'small', onclick: () => fullScreen(true) }, '⛶ Full screen'),
-      h('a', { class: 'btn small', href: '#dashboard/layout' }, 'Edit layout')]) : null;
+    const tools = view !== 'gauges' ? h('div', { class: 'row gtools' }, [boardFilter()]) : h('div', { class: 'row gtools' }, [boardFilter(), h('button', { class: 'small', onclick: () => fullScreen(true) }, '⛶ Full screen'),
+      h('a', { class: 'btn small', href: '#dashboard/layout' }, 'Edit layout')]);
     main.append(h('div', { class: 'row' }, [views, h('span', { class: 'spacer' }), tools]), box,
       h('button', { class: 'fsexit', onclick: () => fullScreen(false), title: 'Leave full screen' }, '✕'));
     if (view === 'gauges') { renderGauges(box); if (has('weather')) weatherCard(box); }
